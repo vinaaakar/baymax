@@ -62,8 +62,8 @@ export function targetPose(state: CharacterState, t: number, input: RigInput): P
       p.headYaw = lookX * 0.28 + Math.sin(t * 0.37) * 0.04 * m;
       p.headPitch = 0.05 - lookY * 0.12 + Math.sin(t * 0.23) * 0.02 * m;
       p.headRoll = Math.sin(t * 0.29) * 0.025 * m;
-      p.eyeX = lookX * 0.5;
-      p.eyeY = lookY * 0.3;
+      p.eyeX = lookX * 0.9; // the eyes lead, the head follows a little (same in CharacterRig.swift)
+      p.eyeY = lookY * 0.7;
       p.sway = Math.sin(t * 0.31) * 0.012 * m;
       break;
     case "LISTENING":

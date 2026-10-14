@@ -63,8 +63,10 @@ struct CharacterView: UIViewRepresentable {
             let ambient = SCNNode()
             ambient.light = SCNLight()
             ambient.light!.type = .ambient
-            ambient.light!.color = UIColor(red: 0.55, green: 0.35, blue: 0.37, alpha: 1) // red room bounce
-            ambient.light!.intensity = 350
+            // Mostly neutral with a restrained red room bounce (design spec "lighting", same as the Mac).
+            let red = CGFloat(BustSpec.ambientRedness)
+            ambient.light!.color = UIColor(red: 0.62, green: 0.62 - red * 1.2, blue: 0.62 - red, alpha: 1)
+            ambient.light!.intensity = 380
             scene.rootNode.addChildNode(ambient)
 
             key.light = SCNLight()
@@ -119,7 +121,7 @@ struct CharacterView: UIViewRepresentable {
             // Follow the cursor quickly (low lag) but keep body motion soft.
             pose = CharacterRig.blend(pose, target, dt: dt, rate: reduced ? 14 : (g.live || g.point != nil ? 12 : 5))
             baymax.apply(pose)
-            rim.light?.intensity = CGFloat(300 + pose.glow * 1100)
+            rim.light?.intensity = CGFloat(600 * (BustSpec.rimBase + pose.glow * BustSpec.rimGlow))
             key.light?.intensity = CGFloat(1100 * (1 - pose.dim * 0.55))
         }
     }

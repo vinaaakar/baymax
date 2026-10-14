@@ -10,6 +10,9 @@ export interface FramingSpec {
   bustBottom: number;
   minHalfWidth: number;
   minHalfHeight: number;
+  minHalfHeightWide: number; // landscape views (iPhone desk mode) show a larger head
+  wideFrom: number;
+  wideTo: number;
   topMargin: number;
   anchorFromTop: number;
   maxHalfHeight: number;
@@ -24,7 +27,9 @@ export interface BustCamera {
 
 export function bustCamera(aspect: number, f: FramingSpec = spec.framing): BustCamera {
   const a = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
-  const halfV = Math.min(Math.max(f.minHalfHeight, f.minHalfWidth / a), f.maxHalfHeight);
+  const t = Math.min(1, Math.max(0, (a - f.wideFrom) / (f.wideTo - f.wideFrom)));
+  const minHalf = f.minHalfHeight + (f.minHalfHeightWide - f.minHalfHeight) * t;
+  const halfV = Math.min(Math.max(minHalf, f.minHalfWidth / a), f.maxHalfHeight);
   const bustCenter = (f.headTop + f.bustBottom) / 2;
   let centerY = bustCenter - halfV * (1 - 2 * f.anchorFromTop);
   centerY = Math.max(centerY, f.headTop + f.topMargin - halfV); // never cut the head

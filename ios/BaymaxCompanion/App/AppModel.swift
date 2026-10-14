@@ -44,6 +44,8 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var cursorLive = false
+    /// Why the Mac's character is in its current state (shown as text for ERROR/CONCERNED, never on the face).
+    @Published var stateReason = ""
     @Published var lastResearch: (query: String, sources: [(title: String, url: String)])?
     let speechIn = SpeechInput()
     let speechOut = SpeechOutput()
@@ -197,6 +199,7 @@ final class AppModel: ObservableObject {
         switch env.type {
         case "character.state":
             if let s = env.string("state") { display.applyServer(s) }
+            stateReason = env.string("reason") ?? ""
         case "sleep.state":
             sleeping = env.bool("sleeping") ?? false
             gaze.reset() // asleep: no gaze following; on wake start fresh

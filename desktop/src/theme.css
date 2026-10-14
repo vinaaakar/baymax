@@ -38,6 +38,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .stage.dim { filter: saturate(0.55) brightness(0.8); transition: filter 600ms ease; }
 .character-canvas { position: absolute; inset: 0; cursor: pointer; }
+/* Companion window: status bar, face region, controls stacked (same structure as the iPhone companion screen). */
+.stage.companion-layout { display: flex; flex-direction: column; }
+.stage.companion-layout > .topbar { position: relative; top: auto; left: auto; right: auto; padding: 10px 12px 0; }
+.stage.companion-layout > .face-region { position: relative; flex: 1; min-height: 120px; }
+.stage.companion-layout > .controls { position: relative; left: auto; right: auto; bottom: auto; padding: 0 12px 12px; }
 .character-canvas canvas { display: block; }
 
 .drag { -webkit-app-region: drag; }

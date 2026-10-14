@@ -24,7 +24,8 @@ targets:
         UILaunchScreen:
           UIColorName: ""
         UIRequiresFullScreen: true
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Landscape first (desk companion); portrait is a secondary layout. Desk mode locks landscape at runtime.
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationPortrait]
         UIStatusBarStyle: UIStatusBarStyleLightContent
         NSMicrophoneUsageDescription: "BAYMAX listens only while you press the microphone button, and recognises speech on this iPhone."
         NSSpeechRecognitionUsageDescription: "Your speech is transcribed on this iPhone (on-device only) so BAYMAX can understand requests."

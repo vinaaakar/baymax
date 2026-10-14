@@ -63,13 +63,16 @@ export default function Companion() {
   const toggleSleep = () => client?.post("/api/sleep", { sleeping: !sleeping });
   const task = active[0];
   return (
-    <div className={`stage ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""}`}>
+    <div className={`stage companion-layout ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""}`}>
       <div className="topbar drag">
         <ConnectionPill compact />
         <span className="spacer" />
         <button className="btn small no-drag" onClick={() => window.baymax?.openWindow("workspace")} title="Open engineering workspace" aria-label="Open engineering workspace">⌘</button>
       </div>
-      <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={look} point={gaze.point} onClick={() => sleeping && toggleSleep()} />
+      {/* The face has its own region between the status bar and the controls: nothing is drawn over it. */}
+      <div className="face-region">
+        <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={look} point={gaze.point} onClick={() => sleeping && toggleSleep()} />
+      </div>
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
       <div className="controls">
         {showCaption && lastAssistant && state !== "SLEEPING" && (

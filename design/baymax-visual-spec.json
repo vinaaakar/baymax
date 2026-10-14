@@ -73,7 +73,12 @@
       "x": 0.085,
       "yOffset": 0.012,
       "radius": 0.03,
-      "lineRadius": 0.0045
+      "lineRadius": 0.0045,
+      "travel": [
+        0.12,
+        0.08
+      ],
+      "travelUnit": "radians the eyes rotate about the neck pivot for a full look (x: left/right, y: up/down), so they slide along the head's curved surface"
     },
     "torsoProfile": [
       [
@@ -127,7 +132,7 @@
     "armDepthScale": 0.92
   },
   "framing": {
-    "description": "Vertical field of view is fixed. halfV = clamp(max(minHalfHeight, minHalfWidth / aspect), maxHalfHeight). The head+collar centre sits at anchorFromTop of the frame, but the frame top never cuts the head (headTop + topMargin, leaving room for status pills). The camera looks straight ahead (no pitch).",
+    "description": "Vertical field of view is fixed. minHalf = lerp(minHalfHeight, minHalfHeightWide, clamp((aspect-wideFrom)/(wideTo-wideFrom))) so landscape views (iPhone desk mode) show a larger head; halfV = min(max(minHalf, minHalfWidth / aspect), maxHalfHeight). The head+collar centre sits at anchorFromTop, but the frame top never cuts the head (headTop + topMargin). The camera looks straight ahead.",
     "fovDeg": 28,
     "headTop": 2.03,
     "bustBottom": 1.5,
@@ -135,7 +140,10 @@
     "minHalfHeight": 0.5,
     "topMargin": 0.16,
     "anchorFromTop": 0.42,
-    "maxHalfHeight": 1.2
+    "maxHalfHeight": 1.2,
+    "minHalfHeightWide": 0.36,
+    "wideFrom": 1.0,
+    "wideTo": 1.6
   },
   "states": {
     "IDLE": "slow breathing, occasional blink, gaze follows the Mac cursor when streamed",
@@ -170,16 +178,34 @@
       "distance": 2.00539
     },
     {
+      "aspect": 1.3,
+      "halfHeight": 0.43,
+      "centerY": 1.76,
+      "distance": 1.724636
+    },
+    {
       "aspect": 1.6,
-      "halfHeight": 0.5,
-      "centerY": 1.69,
-      "distance": 2.00539
+      "halfHeight": 0.36,
+      "centerY": 1.83,
+      "distance": 1.443881
     },
     {
       "aspect": 2.4,
-      "halfHeight": 0.5,
-      "centerY": 1.69,
-      "distance": 2.00539
+      "halfHeight": 0.36,
+      "centerY": 1.83,
+      "distance": 1.443881
+    },
+    {
+      "aspect": 3.2,
+      "halfHeight": 0.36,
+      "centerY": 1.83,
+      "distance": 1.443881
     }
-  ]
+  ],
+  "lighting": {
+    "description": "Neutral white key/fill with restrained red room bounce; red rim glow only rises with real activity (pose.glow).",
+    "rimBase": 0.25,
+    "rimGlow": 0.9,
+    "ambientRedness": 0.12
+  }
 }

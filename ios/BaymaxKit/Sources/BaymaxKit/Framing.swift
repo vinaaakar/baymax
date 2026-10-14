@@ -10,6 +10,10 @@ public enum BustSpec {
     public static let eyeYOffset: Float = 0.012
     public static let eyeRadius: Float = 0.03
     public static let eyeLineRadius: Float = 0.0045
+    /// Radians the eyes rotate about the neck pivot for a full look left/right (x) and up/down (y): they slide along the face.
+    public static let eyeTravel = SIMD2<Float>(0.12, 0.08)
+    /// Lighting: restrained red room bounce; the red rim rises only with real activity (pose glow).
+    public static let rimBase = 0.25, rimGlow = 0.9, ambientRedness = 0.12
     /// Small rounded neck/shoulder collar under the head. Nothing exists below it (no torso, arms, legs, floor).
     public static let torsoProfile: [SIMD2<Float>] = [[0.0, 1.5], [0.14, 1.505], [0.24, 1.525], [0.3, 1.56], [0.32, 1.6], [0.31, 1.65],
                                                       [0.27, 1.7], [0.18, 1.75], [0.08, 1.77], [0.0, 1.775]]
@@ -26,6 +30,9 @@ public struct FramingSpec: Equatable, Sendable {
     public var bustBottom = 1.5
     public var minHalfWidth = 0.44
     public var minHalfHeight = 0.5
+    public var minHalfHeightWide = 0.36  // landscape views (iPhone desk mode) show a larger head
+    public var wideFrom = 1.0
+    public var wideTo = 1.6
     public var topMargin = 0.16
     public var anchorFromTop = 0.42
     public var maxHalfHeight = 1.2
@@ -43,7 +50,9 @@ public enum BustFraming {
     /// Same algorithm as desktop/src/shared/framing.ts: fixed vertical FOV, head never cut, bust anchored high in tall views.
     public static func camera(aspect: Double, spec f: FramingSpec = FramingSpec()) -> BustCamera {
         let a = aspect.isFinite && aspect > 0 ? aspect : 1
-        let halfV = min(max(f.minHalfHeight, f.minHalfWidth / a), f.maxHalfHeight)
+        let t = min(1, max(0, (a - f.wideFrom) / (f.wideTo - f.wideFrom)))
+        let minHalf = f.minHalfHeight + (f.minHalfHeightWide - f.minHalfHeight) * t
+        let halfV = min(max(minHalf, f.minHalfWidth / a), f.maxHalfHeight)
         let bustCenter = (f.headTop + f.bustBottom) / 2
         var centerY = bustCenter - halfV * (1 - 2 * f.anchorFromTop)
         centerY = max(centerY, f.headTop + f.topMargin - halfV)

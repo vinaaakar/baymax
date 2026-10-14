@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { CharacterState } from "../shared/protocol";
-import { bustCamera } from "../shared/framing";
+import { bustCamera, VISUAL_SPEC } from "../shared/framing";
 import { applyPose, buildBaymax, PALETTE } from "./baymaxModel";
 import { blend, frameRateFor, REST, targetPose, type Pose } from "./rig";
 
@@ -51,7 +51,9 @@ export default function BaymaxCharacter(props: CharacterProps) {
     const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 50);
 
     // Lighting: warm key, soft fill, crimson rim from behind, hemisphere tinted by the red room.
-    const hemi = new THREE.HemisphereLight("#fff4f0", PALETTE.crimson, 0.75);
+    // Neutral key/fill with a restrained red room bounce (design spec "lighting"); the red rim rises only with activity.
+    const LIGHT = VISUAL_SPEC.lighting;
+    const hemi = new THREE.HemisphereLight("#fff8f6", new THREE.Color("#ffffff").lerp(new THREE.Color(PALETTE.crimson), LIGHT.ambientRedness * 3), 0.85);
     scene.add(hemi);
     const key = new THREE.DirectionalLight("#fff7ee", 2.1);
     key.position.set(2.5, 4.5, 4);
@@ -110,10 +112,10 @@ export default function BaymaxCharacter(props: CharacterProps) {
       });
       pose = reduced && p.state !== "IDLE" ? blend(pose, target, dt, 14) : blend(pose, target, dt, 5);
       applyPose(rig, pose);
-      rim.intensity = 4 + pose.glow * 14;
+      rim.intensity = 9 * (LIGHT.rimBase + pose.glow * LIGHT.rimGlow);
       const dim = 1 - pose.dim * 0.55;
       key.intensity = 2.1 * dim;
-      hemi.intensity = 0.75 * dim;
+      hemi.intensity = 0.85 * dim;
       renderer.render(scene, camera);
       el.dataset.renderedState = p.state;
     };

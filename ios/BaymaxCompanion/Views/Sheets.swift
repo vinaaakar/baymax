@@ -2,13 +2,24 @@ import AVFoundation
 import BaymaxKit
 import SwiftUI
 
-struct ConversationView: View {
+/// Conversation history + text input. Used inline beside the face (landscape) and inside ConversationView (sheet).
+/// Shows only real messages from the Mac (assistant replies and task results); nothing is generated on the phone.
+struct ConversationPanel: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    var onClose: (() -> Void)?
     @State private var draft = ""
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            if let onClose {
+                HStack {
+                    Text("Conversation").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button(action: onClose) { Image(systemName: "xmark.circle.fill").font(.title3) }
+                        .accessibilityLabel("Close conversation and show the face")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
@@ -22,22 +33,34 @@ struct ConversationView: View {
                                 .id(m.id)
                         }
                     }
-                    .padding()
+                    .padding(12)
                 }
                 .onAppear { proxy.scrollTo(model.messages.last?.id) }
                 .onChange(of: model.messages.count) { _, _ in withAnimation { proxy.scrollTo(model.messages.last?.id) } }
             }
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    TextField("Message", text: $draft).textFieldStyle(.roundedBorder).onSubmit { model.send(text: draft); draft = "" }
-                    Button("Send") { model.send(text: draft); draft = "" }.disabled(draft.isEmpty || !model.display.connected)
-                }
-                .padding()
-                .background(.bar)
+            HStack {
+                TextField(model.display.connected ? "Message" : "Not connected to the Mac", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.send(text: draft); draft = "" }
+                Button("Send") { model.send(text: draft); draft = "" }
+                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.display.connected)
             }
-            .background(Theme.background)
-            .navigationTitle("Conversation")
-            .toolbar { Button("Done") { dismiss() } }
+            .padding(10)
+        }
+        .foregroundStyle(Theme.white)
+    }
+}
+
+struct ConversationView: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ConversationPanel()
+                .background(Theme.background)
+                .navigationTitle("Conversation")
+                .toolbar { Button("Done") { dismiss() } }
         }
         .preferredColorScheme(.dark)
     }
@@ -90,6 +113,7 @@ struct SettingsView: View {
     @State private var scanning = false
     @State private var error: String?
     @AppStorage("baymax.debugCursor") private var debugCursor = false
+    @AppStorage(OrientationController.deskModeKey) private var deskMode = true
     @State private var host = ""
     @State private var port = "8766"
     @State private var fingerprint = ""
@@ -119,6 +143,12 @@ struct SettingsView: View {
                         TextField("6-digit code", text: $code).keyboardType(.numberPad)
                         Button("Pair") { error = model.pairManually(host: host, port: Int(port) ?? 0, fingerprint: fingerprint, code: code) }
                     }
+                }
+                Section("Desk mode") {
+                    Toggle("Landscape desk companion", isOn: $deskMode)
+                        .onChange(of: deskMode) { _, on in OrientationController.apply(deskMode: on) }
+                    Text("On: BAYMAX's face always shows in landscape, like a small companion on your desk, even with Portrait Orientation Lock on. Off: the screen follows how you hold the phone.")
+                        .font(.footnote).foregroundStyle(Theme.muted)
                 }
                 Section("Where is this iPhone?") {
                     Picker("Position relative to the Mac display", selection: $model.placement) {

@@ -52,3 +52,35 @@ describe("head-only composition (design/baymax-visual-spec.json)", () => {
     expect(share).toBeLessThan(0.75); // ...with breathing room, not enormous
   });
 });
+
+describe("landscape desk mode and expressive eyes", () => {
+  it("landscape face regions show a larger head that is never cropped", () => {
+    const F = VISUAL_SPEC.framing;
+    const square = bustCamera(1.0).halfHeight;
+    for (const aspect of [1.6, 2.2, 3.2]) {
+      const f = bustCamera(aspect);
+      expect(f.halfHeight).toBeLessThan(square); // larger head than in a square view
+      expect(f.centerY + f.halfHeight).toBeGreaterThanOrEqual(F.headTop + F.topMargin - 1e-9);
+      expect(f.centerY - f.halfHeight).toBeLessThan(F.headTop - 2 * VISUAL_SPEC.avatar.head.radii[1]); // whole head visible
+    }
+  });
+
+  it("eyes follow the gaze along the curved face instead of sinking into it", () => {
+    const rig = buildBaymax({ segments: 16 });
+    const head = rig.headPivot.children.find((c) => c.name === "head")!;
+    const pose = { ...REST, eyeX: 1, eyeY: 0.6 };
+    applyPose(rig, pose);
+    rig.root.updateMatrixWorld(true);
+    const eye = new THREE.Vector3();
+    rig.eyeR.getWorldPosition(eye);
+    const local = head.worldToLocal(eye.clone()); // unit-sphere space of the head ellipsoid
+    expect(local.length()).toBeGreaterThan(0.93); // still on (or just under) the surface
+    expect(local.length()).toBeLessThan(1.06);
+    applyPose(rig, REST);
+    rig.root.updateMatrixWorld(true);
+    const rest = new THREE.Vector3();
+    rig.eyeR.getWorldPosition(rest);
+    expect(eye.x - rest.x).toBeGreaterThan(0.02); // visibly moved toward the look direction
+    rig.dispose();
+  });
+});

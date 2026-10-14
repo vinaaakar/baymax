@@ -97,7 +97,8 @@ final class BaymaxNode: SCNNode {
         let pitch = simd_quatf(angle: Float(p.headPitch), axis: [1, 0, 0])
         let roll = simd_quatf(angle: Float(p.headRoll), axis: [0, 0, 1])
         headPivot.simdOrientation = yaw * pitch * roll
-        eyes.position = SCNVector3(Float(p.eyeX * 0.012), Float(p.eyeY * 0.008), 0)
+        // Same as the Mac: rotate about the neck pivot so the eyes slide along the curved face.
+        eyes.eulerAngles = SCNVector3(-Float(p.eyeY) * BustSpec.eyeTravel.y, Float(p.eyeX) * BustSpec.eyeTravel.x, 0)
         let open = Float(max(0.04, min(1, p.eyeOpen)))
         eyeL.scale.y = 1.05 * open
         eyeR.scale.y = 1.05 * open

@@ -49,7 +49,7 @@ public enum CharacterRig {
             p.headYaw = lx * 0.28 + sin(t * 0.37) * 0.04 * m
             p.headPitch = 0.05 - ly * 0.12 + sin(t * 0.23) * 0.02 * m
             p.headRoll = sin(t * 0.29) * 0.025 * m
-            p.eyeX = lx * 0.5; p.eyeY = ly * 0.3
+            p.eyeX = lx * 0.9; p.eyeY = ly * 0.7  // the eyes lead, the head follows a little (same in rig.ts)
             p.sway = sin(t * 0.31) * 0.012 * m
         case .listening:
             p.lean = 0.06; p.headYaw = lx * 0.18; p.headPitch = -0.02 - ly * 0.08; p.headRoll = 0.09 * m

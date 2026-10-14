@@ -14,7 +14,7 @@
   <key>LSRequiresIPhoneOS</key><true/>
   <key>UILaunchScreen</key><dict/>
   <key>UIRequiresFullScreen</key><true/>
-  <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+  <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string><string>UIInterfaceOrientationPortrait</string></array>
   <key>NSMicrophoneUsageDescription</key><string>BAYMAX listens only while you press the microphone button, and recognises speech on this iPhone.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Your speech is transcribed on this iPhone (on-device only) so BAYMAX can understand requests.</string>
   <key>NSCameraUsageDescription</key><string>The camera is used only to scan the pairing QR code shown on your Mac.</string>

@@ -210,6 +210,9 @@ final class VisualSpecParityTests: XCTestCase {
         XCTAssertEqual(mine.topMargin, f["topMargin"] as! Double)
         XCTAssertEqual(mine.anchorFromTop, f["anchorFromTop"] as! Double)
         XCTAssertEqual(mine.maxHalfHeight, f["maxHalfHeight"] as! Double)
+        XCTAssertEqual(mine.minHalfHeightWide, f["minHalfHeightWide"] as! Double)
+        XCTAssertEqual(mine.wideFrom, f["wideFrom"] as! Double)
+        XCTAssertEqual(mine.wideTo, f["wideTo"] as! Double)
         for v in spec["framingTestVectors"] as! [[String: Double]] {
             let c = BustFraming.camera(aspect: v["aspect"]!)
             XCTAssertEqual(c.halfHeight, v["halfHeight"]!, accuracy: 1e-5)
@@ -233,6 +236,17 @@ final class VisualSpecParityTests: XCTestCase {
         XCTAssertTrue(BustSpec.armProfile.isEmpty)
     }
 
+    func testEyesAndLightingMatchSpec() throws {
+        let spec = try loadVisualSpec()
+        let eyes = (spec["avatar"] as! [String: Any])["eyes"] as! [String: Any]
+        let travel = eyes["travel"] as! [Double]
+        XCTAssertEqual(BustSpec.eyeTravel, SIMD2<Float>(Float(travel[0]), Float(travel[1])))
+        let light = spec["lighting"] as! [String: Double]
+        XCTAssertEqual(BustSpec.rimBase, light["rimBase"])
+        XCTAssertEqual(BustSpec.rimGlow, light["rimGlow"])
+        XCTAssertEqual(BustSpec.ambientRedness, light["ambientRedness"])
+    }
+
     func testPaletteMatchesSpec() throws {
         let colors = try loadVisualSpec()["colors"] as! [String: String]
         XCTAssertEqual(colors["background"], "#180509")
@@ -240,5 +254,39 @@ final class VisualSpecParityTests: XCTestCase {
         XCTAssertEqual(colors["highlight"], "#FF334F")
         XCTAssertEqual(colors["surface"], "#080305")
         XCTAssertEqual(colors["text"], "#F5F5F2")
+    }
+}
+
+
+/// Landscape-first desk companion layout.
+final class CompanionLayoutTests: XCTestCase {
+    func testLandscapeIsFaceOnlyByDefault() {
+        let l = CompanionLayout.compute(width: 844, height: 360, conversationOpen: false)  // iPhone 14 landscape, inside safe area
+        XCTAssertTrue(l.landscape)
+        XCTAssertEqual(l.mode, .faceOnly)
+        XCTAssertEqual(l.faceWidthFraction, 1)
+        XCTAssertLessThan(l.micDiameter, 64)  // compact controls leave the height to the face
+    }
+
+    func testLandscapeConversationSitsBesideASmallerFace() {
+        let l = CompanionLayout.compute(width: 844, height: 360, conversationOpen: true)
+        XCTAssertEqual(l.mode, .faceBesideConversation)
+        XCTAssertGreaterThan(l.faceWidthFraction, 0.3)
+        XCTAssertLessThan(l.faceWidthFraction, 0.5)
+        XCTAssertEqual(l.replyLines, 0)  // the full conversation is already visible
+    }
+
+    func testPortraitAndNarrowUseASheet() {
+        XCTAssertEqual(CompanionLayout.compute(width: 390, height: 760, conversationOpen: true).mode, .faceWithConversationSheet)
+        XCTAssertEqual(CompanionLayout.compute(width: 520, height: 300, conversationOpen: true).mode, .faceWithConversationSheet)
+    }
+
+    func testWideFaceRegionShowsALargerHeadWithoutCropping() {
+        let f = FramingSpec()
+        for aspect in [1.6, 2.4, 3.2] {  // landscape face regions
+            let c = BustFraming.camera(aspect: aspect)
+            XCTAssertEqual(c.halfHeight, f.minHalfHeightWide, accuracy: 1e-9)
+            XCTAssertGreaterThanOrEqual(c.centerY + c.halfHeight, f.headTop + f.topMargin - 1e-9)  // head never cut
+        }
     }
 }

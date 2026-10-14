@@ -33,14 +33,20 @@ and `VisualSpecParityTests` fails if any number differs from the JSON.
 - **Head:** white ellipsoid with radii 0.26 × 0.185 × 0.22, pivoting at the neck.
 - **Face:** two black eyes joined by a thin line that follows the curvature of the head.
 - **Arms:** none. Pointing is done with the head and eyes.
+- **Eyes:** follow the gaze by rotating up to 0.12 rad (sideways) and 0.08 rad (up/down) about the neck pivot, so they slide along the
+  face instead of sinking into it. In IDLE the eyes lead (90 % of the look) and the head follows a little.
+- **Lighting:** neutral white key and fill with a restrained red room bounce. The red rim light rises only with real activity.
+- **Layout:** on both devices the face has its own region between the status bar and the controls; nothing is drawn over it.
+  The iPhone is landscape-first (Desk mode, on by default); in landscape the conversation opens beside a smaller face.
 - **Framing (identical on both platforms):**
   - Vertical FOV is 28°.
-  - Half-height = min(max(0.5, 0.44 / aspect), 1.2).
+  - Half-height = min(max(minHalf, 0.44 / aspect), 1.2), where minHalf goes from 0.5 (square) to 0.36 (aspect ≥ 1.6), so landscape
+    face regions (iPhone desk mode) show a larger head.
   - The head-and-collar centre sits 42 % from the top, but the frame top never cuts the head (head top + 0.16 margin, which leaves room for status pills).
   - The camera looks straight ahead.
 
   Test vectors for aspect ratios 0.46, 0.68, 1.0, 1.6 and 2.4 are in the JSON.
-- Evidence: `docs/images/head-composition-desktop-renderer.png` shows the real Electron renderer at phone (390×844), Mac companion
+- Evidence: `docs/images/head-landscape-desktop-renderer.png` shows the real Electron renderer at phone (390×844), Mac companion
   (320×470) and wide (1000×640) sizes. The SceneKit port uses the same numbers but **has not been rendered here** (no iOS toolchain).
 
 ## Animation states

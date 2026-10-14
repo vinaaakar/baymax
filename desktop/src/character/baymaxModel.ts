@@ -145,7 +145,8 @@ export function applyPose(rig: BaymaxRig, p: Pose): void {
   rig.torso.scale.x = 1 + (1 - p.breathe) * -0.5; // volume-preserving-ish breathing
   rig.headPivot.position.y = AV.head.pivot[1] * p.breathe;
   rig.headPivot.rotation.set(p.headPitch, p.headYaw, p.headRoll, "YXZ");
-  rig.eyes.position.set(p.eyeX * 0.012, p.eyeY * 0.008, 0);
+  // Eyes visibly follow the gaze by rotating about the neck pivot, sliding along the curved face (not sinking into it).
+  rig.eyes.rotation.set(-p.eyeY * AV.eyes.travel[1], p.eyeX * AV.eyes.travel[0], 0);
   const open = Math.max(0.04, Math.min(1, p.eyeOpen));
   rig.eyeL.scale.y = 1.05 * open;
   rig.eyeR.scale.y = 1.05 * open;

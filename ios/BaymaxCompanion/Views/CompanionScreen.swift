@@ -1,7 +1,10 @@
 import BaymaxKit
 import SwiftUI
 
-/// The main iPhone screen: deep red stage, large centred character, compact controls below it.
+/// The main iPhone screen — a desk companion, landscape first.
+/// Layout (top to bottom): compact status + settings, the face (its own region; nothing overlaps it),
+/// short status messages, and one compact row of controls. In landscape with the conversation open, the face
+/// shrinks to the left and the conversation panel sits beside it. Rules live in BaymaxKit.CompanionLayout.
 struct CompanionScreen: View {
     @EnvironmentObject var model: AppModel
     @State private var showConversation = false
@@ -13,33 +16,37 @@ struct CompanionScreen: View {
     @AppStorage("baymax.debugCursor") private var debugCursor = false
 
     var body: some View {
-        ZStack {
-            Theme.stage
-            GeometryReader { geo in
-                CharacterView(state: model.state, level: model.speechIn.level, gaze: model.gaze)
-                    .frame(width: geo.size.width, height: geo.size.height * 0.78)
-                    .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
-                    .saturation(model.state == .disconnected ? 0.5 : 1)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if model.sleeping { model.setSleeping(false) } }
-                    .accessibilityElement()
-                    .accessibilityLabel("BAYMAX, \(model.state.accessibilityDescription)")
-                    .accessibilityHint(model.sleeping ? "Double-tap to wake" : "")
-                    .accessibilityAddTraits(.isImage)
-            }
-            VStack(spacing: 10) {
-                topBar
-                if debugCursor {
-                    CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping)
+        GeometryReader { geo in
+            let layout = CompanionLayout.compute(width: Double(geo.size.width), height: Double(geo.size.height),
+                                                 conversationOpen: showConversation)
+            ZStack {
+                Theme.stage
+                VStack(spacing: layout.landscape ? 6 : 10) {
+                    topBar
+                    if debugCursor {
+                        CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping)
+                    }
+                    if layout.mode == .faceBesideConversation {
+                        HStack(spacing: 12) {
+                            face.frame(width: geo.size.width * layout.faceWidthFraction)
+                            ConversationPanel(onClose: { showConversation = false })
+                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                    } else {
+                        face.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    statusArea(layout)
+                    controlRow(layout)
                 }
-                Spacer()
-                bottomControls
+                .padding(.horizontal, layout.landscape ? 12 : 16)
+                .padding(.vertical, 4)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+            .sheet(isPresented: Binding(get: { showConversation && layout.mode == .faceWithConversationSheet },
+                                        set: { if !$0 { showConversation = false } })) {
+                ConversationView().environmentObject(model)
+            }
         }
         .preferredColorScheme(.dark)
-        .sheet(isPresented: $showConversation) { ConversationView().environmentObject(model) }
         .sheet(isPresented: $showTasks) { TaskSheet().environmentObject(model).presentationDetents([.medium, .large]) }
         .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model) }
         .onChange(of: model.speechIn.state) { _, newValue in
@@ -47,19 +54,28 @@ struct CompanionScreen: View {
         }
     }
 
+    /// The head only, in its own region. Disconnected/asleep dims it; tapping a sleeping face wakes it.
+    private var face: some View {
+        CharacterView(state: model.state, level: model.speechIn.level, gaze: model.gaze)
+            .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
+            .saturation(model.state == .disconnected ? 0.5 : 1)
+            .contentShape(Rectangle())
+            .onTapGesture { if model.sleeping { model.setSleeping(false) } }
+            .accessibilityElement()
+            .accessibilityLabel("BAYMAX, \(model.state.accessibilityDescription)")
+            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "")
+            .accessibilityAddTraits(.isImage)
+    }
+
     private var topBar: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Circle().fill(model.display.connected ? Color.green : (model.paired == nil ? Theme.muted : Color.red)).frame(width: 8, height: 8)
-                Text(model.connectionText)
+                Text(model.connectionText).lineLimit(1)
             }
             .pill()
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Mac connection: \(model.connectionText)")
-            if model.display.connected && model.cursorLive && !model.sleeping {
-                Label("Following cursor", systemImage: "cursorarrow.motionlines").labelStyle(.titleAndIcon).pill()
-                    .accessibilityLabel("Following the Mac cursor")
-            }
             if model.display.connected, let ready = model.macModelReady {
                 // The AI runs on the Mac (Ollama); this reports that model, not anything on the phone.
                 Text(ready ? "Mac AI · \(model.macModelName.isEmpty ? "ready" : model.macModelName)" : "Mac AI unavailable")
@@ -68,32 +84,36 @@ struct CompanionScreen: View {
                     .foregroundStyle(ready ? Theme.white : .yellow)
                     .accessibilityLabel(ready ? "The Mac's local AI model is ready" : "The Mac's local AI model is not available")
             }
-            Spacer()
-            Button { showSettings = true } label: { Image(systemName: "gearshape").padding(8) }
+            if model.display.connected && model.cursorLive && !model.sleeping {
+                Image(systemName: "cursorarrow.motionlines").pill()
+                    .accessibilityLabel("Following the Mac cursor")
+            }
+            Spacer(minLength: 4)
+            Button { showSettings = true } label: { Image(systemName: "gearshape").padding(6) }
                 .accessibilityLabel("Settings and pairing")
         }
+        .font(.caption)
         .foregroundStyle(Theme.white)
-        .padding(.top, 4)
     }
 
-    private var bottomControls: some View {
-        VStack(spacing: 8) {
+    /// Short, readable messages under the face (never on top of it).
+    @ViewBuilder
+    private func statusArea(_ layout: CompanionLayout) -> some View {
+        VStack(spacing: 6) {
             if model.estopEngaged {
                 Label("Emergency Stop engaged — reset it on the Mac", systemImage: "exclamationmark.octagon.fill")
-                    .font(.footnote.weight(.semibold)).frame(maxWidth: .infinity).padding(10)
+                    .font(.footnote.weight(.semibold)).frame(maxWidth: .infinity).padding(8)
                     .background(Color(hex: 0x5C0C18), in: RoundedRectangle(cornerRadius: 12))
             }
             ForEach(model.approvals) { ApprovalCard(item: $0) }
-            if let problem = model.connectionProblem {
-                Text(problem).font(.footnote).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+            if (model.state == .error || model.state == .concerned), !model.stateReason.isEmpty {
+                messageRow(model.stateReason, icon: model.state == .error ? "exclamationmark.triangle" : "hand.raised")
             }
-            if case .unavailable(let why) = model.speechIn.state {
-                Text(why).font(.footnote).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
-            }
-            if let reply = model.lastReply, model.state != .sleeping {
-                Text(reply.text).font(.callout).lineLimit(3).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            if let problem = model.connectionProblem { messageRow(problem, icon: "wifi.exclamationmark") }
+            if case .unavailable(let why) = model.speechIn.state { messageRow(why, icon: "mic.slash") }
+            if layout.replyLines > 0, let reply = model.lastReply, model.state != .sleeping {
+                Text(reply.text).font(.callout).lineLimit(layout.replyLines).padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                     .onTapGesture { showConversation = true }
                     .accessibilityHint("Opens the conversation")
@@ -106,7 +126,7 @@ struct CompanionScreen: View {
                         if let p = task.progress { ProgressView(value: p).frame(width: 70) } else { ProgressView().controlSize(.small) }
                         Button("Cancel") { model.cancelActiveTask() }.buttonStyle(.bordered).controlSize(.small)
                     }
-                    .padding(10)
+                    .padding(8)
                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
@@ -114,49 +134,65 @@ struct CompanionScreen: View {
             }
             if typing {
                 HStack {
-                    TextField("Ask BAYMAX…", text: $draft).textFieldStyle(.plain).padding(10)
+                    TextField("Ask BAYMAX…", text: $draft).textFieldStyle(.plain).padding(8)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                         .focused($focused).submitLabel(.send)
                         .onSubmit { model.send(text: draft); draft = "" }
-                    Button("Send") { model.send(text: draft); draft = "" }.disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Send") { model.send(text: draft); draft = "" }
+                        .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.display.connected)
                 }
             }
-            HStack(spacing: 14) {
-                Button { showConversation = true } label: { Image(systemName: "text.bubble").frame(width: 44, height: 44) }
-                    .accessibilityLabel("Conversation history")
-                Button { typing.toggle(); focused = typing } label: { Image(systemName: "keyboard").frame(width: 44, height: 44) }
-                    .accessibilityLabel(typing ? "Hide keyboard input" : "Type a message")
-                MicButton()
-                Button { model.setSleeping(!model.sleeping) } label: {
-                    Image(systemName: model.sleeping ? "sun.max" : "moon.zzz").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel(model.sleeping ? "Wake BAYMAX" : "Put BAYMAX to sleep")
-                Button(role: .destructive) { model.emergencyStop() } label: {
-                    Text("STOP").font(.caption.weight(.heavy)).frame(width: 52, height: 44)
-                        .background(Color(hex: 0x5C0C18), in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.glow))
-                }
-                .accessibilityLabel("Emergency stop")
-                .accessibilityHint("Cancels and blocks all controlled actions on the Mac")
-            }
-            .foregroundStyle(Theme.white)
-            .disabled(!model.display.connected)
         }
+    }
+
+    private func messageRow(_ text: String, icon: String) -> some View {
+        Label(text, systemImage: icon).font(.footnote).lineLimit(3).padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// One compact row: conversation, keyboard, microphone (centre), sleep/wake, emergency stop.
+    private func controlRow(_ layout: CompanionLayout) -> some View {
+        HStack(spacing: layout.landscape ? 22 : 14) {
+            Button { showConversation.toggle() } label: {
+                Image(systemName: showConversation ? "face.smiling" : "text.bubble").frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(showConversation ? "Back to the face" : "Conversation")
+            Button { typing.toggle(); focused = typing } label: { Image(systemName: "keyboard").frame(width: 44, height: 44) }
+                .accessibilityLabel(typing ? "Hide keyboard input" : "Type a message")
+            MicButton(diameter: layout.micDiameter)
+            Button { model.setSleeping(!model.sleeping) } label: {
+                Image(systemName: model.sleeping ? "sun.max" : "moon.zzz").frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(model.sleeping ? "Wake BAYMAX" : "Put BAYMAX to sleep")
+            Button(role: .destructive) { model.emergencyStop() } label: {
+                Text("STOP").font(.caption.weight(.heavy)).frame(width: 52, height: 40)
+                    .background(Color(hex: 0x5C0C18), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.glow))
+            }
+            .accessibilityLabel("Emergency stop")
+            .accessibilityHint("Cancels and blocks all controlled actions on the Mac")
+        }
+        .foregroundStyle(Theme.white)
+        .disabled(!model.display.connected)
+        .padding(.bottom, layout.landscape ? 2 : 6)
     }
 }
 
 struct MicButton: View {
     @EnvironmentObject var model: AppModel
+    var diameter: Double = 64
 
     var body: some View {
         let listening = model.speechIn.isListening
+        let d = CGFloat(diameter)
         Button { model.toggleMic() } label: {
             ZStack {
-                Circle().fill(listening ? Color(hex: 0x4A0A15) : Theme.panel).frame(width: 64, height: 64)
-                Circle().strokeBorder(listening ? Theme.glow : .white.opacity(0.2), lineWidth: 2).frame(width: 64, height: 64)
+                Circle().fill(listening ? Color(hex: 0x4A0A15) : Theme.panel).frame(width: d, height: d)
+                Circle().strokeBorder(listening ? Theme.glow : .white.opacity(0.2), lineWidth: 2).frame(width: d, height: d)
                 if listening {
                     Circle().stroke(Theme.glow.opacity(0.3 + model.speechIn.level * 0.7), lineWidth: 2)
-                        .frame(width: 64 + model.speechIn.level * 18, height: 64 + model.speechIn.level * 18)
+                        .frame(width: d + CGFloat(model.speechIn.level * 18), height: d + CGFloat(model.speechIn.level * 18))
                 }
                 Image(systemName: listening ? "waveform" : "mic.fill").font(.title2)
             }
