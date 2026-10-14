@@ -289,6 +289,7 @@ def test_open_site_in_browser_separates_destination_from_app():
     assert resolve_destination("example.org/docs").url == "https://example.org/docs"
     assert resolve_destination("my cousin's bakery").kind == "search"  # unknown: an explicit search, never a made-up URL
     assert same_site("https://gemini.google.com/app", d) and not same_site("https://duckduckgo.com/?q=gemini", d)
+    assert not same_site("https://www.google.com/search?q=gemini", d)  # a sibling site is not Gemini (audit D3/D4)
 
 
 async def test_open_gemini_in_safari_is_verified_from_the_address_bar(env):

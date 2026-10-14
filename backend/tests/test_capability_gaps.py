@@ -106,8 +106,6 @@ def _text(r):
     ("type 2 lines into TextEdit", "screen.type_into", {"field": "text area", "text": "Line 1\nLine 2", "app": "TextEdit"}),
     ("Read the current window", "desktop.read_window", {}),
     ("Open ChatGPT", "apps.open", {"app": "Chatgpt"}),
-    ("Open ChatGPT and do some research based on how AI is are working right now", "ai.delegate",
-     {"service": "chatgpt", "prompt": "Research this and summarize it with sources: how AI is are working right now", "submit": True}),
 ])
 def test_session_commands_route_to_the_right_tool(q, tool, args):
     i = R.route(q)
@@ -372,10 +370,19 @@ async def test_when_baymax_is_in_front_the_window_behind_it_is_used_and_strips_a
 
 
 # ------------------------------------------------------------------ "Open ChatGPT on the Safari and do some research…"
-def test_research_in_a_named_browser_uses_that_browsers_website():
-    i = R.route("Open ChatGPT on the Safari and do some research on how AI works")
-    assert i.tool == "ai.delegate" and i.args == {"service": "chatgpt", "via": "browser", "browser": "Safari", "submit": True,
-                                                  "prompt": "Research this and summarize it with sources: how AI works"}
+def test_research_in_a_named_browser_opens_that_site_then_runs_web_research():
+    # D2: "open … and research …" = the two-step plan (open the requested site, then web research with real sources).
+    q = "Open ChatGPT on the Safari and do some research on how AI works"
+    i = R.route(q)
+    assert i.kind == "chat" and not i.reply  # handed to the plan builder
+    assert [(x.tool, x.args) for x in split_compound(R, q)] == [
+        ("apps.open_url", {"url": "ChatGPT", "browser": "Safari"}), ("research.web", {"query": "how AI works"})]
+
+
+def test_open_chatgpt_and_research_from_the_session_is_a_plan_not_a_delegation():
+    q = "Open ChatGPT and do some research based on how AI is are working right now"
+    assert [(x.tool, x.args) for x in split_compound(R, q)] == [
+        ("apps.open", {"app": "ChatGPT"}), ("research.web", {"query": "how AI is are working right now"})]
 
 
 @pytest.mark.parametrize("said,proposed,expect", [

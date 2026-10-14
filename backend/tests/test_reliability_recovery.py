@@ -160,16 +160,23 @@ async def test_open_chatgpt_in_safari_opens_the_official_site_in_safari(env):
     assert ("open_url", "https://chatgpt.com", "Safari") in env["desk"].calls
 
 
-@pytest.mark.parametrize("q,expect", [
-    ("open chatgpt undo some research on how i walk", {"service": "chatgpt", "submit": True,
-                                                      "prompt": "Research this and summarize it with sources: how i walk"}),
+@pytest.mark.parametrize("q,steps", [
+    ("open chatgpt undo some research on how i walk", [("apps.open", {"app": "ChatGPT"}), ("research.web", {"query": "how i walk"})]),
     ("Open ChatGPT on the Safari and do some research on how AI works",
-     {"service": "chatgpt", "submit": True, "via": "browser", "browser": "Safari",
-      "prompt": "Research this and summarize it with sources: how AI works"}),
+     [("apps.open_url", {"url": "ChatGPT", "browser": "Safari"}), ("research.web", {"query": "how AI works"})]),
+])
+def test_open_and_research_keeps_destination_and_topic_separate_as_a_plan(q, steps):
+    from baymax.intent.router import split_compound
+
+    assert [(x.tool, x.args) for x in split_compound(R, q)] == steps
+
+
+@pytest.mark.parametrize("q,expect", [
+    ("Ask Gemini to research how AI works", {"service": "gemini", "submit": True, "prompt": "Research how AI works"}),
     ("create a new chat in ChatGPT and research how AI works",
      {"service": "chatgpt", "submit": True, "new_chat": True, "prompt": "Research this and summarize it with sources: how AI works"}),
 ])
-def test_research_requests_keep_destination_and_topic_separate(q, expect):
+def test_explicit_ai_requests_keep_the_delegate_workflow(q, expect):
     i = R.route(q)
     assert (i.tool, i.args) == ("ai.delegate", expect)
 

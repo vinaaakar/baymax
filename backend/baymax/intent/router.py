@@ -471,6 +471,9 @@ WAKE = r"(baymax|bay ?max|bay-max|bimax|bimex|beymax|baymex|beemax|bymax|bay mac
 def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" = None) -> "list[Intent] | None":
     """'Open Safari and then open Terminal' -> two tool intents, run in order as one task. Only when every part is
     itself a recognised action (2-4 parts); otherwise None and the sentence is handled as a whole."""
+    research = _research_plan(raw, _rule_text(raw))
+    if research:
+        return research
     parts = [p.strip(" ,.") for p in re.split(r"\s*,?\s*\b(?:and then|then|and also|and|after that)\b\s*", raw, flags=re.I)]
     parts = [p for p in parts if p]
     if not 2 <= len(parts) <= 4:
@@ -499,21 +502,23 @@ def _research_intent(t: str, raw: str) -> "Intent | None":
     "open ChatGPT (in Safari) and do some research on X", "create a new chat in ChatGPT and research X" -> ai.delegate
     with the topic (sending needs approval); "create a new chat and research X" (no service named) and "research X" ->
     research.web, which returns real sources. Speech slips like "undo" for "and do" are tolerated."""
-    m = re.match(r"^(?:(?:open|use|go to|launch|start)\s+|(?:create|start|open|make)\s+(?:a\s+)?(new\s+chat)\s+(?:in|on|with)\s+)?"
-                 r"(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?(?:\s+(?:in|on|using|with|through)\s+(?:the\s+)?(" + _BROWSER_RX + r"))?"
-                 r"(?:\s+(?:and\s+)?(?:create|start|open)\s+(?:a\s+)?(new\s+chat))?" + _CONNECT + _TOPIC, t)
+    m = _SERVICE_RESEARCH.match(t)
     if m:
-        topic = _research_topic(raw, m.group(5))
+        topic = _research_topic(raw, m.group(6))
         if topic is None:
             return Intent("chat", reply="What should I research? For example: “open ChatGPT and research how AI works”.", text=raw)
-        svc = m.group(2).replace(" ", "")
+        if _research_plan(raw, t):
+            # "open Gemini in Safari and research X": open what was asked for, then the web research tool (real sources,
+            # verifiable). Returned as a plain chat intent so the assistant builds the plan with split_compound.
+            return Intent("chat", text=raw)
+        svc = m.group(3).replace(" ", "")
         args: dict[str, Any] = {"service": svc, "prompt": f"Research this and summarize it with sources: {topic}", "submit": True}
-        if m.group(1) or m.group(4):
+        if m.group(2) or m.group(5):
             args["new_chat"] = True
-        if m.group(3):  # "in Safari": the website in that browser, not the native app
+        if m.group(4):  # "in Safari": the website in that browser, not the native app
             args["via"] = "browser"
-            if m.group(3) != "browser":
-                args["browser"] = _BROWSER_NAMES.get(m.group(3), m.group(3).title())
+            if m.group(4) != "browser":
+                args["browser"] = _BROWSER_NAMES.get(m.group(4), m.group(4).title())
         return Intent("tool", "ai.delegate", args, f"Ask {_SERVICE_LABELS[svc]} to research"[:120], raw)
     m = re.match(r"^(?:create|start|open|make)\s+(?:a\s+)?new\s+chat" + _CONNECT + _TOPIC, t)
     if m:
@@ -522,6 +527,38 @@ def _research_intent(t: str, raw: str) -> "Intent | None":
             return Intent("chat", reply="What should I research?", text=raw)
         return Intent("tool", "research.web", {"query": topic}, f"Research {topic}"[:120], raw)
     return None
+
+
+_SERVICE_RESEARCH = re.compile(
+    r"^(?:(open|use|go to|launch|start)\s+|(?:create|start|open|make)\s+(?:a\s+)?(new\s+chat)\s+(?:in|on|with)\s+)?"
+    r"(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?(?:\s+(?:in|on|using|with|through)\s+(?:the\s+)?(" + _BROWSER_RX + r"))?"
+    r"(?:\s+(?:and\s+)?(?:create|start|open)\s+(?:a\s+)?(new\s+chat))?" + _CONNECT + _TOPIC)
+
+
+def _research_plan(raw: str, t: str) -> list[Intent] | None:
+    """"Open Gemini in Safari and research how AI works" -> [open Gemini in Safari, web research on the topic].
+    Only for the open/go-to form without "new chat"; "ask Gemini to research …" and "create a new chat in ChatGPT and
+    research …" stay the explicit ai.delegate workflow."""
+    m = _SERVICE_RESEARCH.match(t)
+    if not m or not m.group(1) or m.group(2) or m.group(5):
+        return None
+    topic = _research_topic(raw, m.group(6))
+    if topic is None:
+        return None
+    label = _SERVICE_LABELS[m.group(3).replace(" ", "")]
+    if m.group(4):
+        browser = "" if m.group(4) == "browser" else _BROWSER_NAMES.get(m.group(4), m.group(4).title())
+        opener = Intent("tool", "apps.open_url", {"url": label, "browser": browser}, f"Open {label} in {browser or 'the browser'}", raw)
+    else:
+        opener = Intent("tool", "apps.open", {"app": label}, f"Open {label}", raw)
+    return [opener, Intent("tool", "research.web", {"query": topic}, f"Research {topic}"[:120], raw)]
+
+
+def _rule_text(raw: str) -> str:
+    """The lower-cased form the router's rules match against (wake word, politeness and end punctuation removed)."""
+    t = " ".join(raw.lower().split()).rstrip(".!?")
+    t = re.sub(r"^((hey|hi|hello|ok|okay|yo)[ ,!]*)?" + WAKE + r"[ ,!.?]*", "", t)
+    return re.sub(r"^(please |could you |can you |would you )+", "", t).strip()
 
 
 def _research_topic(raw: str, lowered: str) -> str | None:

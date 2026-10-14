@@ -114,11 +114,15 @@ class OpenUrlTool(Tool):
                     return ToolResult(True, f"Opened {what}{where}.", {**data, "actualUrl": actual}, verified=True,
                                       verification=f"{browser}'s front tab is at {actual}")
                 await asyncio.sleep(0.25)
-            note = (f"{browser} is showing {actual}" if actual else
-                    f"I couldn't read {browser}'s address bar to confirm (allow BAYMAX under Automation for {browser})")
+            if actual:  # the address bar was read and shows another page: the destination was not reached
+                return ToolResult(False, f"I asked {browser} to open {what}, but it is showing {actual}.",
+                                  {**data, "actualUrl": actual, "errorKind": "not_verified"}, verified=False,
+                                  verification=f"{browser}'s front tab is at {actual}, not {dest.host}")
+            note = f"I couldn't read {browser}'s address bar to confirm (allow BAYMAX under Automation for {browser})"
             return ToolResult(True, f"Asked {browser} to open {what}, but I couldn't confirm the page loaded: {note}.",
-                              {**data, "actualUrl": actual}, verified=False, verification=note)
-        return ToolResult(True, f"Opened {what} in your default browser.", data, verified=False,
+                              {**data, "actualUrl": None}, verified=False, verification=note)  # dispatched, unverified
+        return ToolResult(True, f"Asked your default browser to open {what}. I can't see which page it shows, so this isn't "
+                                "confirmed.", data, verified=False,
                           verification="macOS accepted the URL; the default browser's page was not inspected")
 
 

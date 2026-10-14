@@ -53,13 +53,14 @@ def resolve_destination(text: str) -> Destination | None:
 
 
 def same_site(actual_url: str, dest: Destination) -> bool:
-    """Did the browser land on the requested site? (redirects within the same registrable domain count)."""
+    """Did the browser land on the requested site? The requested host or one of its subdomains counts
+    (en.wikipedia.org for wikipedia.org); a sibling on the same parent domain does not: www.google.com/search is not
+    gemini.google.com, so it must never verify "Gemini" or receive a prompt meant for it."""
     host = (urlparse(actual_url).hostname or "").removeprefix("www.")
     want = dest.host
     if not host or not want:
         return False
-    base = ".".join(want.split(".")[-2:])
-    return host == want or host.endswith("." + base) or host == base
+    return host == want or host.endswith("." + want)
 
 
 _BROWSER_WORDS = {"safari": "Safari", "chrome": "Google Chrome", "google chrome": "Google Chrome", "firefox": "Firefox", "arc": "Arc",

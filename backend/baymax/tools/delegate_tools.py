@@ -145,6 +145,7 @@ class DelegateToAITool(Tool):
                 ctx.progress(0.1, f"opening {dest.host} in {browser}")
                 await d.open_url(dest.url, browser)
                 target, data["via"], data["browser"] = browser, "browser", browser
+                url = None
                 for _ in range(16):
                     ctx.checkpoint()
                     url = await d.browser_url(browser)
@@ -152,6 +153,14 @@ class DelegateToAITool(Tool):
                         data["url"] = url
                         break
                     await asyncio.sleep(0.25)
+                if "url" not in data:
+                    # The page in front is not confirmed to be the service: never search it for a text box or type into
+                    # it (a fallback field could belong to a different site).
+                    seen = (f"{browser} is showing {url}" if url else
+                            f"I couldn't read {browser}'s address bar (allow BAYMAX under Automation for {browser})")
+                    return ToolResult(False, f"I asked {browser} to open {dest.host}, but I couldn't confirm it is showing "
+                                             f"{svc.label}: {seen}. Nothing was typed or sent.",
+                                      {**data, "actualUrl": url, "errorKind": "not_verified"})
             # 4-5: inspect the live interface and find the prompt field (pages and apps take a moment to load).
             data["stage"] = "opened"
             ctx.progress(0.35, f"looking for {svc.label}'s message box")
