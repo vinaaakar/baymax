@@ -22,6 +22,7 @@ _RULES: list[tuple[str, str]] = [
     ("desktop.click", r"\b(click|tap|press)\b"),
     ("desktop.scroll", r"\bscroll\b"),
     ("desktop.", r"\b(window|screen|click|button|element|type|press|menu|app)\b"),
+    ("ai.delegate", r"\b(chat ?gpt|claude|gemini|perplexity|openai|bard)\b"),
     ("screen.", r"\b(look|point|find|where|locate|click|press|button|field|menu|tab|icon|link|screen|show me)\b"),
     ("apps.open_project", r"\b(open|load|launch)\b.*\b(project|repo|repository|folder|code|xcode|vs ?code|editor)\b"),
     ("apps.open_url", r"\b(open|go to|visit|browse|navigate|website|site|page|url|link)\b|https?://|\.\w{2,}\b"),

@@ -297,7 +297,8 @@ class DeviceHub:
     async def _m_user_text(self, sess: DeviceSession, msg: proto.Message) -> None:
         source = f"device:{sess.device_id}"
         speak = bool(msg.payload.get("speakReply", msg.payload.get("source") == "voice"))
-        asyncio.create_task(self.assistant.handle_text(msg.payload["text"], source=source, speak=speak))
+        voice = msg.payload.get("source") == "voice"  # recognised on the iPhone: still validated as speech on the Mac
+        asyncio.create_task(self.assistant.handle_text(msg.payload["text"], source=source, speak=speak, voice=voice))
 
     async def _m_voice_state(self, sess: DeviceSession, msg: proto.Message) -> None:
         self.assistant.mic_state(msg.payload["state"], f"device:{sess.device_id}")

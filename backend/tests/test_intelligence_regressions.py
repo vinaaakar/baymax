@@ -190,7 +190,7 @@ INSTALLED = [AppInfo("Visual Studio Code", "", "com.microsoft.VSCode"), AppInfo(
     ("None", "none", None, None), ("", "none", None, None), (None, "none", None, None),
     ("VS Code", "resolved", "Visual Studio Code", True), ("Visual Studio Code", "resolved", "Visual Studio Code", True),
     ("vscode", "resolved", "Visual Studio Code", True), ("terminal", "resolved", "Terminal", True),
-    ("Safari", "resolved", "Safari", False), ("Photoshop", "unknown", None, None), ("Safary", "unknown", None, None),
+    ("Safari", "resolved", "Safari", False), ("Photoshop", "unknown", None, None), ("Safary", "resolved", "Safari", False),
 ])
 def test_app_resolver(heard, status, name, running):
     r = resolve_app(heard, RUNNING, INSTALLED)
@@ -200,7 +200,7 @@ def test_app_resolver(heard, status, name, running):
     if heard == "VS Code":
         assert r.app.process == "Code"  # AppleScript gets the real process name
     if heard == "Safary":
-        assert r.suggestions == ["Safari"]
+        assert r.app.name == "Safari"  # an unambiguous misspelling resolves (nothing else is close)
 
 
 @pytest.mark.parametrize("utterance,expect", [

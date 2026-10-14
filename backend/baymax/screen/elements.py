@@ -48,6 +48,7 @@ class ScreenElement:
     app: str = ""
     description: str = ""
     captured_at: float = field(default_factory=time.time)
+    value: str = ""  # current text of fields/static text (used to verify typed text)
 
     @property
     def center(self) -> tuple[float, float]:
@@ -58,6 +59,9 @@ class ScreenElement:
         return {"role": self.role, "label": self.label, "x": round(self.x, 1), "y": round(self.y, 1), "width": round(self.width, 1),
                 "height": round(self.height, 1), "centerX": round(cx, 1), "centerY": round(cy, 1), "source": self.source,
                 "confidence": round(self.confidence, 3), "app": self.app, "capturedAt": self.captured_at}
+
+
+TEXT_INPUT_ROLES = ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField")
 
 
 # ----------------------------------------------------------------- parsing
@@ -77,9 +81,12 @@ def parse_ax_dump(text: str, app: str = "", now: float | None = None) -> list[Sc
         if w <= 1 or h <= 1:
             continue  # invisible / collapsed
         label = name or desc or (value if role in ("AXStaticText", "AXLink", "AXMenuItem", "AXCell") else "")
+        if (not label or label == "missing value") and role in TEXT_INPUT_ROLES:
+            label = "text input"  # an unlabelled field is still a field (e.g. a chat prompt box with no placeholder)
         if not label or label == "missing value":
             continue
-        out.append(ScreenElement(role, label[:200], x, y, w, h, "ax", 1.0, app, desc[:200], now))
+        out.append(ScreenElement(role, label[:200], x, y, w, h, "ax", 1.0, app, desc[:200], now,
+                                 value="" if value == "missing value" else value[:2000]))
     return out
 
 

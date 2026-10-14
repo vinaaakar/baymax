@@ -25,10 +25,15 @@ class ConversationLog:
                 for r in reversed(rows)]
 
     def model_messages(self, limit: int = 12) -> list[dict[str, str]]:
+        """History for the model. Results of earlier actions are labelled as such so the model reads them as past
+        outcomes, never as new instructions; system notices (errors, sleep notices) are left out."""
         out = []
         for m in self.recent(limit):
-            if m["role"] in ("user", "assistant"):
-                out.append({"role": m["role"], "content": m["text"]})
+            if m["role"] == "user":
+                out.append({"role": "user", "content": m["text"]})
+            elif m["role"] == "assistant":
+                text = m["text"] if not m.get("taskId") else f"[Result of an earlier action, for context only]\n{m['text'][:1500]}"
+                out.append({"role": "assistant", "content": text})
         return out
 
     def clear(self) -> int:

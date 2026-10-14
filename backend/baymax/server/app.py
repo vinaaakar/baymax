@@ -114,6 +114,7 @@ class BaymaxServer:
         r.add_post("/api/voice/state", self.voice_state)
         r.add_post("/api/tts/stop", self.tts_stop)
         r.add_get("/api/history", self.history)
+        r.add_get("/api/requests", self.requests)
         r.add_get("/api/tasks", self.tasks)
         r.add_get("/api/tasks/{id}", self.task)
         r.add_post("/api/tasks/{id}/cancel", self.task_cancel)
@@ -337,6 +338,11 @@ class BaymaxServer:
     async def tts_stop(self, request: web.Request) -> web.Response:
         return web.json_response({"stopped": self.assistant.stop_speaking()})
 
+    async def requests(self, request: web.Request) -> web.Response:
+        """Pipeline trace of recent requests: intent, tool, validation, permissions, execution, verification."""
+        limit = max(1, min(int(request.query.get("limit", "30")), 100))
+        return web.json_response({"requests": self.assistant.traces.recent(limit)})
+
     async def history(self, request: web.Request) -> web.Response:
         return web.json_response({"messages": self.s.conversation.recent(int(request.query.get("limit", 100)))})
 
@@ -454,7 +460,7 @@ class BaymaxServer:
         return web.json_response({"model": saved.to_dict()})
 
     async def tool_list(self, request: web.Request) -> web.Response:
-        return web.json_response({"tools": [t.schema() for t in self.s.tools.all()]})
+        return web.json_response({"tools": [t.catalog_entry() for t in self.s.tools.all()]})
 
     async def tool_run(self, request: web.Request) -> web.Response:
         """Direct tool invocation from the workspace UI — same task lifecycle, policy and approvals as chat."""

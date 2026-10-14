@@ -63,6 +63,26 @@ class IntentRouter:
                         r"(can|do) you hear me( now)?|can you listen( to me)?|you there|testing( testing)?|test|mic test|"
                         r"thank you|thanks|nice to meet you)( baymax)?", bare):
             return Intent("greeting", text=raw)
+        # ---- delegate to another AI ("ask ChatGPT to …", "prepare this prompt in Claude: …", "send … to Gemini")
+        ai = r"(chat ?gpt|claude|gemini|perplexity)"
+        m = re.match(r"^(?:ask|tell|have|get)\s+" + ai + r"\s*,?\s+(?:to\s+)?(.+)$", t)
+        if m:
+            return _delegate(raw, m.group(1), m.group(2), submit=True)
+        m = re.match(r"^(?:open|launch|use|go to)\s+" + ai + r"(?:\s+app)?\s*,?\s+(?:and|then)\s+(enter|type|paste|put|write|ask)"
+                     r"(?:\s+(?:this|the|a|my))?(?:\s+(?:prompt|message|question))?\s*:?\s+(?:to\s+)?(.+)$", t)
+        if m:
+            return _delegate(raw, m.group(1), m.group(3), submit=m.group(2) == "ask")
+        m = re.match(r"^(?:prepare|draft|write|type|enter|put|paste)(?:\s+(?:this|the|a|my))?(?:\s+(?:prompt|message|question))?\s+"
+                     r"(?:in|into|for|to)\s+" + ai + r"(?:\s+app)?\s*(?::|saying|that says|asking)?\s*(.+)$", t)
+        if m:
+            return _delegate(raw, m.group(1), m.group(2), submit=False)
+        m = re.match(r"^(?:type|enter|put|paste)\s+[\"“'](.+)[\"”']\s+(?:in|into)\s+" + ai + r"$", t)
+        if m:
+            return _delegate(raw, m.group(2), m.group(1), submit=False)
+        m = re.match(r"^send\s+[\"“']?(.+?)[\"”']?\s+to\s+" + ai + r"$", t)
+        if m:
+            return _delegate(raw, m.group(2), m.group(1), submit=True)
+
         # ---- capabilities *in the current context* ("what can you do with this screen / here / in this app"): inspect it for real
         if re.search(r"\b(can|could) you (do|help( me)?)\b.{0,25}\b(with|on|in|about|for)\b.{0,20}\b(screen|window|app|page|tab|site)\b"
                      r"|\bwhat can you do (here|now)\b", bare):
@@ -244,10 +264,13 @@ class IntentRouter:
 
         # ---- "open <site> in <browser>": the browser is the app, the site is the destination
         m = re.match(r"^(?:open|launch|go to|visit|browse to|navigate to|load|show me)\s+(.+?)\s+(?:in|on|using|with)\s+"
-                     r"(safari|google chrome|chrome|firefox|arc|brave(?: browser)?|edge|microsoft edge|opera|vivaldi|chromium)$", t)
+                     r"(safari|google chrome|chrome|firefox|arc|brave(?: browser)?|edge|microsoft edge|opera|vivaldi|chromium"
+                     r"|(?:the |my |a )?(?:web )?browser)$", t)
         if m:
             dest = _strip_original(raw, m.group(1))
-            return Intent("tool", "apps.open_url", {"url": dest, "browser": _title(m.group(2))}, f"Open {dest} in {_title(m.group(2))}", raw)
+            browser = "" if m.group(2).endswith("browser") and not m.group(2).startswith("brave") else _title(m.group(2))
+            return Intent("tool", "apps.open_url", {"url": dest, "browser": browser},
+                          f"Open {dest} in {browser or 'the browser'}", raw)
 
         # ---- open apps / urls
         m = re.match(r"^(?:open|launch|start|go to|visit|browse to|navigate to)\s+(.+)$", t)
@@ -283,6 +306,15 @@ class IntentRouter:
 
 
 WAKE = r"(baymax|bay ?max|bay-max|bimax|bimex|beymax|baymex|beemax|bymax|bay mac|bae max|baemax|maymax)"
+
+
+def _delegate(raw: str, service: str, prompt_lower: str, *, submit: bool) -> "Intent":
+    prompt = _strip_original(raw, prompt_lower).strip().strip("\"“”'")
+    prompt = prompt[:1].upper() + prompt[1:]
+    svc = service.replace(" ", "")
+    label = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "perplexity": "Perplexity"}.get(svc, svc)
+    return Intent("tool", "ai.delegate", {"service": svc, "prompt": prompt, "submit": submit},
+                  f"{'Ask' if submit else 'Prepare a prompt in'} {label}", raw)
 
 
 def _strip_original(raw: str, lowered: str) -> str:

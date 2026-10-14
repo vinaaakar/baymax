@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import Tool
+from .catalog import meta_for
 
 
 class ToolRegistry:
@@ -14,6 +15,11 @@ class ToolRegistry:
             raise ValueError("tool must have a name")
         if tool.name in self._tools:
             raise ValueError(f"duplicate tool {tool.name}")
+        meta = meta_for(tool.name)
+        if meta is not None:
+            for attr in ("intents", "permissions", "timeout_s", "verification", "recovery"):
+                if not getattr(type(tool), attr, None):
+                    setattr(tool, attr, getattr(meta, attr))
         self._tools[tool.name] = tool
         return tool
 

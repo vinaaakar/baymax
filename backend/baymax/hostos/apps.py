@@ -104,4 +104,7 @@ def resolve_app(heard: str | None, running: list[AppInfo], installed: list[AppIn
         return AppResolution("resolved", strong[0][1])
     if len(strong) > 1:
         return AppResolution("ambiguous", suggestions=[a.name for _, a in strong[:3]])
+    # Misspellings ("safary", "termnal"): one clearly closest app, nothing else near it.
+    if scored and scored[0][0] >= 0.8 and len(q) >= 4 and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.15):
+        return AppResolution("resolved", scored[0][1])
     return AppResolution("unknown", suggestions=[a.name for s, a in scored[:2] if s >= 0.6])

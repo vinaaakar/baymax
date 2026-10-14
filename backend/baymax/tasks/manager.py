@@ -221,7 +221,11 @@ class TaskManager:
         ctx = ToolContext(services=self.s, task_id=task.id, source=task.source,
                           progress=lambda frac, text: self._progress(task, frac, text),
                           is_cancelled=lambda: task.cancel_requested)
-        result = await tool.run(ctx, args)
+        timeout = tool.timeout_s or 300.0
+        try:
+            result = await asyncio.wait_for(tool.run(ctx, args), timeout)
+        except asyncio.TimeoutError:
+            raise ToolError(f"that took longer than {timeout:.0f} seconds, so I stopped it") from None
         self.s.audit.record(task.source, tool.name, decision.risk.value, "ok" if result.ok else "failed",
                             {"task": task.id, "summary": result.summary[:300], "verified": result.verified})
         self._event(task, "step_result", {"step": step.title, **{k: v for k, v in result.to_dict().items() if k != "data"}})
@@ -375,7 +379,7 @@ def classify_error(exc: BaseException) -> str:
     msg = str(exc).lower()
     if isinstance(exc, ArgumentError):
         return "invalid_arguments"
-    if isinstance(exc, asyncio.TimeoutError) or "timed out" in msg or "timeout" in msg:
+    if isinstance(exc, asyncio.TimeoutError) or "timed out" in msg or "timeout" in msg or "took longer than" in msg:
         return "timeout"
     if isinstance(exc, PermissionError) or "permission" in msg or "not permitted" in msg:
         return "permission_denied"

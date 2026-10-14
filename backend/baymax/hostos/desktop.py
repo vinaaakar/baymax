@@ -122,6 +122,8 @@ class DesktopBackend:
     async def target_app(self) -> str: raise DesktopUnavailable(self._why())
     async def active_window(self) -> "ActiveWindow": raise DesktopUnavailable(self._why())
     async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
+    async def focus_element(self, app: str, role: str, x: float, y: float) -> None: raise DesktopUnavailable(self._why())
+    async def press_return(self, app: str) -> None: raise DesktopUnavailable(self._why())
     async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
     def _why(self) -> str:
@@ -210,11 +212,11 @@ _AS_LOCATE = """on run argv
             end try
           end if
           set v to ""
-          if r is in {"AXStaticText", "AXLink", "AXCell"} then
+          if r is in {"AXStaticText", "AXLink", "AXCell", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"} then
             try
               set v to value of e
               if v is missing value then set v to ""
-              set v to v as text
+              set v to my oneLine(v as text)
             end try
           end if
           set out to out & r & tab & nm & tab & d & tab & v & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z) & linefeed
@@ -224,6 +226,51 @@ _AS_LOCATE = """on run argv
     end tell
   end tell
   return out
+end run
+
+on oneLine(t)
+  set AppleScript's text item delimiters to {tab, return, linefeed}
+  set parts to text items of t
+  set AppleScript's text item delimiters to " "
+  set t to parts as text
+  set AppleScript's text item delimiters to ""
+  if length of t > 500 then set t to text 1 thru 500 of t
+  return t
+end oneLine"""
+
+# Focus the element with this role at this position (from the accessibility dump), so typing goes into it.
+_AS_FOCUS = """on run argv
+  set appName to item 1 of argv
+  set roleName to item 2 of argv
+  set tx to (item 3 of argv) as number
+  set ty to (item 4 of argv) as number
+  tell application "System Events"
+    tell process appName
+      set frontmost to true
+      set els to (every UI element of (entire contents of window 1) whose role is roleName)
+      repeat with e in els
+        set p to position of e
+        if (((item 1 of p) - tx) ^ 2 + ((item 2 of p) - ty) ^ 2) < 36 then
+          try
+            set focused of e to true
+          on error
+            perform action "AXPress" of e
+          end try
+          return "ok"
+        end if
+      end repeat
+    end tell
+  end tell
+  error "element not found" number 1404
+end run"""
+
+_AS_RETURN = """on run argv
+  set appName to item 1 of argv
+  tell application "System Events"
+    tell process appName to set frontmost to true
+    delay 0.2
+    key code 36
+  end tell
 end run"""
 
 # Window titles of an app; matches the process by name or displayed name ("Visual Studio Code" runs as "Code").
@@ -564,6 +611,16 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         out = await self._osascript(_AS_LOCATE, app, str(max(1, min(limit, 1500))), timeout=25)
         return parse_ax_dump(out.replace(",", "."), app)  # some locales print decimal commas
+
+    async def focus_element(self, app: str, role: str, x: float, y: float) -> None:
+        app = validate_app_name(app)
+        if role not in ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"):
+            raise DesktopUnavailable("only text inputs can be focused for typing")
+        await self._osascript(_AS_FOCUS, app, role, str(round(x)), str(round(y)), timeout=20)
+
+    async def press_return(self, app: str) -> None:
+        app = validate_app_name(app)
+        await self._osascript(_AS_RETURN, app, timeout=15)
 
     def screen_recording_allowed(self) -> bool | None:
         Q = self._quartz

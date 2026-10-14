@@ -87,6 +87,12 @@ class Tool:
     args: dict[str, Arg] = {}
     # Whether the planner may offer this tool to the language model.
     model_callable: bool = True
+    # Typed metadata (see tools/catalog.py; filled in at registration unless the class sets it).
+    intents: tuple[str, ...] = ()
+    permissions: tuple[str, ...] = ()
+    timeout_s: float = 0.0
+    verification: str = ""
+    recovery: str = ""
 
     def validate(self, args: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(args, dict):
@@ -133,6 +139,13 @@ class Tool:
             "args": {k: {"type": a.type, "required": a.required, "description": a.description,
                          **({"choices": list(a.choices)} if a.choices else {})} for k, a in self.args.items()},
         }
+
+    def catalog_entry(self) -> dict[str, Any]:
+        """Full typed declaration (API / diagnostics). The model only ever sees schema()."""
+        return {**self.schema(), "intents": list(self.intents), "permissions": list(self.permissions), "timeoutS": self.timeout_s,
+                "verification": self.verification, "recovery": self.recovery,
+                "confirmation": "required" if self.risk is Risk.HIGH else "by category/policy",
+                "categories": sorted(self.categories)}
 
 
 AsyncTool = Callable[[ToolContext, dict[str, Any]], Awaitable[ToolResult]]

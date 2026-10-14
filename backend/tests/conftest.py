@@ -44,6 +44,8 @@ class FakeDesktop(DesktopBackend):
         self.tab_url: dict[str, str] = {}  # browser -> URL of its front tab
         self.redirects: dict[str, str] = {}  # requested URL -> where the browser actually lands
         self.automation = True  # macOS Automation permission for reading the browser's address bar
+        self.focused: dict[str, tuple] = {}
+        self.ax_after_submit: dict[str, str] = {}
 
     def capabilities(self):
         return {"platform": "fake", "available": True, "accessibilityTrusted": self.accessibility}
@@ -95,6 +97,26 @@ class FakeDesktop(DesktopBackend):
         self._need_ax()
         self.calls.append(("type", app, text))
         self.front = app
+        if app in self.focused:  # typing goes into the focused field: its value changes in the accessibility tree
+            role, fx, fy = self.focused[app]
+            lines = self.ax_dump.get(app, "").split("\n")
+            for i, line in enumerate(lines):
+                p = line.split("\t")
+                if len(p) >= 8 and p[0] == role and round(float(p[4])) == fx and round(float(p[5])) == fy:
+                    p[3] = p[3] + text
+                    lines[i] = "\t".join(p)
+            self.ax_dump[app] = "\n".join(lines)
+
+    async def focus_element(self, app, role, x, y):
+        self._need_ax()
+        self.calls.append(("focus", app, role, round(x), round(y)))
+        self.focused[app] = (role, round(x), round(y))
+
+    async def press_return(self, app):
+        self._need_ax()
+        self.calls.append(("return", app))
+        if app in self.ax_after_submit:
+            self.ax_dump[app] = self.ax_after_submit[app]
 
     async def list_elements(self, app, limit=60):
         self._need_ax()

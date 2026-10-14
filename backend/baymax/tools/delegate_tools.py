@@ -1,0 +1,203 @@
+"""Delegate a prompt to another AI application (ChatGPT, Claude, Gemini, Perplexity) the way a person would.
+
+Resolve the service → native app if installed (unless the browser was asked for), else its website in a browser →
+launch/focus → read the live accessibility tree → find the prompt field → focus it → type the prompt → read the field
+back to verify → submit only when the request asked for it (which makes the whole task need approval, showing the exact
+prompt) → verify the submission. Login screens, CAPTCHAs and changed interfaces stop the task with an explanation.
+
+BAYMAX never claims the other AI answered unless its reply was actually read from the screen.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from ..hostos.apps import resolve_app
+from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
+from ..hostos.sites import BROWSERS, resolve_destination, same_site
+from ..screen.elements import TEXT_INPUT_ROLES, ScreenElement
+from ..security.policy import Risk
+from .base import Arg, Tool, ToolContext, ToolResult, ToolUnavailable
+
+
+@dataclass(frozen=True)
+class AIService:
+    key: str
+    label: str
+    apps: tuple[str, ...]  # native macOS apps, if the vendor ships one
+    site: str              # key in hostos.sites.KNOWN_SITES
+
+
+SERVICES = {
+    "chatgpt": AIService("chatgpt", "ChatGPT", ("ChatGPT",), "chatgpt"),
+    "claude": AIService("claude", "Claude", ("Claude",), "claude"),
+    "gemini": AIService("gemini", "Gemini", (), "gemini"),  # no native Mac app: always the website
+    "perplexity": AIService("perplexity", "Perplexity", ("Perplexity",), "perplexity"),
+}
+_ALIASES = {"chat gpt": "chatgpt", "openai": "chatgpt", "gpt": "chatgpt", "google gemini": "gemini", "bard": "gemini",
+            "anthropic": "claude", "claude ai": "claude"}
+
+_PROMPT_HINT = re.compile(r"\b(message|ask|prompt|chat|reply|type|enter|send|question|anything|help)\b", re.I)
+_LOGIN_HINT = re.compile(r"\b(log ?in|sign ?in|sign up|create (an )?account|verify you are human|captcha|are you a robot|continue with (google|apple|email))\b", re.I)
+
+
+def resolve_service(name: str) -> AIService | None:
+    key = re.sub(r"[^a-z ]", "", (name or "").lower()).strip()
+    key = _ALIASES.get(key, key.replace(" ", ""))
+    return SERVICES.get(key)
+
+
+def _norm(t: str) -> str:
+    return " ".join(re.findall(r"\w+", (t or "").lower()))
+
+
+def pick_prompt_field(els: list[ScreenElement]) -> ScreenElement | None:
+    """The chat input: a text area/field labelled like a prompt box, else the lowest large text area on screen."""
+    fields = [e for e in els if e.role in TEXT_INPUT_ROLES and e.width >= 120]
+    if not fields:
+        return None
+    hinted = [e for e in fields if _PROMPT_HINT.search(f"{e.label} {e.description}")]
+    pool = hinted or [e for e in fields if e.role == "AXTextArea"] or fields
+    return max(pool, key=lambda e: (e.y + e.height, e.width))  # chat boxes sit at the bottom of the window
+
+
+class DelegateToAITool(Tool):
+    name = "ai.delegate"
+    description = ("Enter a prompt into another AI app or website (ChatGPT, Claude, Gemini, Perplexity), e.g. 'ask ChatGPT to "
+                   "explain recursion' or 'prepare this prompt in Claude'. Submits only when asked, after approval.")
+    risk = Risk.MEDIUM
+    args = {"service": Arg("str", max_len=40, description="chatgpt | claude | gemini | perplexity"),
+            "prompt": Arg("str", max_len=4000, description="exact text to enter"),
+            "submit": Arg("bool", False, default=False, description="press Send after entering (needs approval)"),
+            "via": Arg("str", False, default="auto", choices=("auto", "app", "browser")),
+            "browser": Arg("str", False, default="", max_len=60)}
+
+    def classify(self, args: dict[str, Any]) -> tuple[Risk, frozenset[str]]:
+        # Sending text to a third-party service is externally visible: the user approves the exact prompt first.
+        return (Risk.HIGH, frozenset({"send_message"})) if args.get("submit") else (Risk.MEDIUM, frozenset())
+
+    def describe(self, args: dict[str, Any]) -> str:
+        svc = resolve_service(args.get("service", ""))
+        name = svc.label if svc else args.get("service", "the AI service")
+        verb = "Send this prompt to" if args.get("submit") else "Type this prompt into"
+        return f"{verb} {name}: “{args.get('prompt', '')[:400]}”"
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        svc = resolve_service(args["service"])
+        if svc is None:
+            q = "Which AI should I use: ChatGPT, Claude, Gemini or Perplexity?"
+            return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
+        prompt = args["prompt"].strip()
+        if not prompt:
+            return ToolResult(False, f"What should I ask {svc.label}?", {"errorKind": "invalid_arguments"},
+                              needs_clarification=f"What should I ask {svc.label}?")
+        data: dict[str, Any] = {"service": svc.key, "submitted": False}
+        try:
+            # 1-3: resolve and open — native app if installed (unless the browser was requested), else the website.
+            running, installed = await d.list_apps()
+            native = None
+            if args.get("via") != "browser":
+                for app in svc.apps:
+                    r = resolve_app(app, running, installed)
+                    if r.status == "resolved" and r.app and r.app.name.lower() == app.lower():
+                        native = r.app
+                        break
+            if args.get("via") == "app" and native is None:
+                return ToolResult(False, f"The {svc.label} app isn't installed on this Mac. I can use {svc.label} in the browser instead.",
+                                  {**data, "errorKind": "not_found"})
+            if native is not None:
+                ctx.progress(0.1, f"opening the {native.name} app")
+                await d.open_app(native.name)
+                target, data["via"] = native.process or native.name, "app"
+            else:
+                browser = "Safari"
+                if args.get("browser"):
+                    r = resolve_app(args["browser"], running, installed)
+                    if r.status != "resolved" or r.app is None or r.app.name not in BROWSERS:
+                        return ToolResult(False, f"I couldn't find a browser called “{args['browser']}”.", {**data, "errorKind": "not_found"})
+                    browser = r.app.name
+                dest = resolve_destination(svc.site)
+                ctx.progress(0.1, f"opening {dest.host} in {browser}")
+                await d.open_url(dest.url, browser)
+                target, data["via"], data["browser"] = browser, "browser", browser
+                for _ in range(16):
+                    ctx.checkpoint()
+                    url = await d.browser_url(browser)
+                    if url and same_site(url, dest):
+                        data["url"] = url
+                        break
+                    await asyncio.sleep(0.25)
+            # 4-5: inspect the live interface and find the prompt field (pages and apps take a moment to load).
+            ctx.progress(0.35, f"looking for {svc.label}'s message box")
+            field, els = None, []
+            for _ in range(20):
+                ctx.checkpoint()
+                els = await d.accessibility_elements(target)
+                field = pick_prompt_field(els)
+                if field is not None:
+                    break
+                await asyncio.sleep(0.5)
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I couldn't operate {svc.label}: {exc}.", {**data, "errorKind": "unsupported"})
+        if field is None:
+            text = " ".join(f"{e.label} {e.value}" for e in els)
+            if _LOGIN_HINT.search(text):
+                msg = (f"{svc.label} is asking you to sign in or verify first. Please do that in its window, then ask me again — "
+                       "I won't enter your credentials.")
+                return ToolResult(False, msg, {**data, "errorKind": "login_required"}, needs_clarification=msg)
+            return ToolResult(False, f"I opened {svc.label} but couldn't find its message box (checked {len(els)} interface "
+                                     "elements). Its interface may have changed or still be loading.", {**data, "errorKind": "not_found"})
+        # 6-7: type the prompt into that field and read it back.
+        ctx.checkpoint()
+        ctx.progress(0.55, "entering the prompt")
+        try:
+            await d.focus_element(target, field.role, field.x, field.y)
+            await d.type_text(target, prompt)
+            entered = False
+            for _ in range(6):
+                await asyncio.sleep(0.3)
+                after = await d.accessibility_elements(target)
+                now = pick_prompt_field(after)
+                if now is not None and _norm(prompt)[:60] in _norm(now.value):
+                    entered = True
+                    break
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I found {svc.label}'s message box but couldn't type into it: {exc}.", {**data, "errorKind": "unsupported"})
+        data["entered"] = entered
+        if not args.get("submit"):
+            if entered:
+                return ToolResult(True, f"I typed your prompt into {svc.label}. It's not sent yet — press Return there, or ask me to send it.",
+                                  data, verified=True, verification="prompt text read back from the message box")
+            return ToolResult(True, f"I typed your prompt into {svc.label}, but I couldn't read the box back to confirm it.", data,
+                              verified=False, verification="message box value unreadable")
+        if not entered:
+            return ToolResult(False, f"I didn't send anything: I couldn't confirm the prompt was in {svc.label}'s message box.",
+                              {**data, "errorKind": "not_verified"})
+        # 8-9: submit (already approved by the user for this exact prompt) and verify it left the box.
+        ctx.checkpoint()
+        ctx.progress(0.8, "sending")
+        await d.press_return(target)
+        for _ in range(10):
+            await asyncio.sleep(0.4)
+            after = await d.accessibility_elements(target)
+            now = pick_prompt_field(after)
+            if now is None or _norm(prompt)[:60] not in _norm(now.value):
+                data["submitted"] = True
+                shown = any(_norm(prompt)[:40] in _norm(f"{e.label} {e.value}") for e in after if e.role not in TEXT_INPUT_ROLES)
+                return ToolResult(True, f"Sent your prompt to {svc.label}. Its answer will appear in its window"
+                                        + ("." if shown else " (I couldn't see the message in the conversation yet)."),
+                                  data, verified=True, verification="message box cleared after sending")
+        return ToolResult(False, f"I pressed Send in {svc.label}, but the prompt is still in the box, so it may not have been sent.",
+                          {**data, "errorKind": "not_verified"})
+
+
+def all_delegate_tools() -> list[Tool]:
+    return [DelegateToAITool()]

@@ -16,6 +16,7 @@ from typing import Any
 
 from .character.state_machine import CharacterEvent, CharacterState
 from .capabilities import capability_report, capability_text
+from .intent import trace as rtrace
 from .intent.relevance import tool_is_relevant
 from .intent.router import Intent, IntentRouter, RouteContext, parse_model_proposal
 from .llm.ollama import LLMError, LLMUnavailable
@@ -23,8 +24,11 @@ from .llm.ollama import ToolsUnsupported, tool_spec
 from .llm.prompts import NATIVE_TOOLS_HINT, claims_unperformed_action, system_prompt, tool_proposal_prompt
 from .memory.store import MemoryRejected
 from .services import Services
+from .security.policy import HIGH_IMPACT_CATEGORIES
 from .tasks.manager import TaskRejected
 from .tasks.models import PlanStep
+from .tools.base import ArgumentError
+from .voice.stt import clean_transcript
 from .voice.tts import TTSUnavailable
 
 log = logging.getLogger(__name__)
@@ -47,6 +51,7 @@ class Assistant:
         self._watch: asyncio.Task | None = None
         self._speech: asyncio.Task | None = None
         self._transcribing = False  # set while a client transcribes; cleared once text arrives
+        self.traces = rtrace.TraceLog()
         self.s.tts.on_state = self._on_tts_state
 
     # ------------------------------------------------------------- lifecycle
@@ -127,6 +132,10 @@ class Assistant:
     # ------------------------------------------------------------- messages
     def _reply(self, text: str, origin: Origin, task_id: str | None = None, role: str = "assistant") -> dict[str, Any]:
         msg = self.s.conversation.add(role, text, origin.source, task_id)
+        t = rtrace.current()
+        if t is not None and not task_id:
+            t.result = text
+            t.stage("response", "ok")
         speak = origin.speak and role == "assistant"
         self.s.bus.publish("assistant.message", {"text": text, "messageId": msg["id"], "speak": speak, "taskId": task_id or "",
                                                  "role": role, "source": origin.source})
@@ -134,13 +143,37 @@ class Assistant:
             self._speak(text)  # phones speak locally with their own TTS
         return msg
 
-    async def handle_text(self, text: str, source: str = "local", speak: bool | None = None) -> dict[str, Any]:
+    async def handle_text(self, text: str, source: str = "local", speak: bool | None = None, voice: bool | None = None) -> dict[str, Any]:
         text = text.strip()[:4000]
         self._transcribing = False
+        voice = source == "voice" if voice is None else voice
+        trace, token = self.traces.begin(text, source, voice)
+        try:
+            return await self._handle(trace, text, source, speak, voice)
+        finally:
+            self.traces.end(token)
+
+    async def _handle(self, trace: rtrace.RequestTrace, text: str, source: str, speak: bool | None, voice: bool) -> dict[str, Any]:
+        trace.stage("input", "ok" if text else "rejected", source)
+        if voice:
+            # Spoken input (Mac whisper or the iPhone's on-device recognizer): sound tags and silence hallucinations
+            # are not speech and never become requests.
+            cleaned = clean_transcript(text)
+            if not cleaned:
+                trace.stage("speech_validation", "rejected", "no valid speech in the transcript")
+                self.s.character.dispatch(CharacterEvent.RESET, reason="no speech detected")
+                self.s.bus.publish("voice.state", {"state": "idle", "source": source})
+                return {"ok": False, "discarded": True, "error": "no valid speech"}
+            text = cleaned
+            trace.stage("speech_validation", "ok")
+        else:
+            trace.stage("speech_validation", "skipped", "typed text")
         if not text:
             return {"ok": False, "error": "empty"}
         origin = Origin(source, speak if speak is not None else source in ("voice",))
         intent = self.router.route(text, RouteContext(active_model=self.active_model))
+        trace.intent = intent.kind if intent.kind != "tool" else f"tool:{intent.tool}"
+        trace.stage("intent", "ok", trace.intent + (" (rule)" if intent.source != "model" else ""))
         if self.sleeping and intent.kind not in ("wake", "estop"):
             notice = "I'm asleep. Say “wake up” or tap me to wake me."
             self.s.bus.publish("assistant.message", {"text": notice, "messageId": "sleep-notice", "speak": False, "role": "system", "taskId": ""})
@@ -234,16 +267,39 @@ class Assistant:
     async def _start_tool(self, intent: Intent, origin: Origin) -> dict[str, Any]:
         s = self.s
         tool = s.tools.get(intent.tool or "")
+        t = rtrace.current()
         if tool is None:
-            return {"ok": False, "message": self._reply(f"I don't have a tool called {intent.tool}.", origin)}
+            rtrace.stage("tool_selection", "rejected", f"unknown tool {intent.tool}")
+            return {"ok": False, "message": self._reply("I can't do that kind of action yet.", origin)}
+        rtrace.stage("tool_selection", "ok", f"{tool.name} ({'rule' if intent.source != 'model' else 'model proposal'})")
+        try:
+            clean = tool.validate(intent.args)
+        except ArgumentError as exc:
+            rtrace.stage("argument_validation", "rejected", str(exc))
+            s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="incomplete request")
+            return {"ok": True, "message": self._reply(friendly_argument_error(tool, exc), origin)}
+        rtrace.stage("argument_validation", "ok")
+        if t is not None:
+            t.tool, t.args = tool.name, clean
+            t.app = clean.get("app") or clean.get("browser") or None
+            t.url = clean.get("url") or None
+            t.permissions = list(getattr(tool, "permissions", ()))
+            risk, cats = tool.classify(clean)
+            t.confirmation_required = risk.value == "high" or bool(set(cats) & HIGH_IMPACT_CATEGORIES)
         if s.estop.engaged:
+            rtrace.stage("permissions", "rejected", "Emergency Stop engaged")
             s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="estop engaged")
             return {"ok": False, "message": self._reply("Emergency Stop is engaged, so I can't run actions. Reset it on the Mac first.", origin)}
         try:
             task = s.tasks.submit(intent.tool.split(".")[0], intent.title or tool.description[:60], intent.text or intent.title,
                                   [PlanStep(intent.title or tool.name, tool.name, intent.args)], source=origin.source)
         except TaskRejected as exc:
+            rtrace.stage("permissions", "rejected", str(exc))
             return {"ok": False, "message": self._reply(str(exc), origin)}
+        rtrace.stage("permissions", "ok", "approval required before running" if t and t.confirmation_required else "allowed by policy")
+        rtrace.stage("execution", "ok", f"task {task.id} started")
+        if t is not None:
+            self.traces.link_task(t, task.id)
         self._origins[task.id] = origin
         return {"ok": True, "taskId": task.id, "tool": tool.name}
 
@@ -257,8 +313,11 @@ class Assistant:
         # Constrained tool selection: the model only sees tools whose purpose matches this request. Ordinary
         # questions ("what is Newton's third law?") are answered with no tools offered at all.
         tools = {t.name: t for t in s.tools.model_tools() if tool_is_relevant(t.name, intent.text)}
+        rtrace.stage("context", "ok", f"{len(history)} recent messages, {len(memories)} memories")
         if not tools:
+            rtrace.stage("tool_selection", "skipped", "no tool is relevant: answering conversationally")
             return await self._plain_chat(memories, history, origin)
+        rtrace.stage("tool_selection", "ok", "offered to the model: " + ", ".join(sorted(tools)))
         if s.settings.llm.native_tools and not self._native_tools_unsupported:
             try:
                 native = await s.llm.chat_tools([{"role": "system", "content": system_prompt(memories) + "\n" + NATIVE_TOOLS_HINT}] + history,
@@ -273,19 +332,13 @@ class Assistant:
             else:
                 if native.tool_calls and not tool_is_relevant(native.tool_calls[0].name, intent.text):
                     log.info("model picked %s for an unrelated request; answering without tools", native.tool_calls[0].name)
+                    rtrace.stage("tool_selection", "rejected", f"model proposed unrelated {native.tool_calls[0].name}")
                     return await self._plain_chat(memories, history, origin)
                 if native.tool_calls:
                     call = native.tool_calls[0]
                     if call.name not in tools:
-                        s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="unknown tool requested")
-                        return {"ok": True, "message": self._reply(
-                            f"The model asked for a tool I don't have ({call.name[:60]}), so nothing was done. Could you rephrase?", origin)}
-                    try:
-                        tools[call.name].validate(call.arguments)
-                    except Exception as exc:
-                        s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="incomplete tool arguments")
-                        return {"ok": True, "message": self._reply(
-                            f"I wanted to use {call.name} but the details were incomplete ({exc}). Could you say it another way?", origin)}
+                        rtrace.stage("tool_selection", "rejected", f"model proposed unavailable {call.name[:60]}")
+                        return await self._plain_chat(memories, history, origin)
                     proposal = Intent("tool", call.name, call.arguments, call.name, source="model", text=intent.text)
                     return await self._start_tool(proposal, origin)
                 return await self._model_text_reply(native.content, tools, intent, origin)
@@ -335,6 +388,7 @@ class Assistant:
         proposal = parse_model_proposal(reply, tools)
         if proposal.kind == "tool" and not tool_is_relevant(proposal.tool or "", intent.text):
             log.info("model proposed %s for an unrelated request; answering without tools", proposal.tool)
+            rtrace.stage("tool_selection", "rejected", f"model proposed unrelated {proposal.tool}")
             return await self._plain_chat(s.memory.contents(), s.conversation.model_messages(12), origin)
         if proposal.kind == "tool":
             proposal.text = intent.text
@@ -360,7 +414,15 @@ class Assistant:
                 origin = self._origins.pop(p["taskId"], Origin("local", False))
                 task = self.s.tasks.get(p["taskId"])
                 self._track_model(task)
-                self._reply(self._result_text(p, task), origin, task_id=p["taskId"])
+                text = self._result_text(p, task)
+                t = self.traces.for_task(p["taskId"])
+                if t is not None:
+                    t.verified = bool(p.get("verified")) if p["status"] == "COMPLETED" else False
+                    t.stage("verification", "ok" if t.verified else ("failed" if p["status"] != "COMPLETED" else "unverified"),
+                            (task.result or {}).get("verification", "") if task and task.result else p["status"].lower())
+                    t.result = text
+                    t.stage("response", "ok", p["status"].lower())
+                self._reply(text, origin, task_id=p["taskId"])
         except asyncio.CancelledError:
             pass
         finally:
@@ -388,6 +450,17 @@ class Assistant:
 
     def snapshot(self) -> dict[str, Any]:
         return {"sleeping": self.sleeping, "activeModel": self.active_model, "character": self.s.character.snapshot()}
+
+
+def friendly_argument_error(tool, exc: Exception) -> str:
+    """What's missing, in plain words (never the internal tool name)."""
+    msg = str(exc)
+    m = re.search(r"missing argument '(\w+)'", msg)
+    field = {"app": "which app", "url": "which website", "query": "what to look for", "path": "which file",
+             "prompt": "what to ask", "service": "which AI service", "text": "what to type"}
+    if m:
+        return f"I need a bit more detail first: {field.get(m.group(1), m.group(1))}?"
+    return "I couldn't work out the details of that request. Could you say it another way?"
 
 
 def to_json(obj: Any) -> str:
