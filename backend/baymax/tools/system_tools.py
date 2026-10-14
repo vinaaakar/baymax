@@ -9,7 +9,7 @@ from typing import Any
 
 from ..coding.files import EditError, FileOps
 from ..hostos.apps import AppInfo, resolve_app
-from ..hostos.sites import resolve_destination, same_site
+from ..hostos.sites import BROWSERS, resolve_destination, same_site
 from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
 from ..security.commands import CommandRejected, validate_command
 from ..security.policy import Risk
@@ -122,6 +122,18 @@ class OpenUrlTool(Tool):
                           verification="macOS accepted the URL; the default browser's page was not inspected")
 
 
+async def _check_on_display(ctx: ToolContext, x: float, y: float) -> ToolResult | None:
+    """Pointer targets must be on a connected display (global points); otherwise nothing is posted."""
+    try:
+        displays = await ctx.services.desktop.displays()
+    except DesktopUnavailable:
+        return None  # display list unavailable: the event API itself will reject impossible points
+    if displays and not any(dp.contains(x, y) for dp in displays):
+        return ToolResult(False, f"({x:.0f}, {y:.0f}) isn't on any connected display, so I didn't move or click.",
+                          {"errorKind": "invalid_arguments"})
+    return None
+
+
 class MoveCursorTool(Tool):
     name = "desktop.move_cursor"
     description = "Move the mouse cursor to screen coordinates (points)."
@@ -130,6 +142,8 @@ class MoveCursorTool(Tool):
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
+        if (bad := await _check_on_display(ctx, args["x"], args["y"])) is not None:
+            return bad
         await _desktop(d.move_cursor(args["x"], args["y"]))
         x, y = await _desktop(d.cursor_position())
         ok = abs(x - args["x"]) < 2 and abs(y - args["y"]) < 2
@@ -145,6 +159,11 @@ class ClickTool(Tool):
             "count": Arg("int", False, default=1)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        if (bad := await _check_on_display(ctx, args["x"], args["y"])) is not None:
+            return bad
+        if not 1 <= args.get("count", 1) <= 3:
+            return ToolResult(False, "I can click once, twice or three times.", {"errorKind": "invalid_arguments"})
+        ctx.checkpoint()
         await _desktop(ctx.services.desktop.click(args["x"], args["y"], args.get("button", "left"), args.get("count", 1)))
         return ToolResult(True, f"Clicked at ({args['x']:.0f}, {args['y']:.0f}).", dict(args), verified=False,
                           verification="click events were posted; the effect on the application was not observed")
@@ -454,8 +473,107 @@ class FlashFirmwareTool(Tool):
         raise ToolUnavailable("firmware flashing is not implemented: no device interface is configured. Nothing was flashed.")
 
 
+class RunningAppsTool(Tool):
+    name = "desktop.running_apps"
+    description = "List the applications that are currently open (from macOS), marking the one in front."
+    risk = Risk.LOW
+    args: dict[str, Arg] = {}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        running, _ = await _desktop(d.list_apps())
+        try:
+            front = await d.frontmost_app()
+        except DesktopUnavailable:
+            front = None
+        names = sorted({a.name for a in running if a.name}, key=str.lower)
+        if not names:
+            return ToolResult(True, "macOS reports no regular applications open.", {"apps": []}, verified=True,
+                              verification="running applications listed by macOS")
+        shown = ", ".join(f"{n} (in front)" if front and n.lower() == str(front).lower() else n for n in names)
+        return ToolResult(True, f"Open apps: {shown}.", {"apps": names, "front": front}, verified=True,
+                          verification="running applications listed by macOS")
+
+
+# Safe, explicitly requested shortcuts only (nothing that closes, quits, deletes or sends).
+SHORTCUTS = {
+    "new_tab": ("t", ("command",), "open a new tab"), "new_window": ("n", ("command",), "open a new window"),
+    "reload": ("r", ("command",), "reload the page"), "find": ("f", ("command",), "open Find"),
+    "address_bar": ("l", ("command",), "focus the address bar"), "back": ("[", ("command",), "go back"),
+    "forward": ("]", ("command",), "go forward"), "select_all": ("a", ("command",), "select all"),
+    "copy": ("c", ("command",), "copy"), "paste": ("v", ("command",), "paste"), "undo": ("z", ("command",), "undo"),
+    "zoom_in": ("=", ("command",), "zoom in"), "zoom_out": ("-", ("command",), "zoom out"),
+}
+
+
+class ShortcutTool(Tool):
+    name = "desktop.shortcut"
+    description = "Press a safe keyboard shortcut in an app: new tab, new window, reload, find, address bar, back, forward, select all, copy, paste, undo, zoom."
+    risk = Risk.MEDIUM
+    args = {"action": Arg("str", choices=tuple(SHORTCUTS)), "app": Arg("str", False, default="", max_len=80)}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        key, mods, what = SHORTCUTS[args["action"]]
+        if args.get("app"):
+            app, problem = await resolve_app_arg(ctx, args["app"], must_run=False)
+            if problem:
+                return problem
+            name = app.name if app else ""
+            if app and not app.running:
+                await _desktop(d.open_app(app.name))
+                await asyncio.sleep(0.8)
+        else:
+            name = await _desktop(d.target_app())
+        before = await d.browser_url(name) if name in BROWSERS else None
+        ctx.checkpoint()
+        await _desktop(d.press_keys(name, key, mods))
+        if name in BROWSERS and args["action"] in ("new_tab", "reload", "back", "forward"):
+            await asyncio.sleep(0.5)
+            after = await d.browser_url(name)
+            if args["action"] == "new_tab" and after is not None and after != before:
+                return ToolResult(True, f"Opened a new tab in {name}.", {"app": name}, verified=True,
+                                  verification="the front tab changed after the shortcut")
+        return ToolResult(True, f"Pressed the shortcut to {what} in {name}.", {"app": name, "action": args["action"]}, verified=False,
+                          verification="shortcut sent; its effect was not inspected")
+
+
+class FindFileByNameTool(Tool):
+    name = "files.find_by_name"
+    description = "Find files on this Mac by name with Spotlight (read-only), e.g. 'find the file named report.pdf'."
+    risk = Risk.LOW
+    args = {"name": Arg("str", max_len=200)}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        import os
+        import shutil
+
+        name = args["name"].strip().strip("\"'“”")
+        if not name or "/" in name or "\x00" in name:
+            return ToolResult(False, "Which file name should I look for?", {"errorKind": "invalid_arguments"},
+                              needs_clarification="Which file name should I look for?")
+        if shutil.which("mdfind") is None:
+            raise ToolUnavailable("file search by name uses macOS Spotlight (mdfind), which isn't available here")
+        proc = await asyncio.create_subprocess_exec("mdfind", "-name", name, stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), 20)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise ToolError("Spotlight took too long") from None
+        paths = [p for p in out.decode(errors="replace").splitlines() if p and os.path.exists(p)][:20]
+        if not paths:
+            return ToolResult(False, f"Spotlight found no file named “{name}”.", {"errorKind": "not_found", "name": name})
+        exact = [p for p in paths if os.path.basename(p).lower() == name.lower()]
+        best = exact or paths
+        listing = "\n".join(best[:8])
+        return ToolResult(True, f"Found {len(best)} file{'s' if len(best) != 1 else ''} named “{name}”:\n{listing}",
+                          {"paths": best}, verified=True, verification="paths returned by Spotlight and checked to exist")
+
+
 def all_system_tools() -> list[Tool]:
     return [OpenAppTool(), OpenUrlTool(), MoveCursorTool(), ClickTool(), ScrollTool(), TypeTextTool(), ListElementsTool(), PressElementTool(),
+            RunningAppsTool(), ShortcutTool(), FindFileByNameTool(),
             ReadWindowTool(), ScreenshotTool(), ListFilesTool(), ReadFileTool(), WriteFileTool(), SearchFilesTool(), DeleteFileTool(),
             RunCommandTool(), SendMailTool(), HardwareStatusTool(), FlashFirmwareTool()]
 

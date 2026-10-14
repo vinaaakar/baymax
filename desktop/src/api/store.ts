@@ -10,6 +10,11 @@ export interface TaskView {
 
 export interface TelemetryView { artifactId: string; title: string; model: string; source: string; series: Record<string, number[]>; units: Record<string, string> }
 
+export interface ResearchView {
+  taskId: string; query: string; summary: string; summaryKind: string;
+  sources: { title: string; url: string }[]; findings: { source: number; text: string }[]; limitations: string[];
+}
+
 export interface AppState {
   connection: "connecting" | "connected" | "disconnected";
   character: CharacterState;
@@ -27,12 +32,13 @@ export interface AppState {
   telemetry: TelemetryView | null;
   lastSeq: number;
   memoryRevision: number;
+  research: ResearchView | null;
 }
 
 export const initialState: AppState = {
   connection: "connecting", character: "IDLE", characterReason: "", sleeping: false, estop: { engaged: false, reason: "" },
   llm: null, voice: { state: "idle", source: "" }, tasks: {}, approvals: {}, messages: [], devices: { count: 0, list: [] },
-  modelVersion: {}, modelView: null, telemetry: null, lastSeq: 0, memoryRevision: 0,
+  modelVersion: {}, modelView: null, telemetry: null, lastSeq: 0, memoryRevision: 0, research: null,
 };
 
 const MAX_MESSAGES = 300;
@@ -46,6 +52,14 @@ export function applyEvent(state: AppState, ev: BusEvent): AppState {
       return { ...next, character: p.state, characterReason: p.reason ?? "" };
     case "sleep.state":
       return { ...next, sleeping: !!p.sleeping };
+    case "research.result": {
+      // Only URLs the backend actually fetched (http/https) are kept as links.
+      const sources = (Array.isArray(p.sources) ? p.sources : []).filter((x: any) => typeof x?.url === "string" && /^https?:\/\//.test(x.url))
+        .map((x: any) => ({ title: String(x.title || x.url).slice(0, 200), url: x.url }));
+      return { ...next, research: { taskId: p.taskId ?? "", query: String(p.query ?? ""), summary: String(p.summary ?? ""),
+        summaryKind: String(p.summaryKind ?? ""), sources, findings: Array.isArray(p.findings) ? p.findings.slice(0, 8) : [],
+        limitations: Array.isArray(p.limitations) ? p.limitations.slice(0, 6).map(String) : [] } };
+    }
     case "estop.state":
       return { ...next, estop: { engaged: !!p.engaged, reason: p.reason ?? "" } };
     case "llm.status":

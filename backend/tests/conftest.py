@@ -45,6 +45,7 @@ class FakeDesktop(DesktopBackend):
         self.redirects: dict[str, str] = {}  # requested URL -> where the browser actually lands
         self.automation = True  # macOS Automation permission for reading the browser's address bar
         self.focused: dict[str, tuple] = {}
+        self.after_open = None  # test hook, e.g. engage Emergency Stop while a plan is running
         self.ax_after_submit: dict[str, str] = {}
 
     def capabilities(self):
@@ -56,6 +57,8 @@ class FakeDesktop(DesktopBackend):
 
     async def open_app(self, name):
         self.calls.append(("open_app", name))
+        if self.after_open:
+            self.after_open(name)
         if name == "Nonexistent":
             raise DesktopUnavailable("could not open 'Nonexistent': application not found")
         self.running.add(name)
@@ -103,7 +106,7 @@ class FakeDesktop(DesktopBackend):
             for i, line in enumerate(lines):
                 p = line.split("\t")
                 if len(p) >= 8 and p[0] == role and round(float(p[4])) == fx and round(float(p[5])) == fy:
-                    p[3] = p[3] + text
+                    p[3] = p[3] + " ".join(text.replace("\t", " ").splitlines())  # the macOS dumper flattens line breaks
                     lines[i] = "\t".join(p)
             self.ax_dump[app] = "\n".join(lines)
 
@@ -111,6 +114,14 @@ class FakeDesktop(DesktopBackend):
         self._need_ax()
         self.calls.append(("focus", app, role, round(x), round(y)))
         self.focused[app] = (role, round(x), round(y))
+
+    async def press_keys(self, app, key, modifiers=()):
+        self._need_ax()
+        self.calls.append(("keys", app, key, tuple(modifiers)))
+        if key == "return" and app in self.ax_after_submit:
+            self.ax_dump[app] = self.ax_after_submit[app]
+        if key == "t" and "command" in modifiers and app in self.tab_url:
+            self.tab_url[app] = "favorites://"
 
     async def press_return(self, app):
         self._need_ax()

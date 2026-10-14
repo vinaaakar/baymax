@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../api/store";
 import BaymaxCharacter, { describeState } from "../character/BaymaxCharacter";
+import ResearchPanel from "../components/ResearchPanel";
 import { ApprovalBanners, ChatInput, ConnectionPill, EStopButton, MicButton, ProgressBar, useActiveTasks, useClient, useVoice } from "../components/common";
 import { DEFAULT_GAZE } from "../shared/gaze";
 import type { CharacterState } from "../shared/protocol";
@@ -95,6 +96,7 @@ export default function Companion() {
           point={gaze.point} taskKind={task?.kind} progress={task?.progress} composition="bust" onClick={() => sleeping && toggleSleep()} />
       </div>
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
+      <ResearchPanel />
       <div className="controls">
         {showCaption && lastAssistant && state !== "SLEEPING" && (
           <div className="speech-caption" aria-hidden="true" title={lastAssistant.text}>{lastAssistant.text}</div>

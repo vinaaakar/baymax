@@ -113,3 +113,15 @@ describe("client reconnection", () => {
     expect(FakeWS.instances.length).toBe(3); // no reconnect after an explicit close
   });
 });
+
+describe("research results", () => {
+  it("keeps only fetched http(s) sources and the findings/limitations from the backend", () => {
+    const s = applyEvent(initialState, { type: "research.result", seq: 1, ts: 0, payload: {
+      taskId: "t1", query: "q", summary: "sum", summaryKind: "source excerpts",
+      sources: [{ title: "A", url: "https://a.example" }, { title: "bad", url: "javascript:alert(1)" }],
+      findings: [{ source: 1, text: "fact" }], limitations: ["Couldn't read: x"] } } as any);
+    expect(s.research?.sources).toEqual([{ title: "A", url: "https://a.example" }]);
+    expect(s.research?.findings[0].text).toBe("fact");
+    expect(s.research?.limitations).toEqual(["Couldn't read: x"]);
+  });
+});

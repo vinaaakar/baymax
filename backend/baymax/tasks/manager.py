@@ -21,6 +21,9 @@ from ..security.policy import ActionRequest, Decision, Policy, Risk
 from ..tools.base import ArgumentError, ToolContext, ToolError, ToolResult
 from .models import PlanStep, Task, TaskStatus
 
+MAX_ATTEMPTS = 2  # one retry for transient failures; identical failures are never repeated more than this
+RETRY_DELAY_S = 1.0
+
 if TYPE_CHECKING:  # pragma: no cover
     from ..services import Services
 
@@ -81,7 +84,13 @@ class TaskManager:
     async def wait(self, task_id: str, timeout: float | None = None) -> Task:
         runner = self._runners.get(task_id)
         if runner is not None:
-            await asyncio.wait_for(asyncio.shield(runner), timeout)
+            try:
+                await asyncio.wait_for(asyncio.shield(runner), timeout)
+            except asyncio.CancelledError:
+                # The task itself was cancelled (Emergency Stop / user cancel): report its final state. Only re-raise
+                # when it is the *waiter* that is being cancelled.
+                if not runner.done():
+                    raise
         return self.get(task_id)  # type: ignore[return-value]
 
     def get(self, task_id: str) -> Task | None:
@@ -152,6 +161,17 @@ class TaskManager:
                     if task.cancel_requested:
                         raise asyncio.CancelledError()
                     result = await self._run_step(task, step)
+                    attempts = 1
+                    # Bounded recovery: only results the tool marked as transient, at most MAX_ATTEMPTS, never for
+                    # actions that need approval (an approval covers one execution).
+                    while not result.ok and result.retryable and attempts < MAX_ATTEMPTS and not task.approval:
+                        await asyncio.sleep(RETRY_DELAY_S)
+                        self.s.estop.ensure_clear()
+                        if task.cancel_requested:
+                            raise asyncio.CancelledError()
+                        attempts += 1
+                        self._event(task, "retry", {"step": step.title, "attempt": attempts, "reason": result.summary[:200]})
+                        result = await self._run_step(task, step)
                     results.append(result)
                     if not result.ok:
                         step.status = "failed"

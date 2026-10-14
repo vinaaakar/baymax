@@ -1,5 +1,5 @@
 // BAYMAX desktop main process.
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, session, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import http from "http";
 import path from "path";
 import { startBackend, type BackendHandle } from "./backend";
@@ -81,6 +81,8 @@ function createWindow(name: WinName): BrowserWindow {
       return { action: "allow", overrideBrowserWindowOptions: { width: 900, height: 700, backgroundColor: "#180509",
         webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } } };
     }
+    // Research source links open in the user's normal browser (web links only; never file:, javascript: or app URLs).
+    if (/^https?:\/\//i.test(url) && !(backend && url.startsWith(backend.apiBase))) void shell.openExternal(url);
     return { action: "deny" };
   });
   win.loadURL(rendererUrl(name));

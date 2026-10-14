@@ -28,7 +28,10 @@ class AIService:
     key: str
     label: str
     apps: tuple[str, ...]  # native macOS apps, if the vendor ships one
-    site: str              # key in hostos.sites.KNOWN_SITES
+    site: str              # key in hostos.sites.KNOWN_SITES, or a full URL
+    submit_keys: tuple[str, tuple[str, ...]] = ("return", ())  # how the page submits (X posts with ⌘Return)
+    category: str = "send_message"  # policy category when submitting (publishing needs approval too)
+    noun: str = "prompt"
 
 
 SERVICES = {
@@ -36,11 +39,14 @@ SERVICES = {
     "claude": AIService("claude", "Claude", ("Claude",), "claude"),
     "gemini": AIService("gemini", "Gemini", (), "gemini"),  # no native Mac app: always the website
     "perplexity": AIService("perplexity", "Perplexity", ("Perplexity",), "perplexity"),
+    # Posting on X uses the same verified flow: composer found in the accessibility tree, text read back, publish only
+    # after the user approved the exact post.
+    "x": AIService("x", "X", (), "https://x.com/compose/post", ("return", ("command",)), "publish", "post"),
 }
 _ALIASES = {"chat gpt": "chatgpt", "openai": "chatgpt", "gpt": "chatgpt", "google gemini": "gemini", "bard": "gemini",
-            "anthropic": "claude", "claude ai": "claude"}
+            "anthropic": "claude", "claude ai": "claude", "twitter": "x"}
 
-_PROMPT_HINT = re.compile(r"\b(message|ask|prompt|chat|reply|type|enter|send|question|anything|help)\b", re.I)
+_PROMPT_HINT = re.compile(r"\b(message|ask|prompt|chat|reply|type|enter|send|question|anything|help|post|happening|tweet|compose)\b", re.I)
 _LOGIN_HINT = re.compile(r"\b(log ?in|sign ?in|sign up|create (an )?account|verify you are human|captcha|are you a robot|continue with (google|apple|email))\b", re.I)
 
 
@@ -76,12 +82,16 @@ class DelegateToAITool(Tool):
             "browser": Arg("str", False, default="", max_len=60)}
 
     def classify(self, args: dict[str, Any]) -> tuple[Risk, frozenset[str]]:
-        # Sending text to a third-party service is externally visible: the user approves the exact prompt first.
-        return (Risk.HIGH, frozenset({"send_message"})) if args.get("submit") else (Risk.MEDIUM, frozenset())
+        # Sending text to a third-party service (or publishing) is externally visible: the user approves the exact text first.
+        svc = resolve_service(args.get("service", ""))
+        return (Risk.HIGH, frozenset({svc.category if svc else "send_message"})) if args.get("submit") else (Risk.MEDIUM, frozenset())
 
     def describe(self, args: dict[str, Any]) -> str:
         svc = resolve_service(args.get("service", ""))
         name = svc.label if svc else args.get("service", "the AI service")
+        if svc and svc.key == "x":
+            verb = "Publish this post on X" if args.get("submit") else "Write this post in X's composer (not published)"
+            return f"{verb}: “{args.get('prompt', '')[:400]}”"
         verb = "Send this prompt to" if args.get("submit") else "Type this prompt into"
         return f"{verb} {name}: “{args.get('prompt', '')[:400]}”"
 
@@ -121,6 +131,8 @@ class DelegateToAITool(Tool):
                         return ToolResult(False, f"I couldn't find a browser called “{args['browser']}”.", {**data, "errorKind": "not_found"})
                     browser = r.app.name
                 dest = resolve_destination(svc.site)
+                if dest is None:
+                    return ToolResult(False, f"I don't know {svc.label}'s web address.", {**data, "errorKind": "not_found"})
                 ctx.progress(0.1, f"opening {dest.host} in {browser}")
                 await d.open_url(dest.url, browser)
                 target, data["via"], data["browser"] = browser, "browser", browser
@@ -147,7 +159,7 @@ class DelegateToAITool(Tool):
             return ToolResult(False, f"I couldn't operate {svc.label}: {exc}.", {**data, "errorKind": "unsupported"})
         if field is None:
             text = " ".join(f"{e.label} {e.value}" for e in els)
-            if _LOGIN_HINT.search(text):
+            if _LOGIN_HINT.search(text) or (data.get("url") and re.search(r"/(login|signin|i/flow/login)", str(data.get("url")))):
                 msg = (f"{svc.label} is asking you to sign in or verify first. Please do that in its window, then ask me again — "
                        "I won't enter your credentials.")
                 return ToolResult(False, msg, {**data, "errorKind": "login_required"}, needs_clarification=msg)
@@ -179,12 +191,16 @@ class DelegateToAITool(Tool):
             return ToolResult(True, f"I typed your prompt into {svc.label}, but I couldn't read the box back to confirm it.", data,
                               verified=False, verification="message box value unreadable")
         if not entered:
-            return ToolResult(False, f"I didn't send anything: I couldn't confirm the prompt was in {svc.label}'s message box.",
-                              {**data, "errorKind": "not_verified"})
+            return ToolResult(False, f"I didn't {'publish' if svc.key == 'x' else 'send'} anything: I couldn't confirm the text was in "
+                                     f"{svc.label}'s {'composer' if svc.key == 'x' else 'message box'}.", {**data, "errorKind": "not_verified"})
         # 8-9: submit (already approved by the user for this exact prompt) and verify it left the box.
         ctx.checkpoint()
         ctx.progress(0.8, "sending")
-        await d.press_return(target)
+        key, mods = svc.submit_keys
+        if mods:
+            await d.press_keys(target, key, mods)
+        else:
+            await d.press_return(target)
         for _ in range(10):
             await asyncio.sleep(0.4)
             after = await d.accessibility_elements(target)
@@ -192,6 +208,9 @@ class DelegateToAITool(Tool):
             if now is None or _norm(prompt)[:60] not in _norm(now.value):
                 data["submitted"] = True
                 shown = any(_norm(prompt)[:40] in _norm(f"{e.label} {e.value}") for e in after if e.role not in TEXT_INPUT_ROLES)
+                if svc.key == "x":
+                    return ToolResult(True, "Published your post on X" + ("." if shown else " (the composer cleared; I couldn't see the post "
+                                      "in the timeline yet)."), data, verified=True, verification="composer cleared after posting")
                 return ToolResult(True, f"Sent your prompt to {svc.label}. Its answer will appear in its window"
                                         + ("." if shown else " (I couldn't see the message in the conversation yet)."),
                                   data, verified=True, verification="message box cleared after sending")

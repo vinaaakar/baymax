@@ -18,7 +18,7 @@ from .character.state_machine import CharacterEvent, CharacterState
 from .capabilities import capability_report, capability_text
 from .intent import trace as rtrace
 from .intent.relevance import tool_is_relevant
-from .intent.router import Intent, IntentRouter, RouteContext, parse_model_proposal
+from .intent.router import LAST_DRAFT, Intent, IntentRouter, RouteContext, parse_model_proposal, split_compound
 from .llm.ollama import LLMError, LLMUnavailable
 from .llm.ollama import ToolsUnsupported, tool_spec
 from .llm.prompts import NATIVE_TOOLS_HINT, claims_unperformed_action, system_prompt, tool_proposal_prompt
@@ -52,6 +52,7 @@ class Assistant:
         self._speech: asyncio.Task | None = None
         self._transcribing = False  # set while a client transcribes; cleared once text arrives
         self.traces = rtrace.TraceLog()
+        self.last_draft: str | None = None  # the latest post the user asked me to draft (for "publish it")
         self.s.tts.on_state = self._on_tts_state
 
     # ------------------------------------------------------------- lifecycle
@@ -172,6 +173,11 @@ class Assistant:
             return {"ok": False, "error": "empty"}
         origin = Origin(source, speak if speak is not None else source in ("voice",))
         intent = self.router.route(text, RouteContext(active_model=self.active_model))
+        plan = None
+        if intent.kind == "chat" and not intent.reply or (intent.tool == "apps.open" and re.search(r"\b(and|then)\b", str(intent.args.get("app", "")).lower())):
+            plan = split_compound(self.router, text, RouteContext(active_model=self.active_model))
+        if plan:
+            intent = Intent("plan", text=text)
         trace.intent = intent.kind if intent.kind != "tool" else f"tool:{intent.tool}"
         trace.stage("intent", "ok", trace.intent + (" (rule)" if intent.source != "model" else ""))
         if self.sleeping and intent.kind not in ("wake", "estop"):
@@ -183,6 +189,8 @@ class Assistant:
         self.stop_speaking()
         self.s.character.dispatch(CharacterEvent.REQUEST_RECEIVED, reason="processing request")
         try:
+            if plan:
+                return await self._start_plan(plan, text, origin)
             return await self._dispatch(intent, origin)
         except Exception as exc:  # pragma: no cover - last-resort guard, still honest
             log.exception("handle_text failed")
@@ -260,9 +268,55 @@ class Assistant:
             s.audit.record(origin.source, "memory.clear", "low", "ok", {"deleted": n})
             s.character.dispatch(CharacterEvent.RESET)
             return {"ok": True, "message": self._reply(f"Deleted all {n} memories.", origin)}
+        if k == "draft":
+            self.last_draft = intent.args["text"]
+            s.character.dispatch(CharacterEvent.RESET)
+            return {"ok": True, "message": self._reply(
+                f"Here's your draft post:\n“{self.last_draft}”\nNothing has been posted. Say “post it on X” and I'll put it in X's composer "
+                "and ask you to confirm before publishing.", origin)}
         if k == "tool":
+            if intent.args.get("prompt") == LAST_DRAFT:
+                if not self.last_draft:
+                    s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="no draft")
+                    return {"ok": True, "message": self._reply("What should the post say? (Ask me to draft it first, or tell me the text.)", origin)}
+                intent.args = {**intent.args, "prompt": self.last_draft}
             return await self._start_tool(intent, origin)
         return await self._chat(intent, origin)
+
+    async def _start_plan(self, steps: list[Intent], text: str, origin: Origin) -> dict[str, Any]:
+        """Several actions in one request ('open Safari and then open Terminal'): one task, steps run in order, and the
+        task stops at the first step that fails (later steps never run on a broken state)."""
+        s = self.s
+        rtrace.stage("tool_selection", "ok", "plan: " + " → ".join(i.tool or "" for i in steps))
+        plan: list[PlanStep] = []
+        for i in steps:
+            tool = s.tools.get(i.tool or "")
+            try:
+                clean = tool.validate(i.args) if tool else None
+            except ArgumentError as exc:
+                rtrace.stage("argument_validation", "rejected", str(exc))
+                return {"ok": True, "message": self._reply(friendly_argument_error(tool, exc), origin)}
+            if tool is None:
+                return {"ok": False, "message": self._reply("I can't do one of those steps yet.", origin)}
+            plan.append(PlanStep(i.title or tool.name, tool.name, clean))
+        rtrace.stage("argument_validation", "ok", f"{len(plan)} steps")
+        if s.estop.engaged:
+            rtrace.stage("permissions", "rejected", "Emergency Stop engaged")
+            s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="estop engaged")
+            return {"ok": False, "message": self._reply("Emergency Stop is engaged, so I can't run actions. Reset it on the Mac first.", origin)}
+        try:
+            task = s.tasks.submit("plan", " then ".join(p.title for p in plan)[:120], text, plan, source=origin.source)
+        except TaskRejected as exc:
+            rtrace.stage("permissions", "rejected", str(exc))
+            return {"ok": False, "message": self._reply(str(exc), origin)}
+        rtrace.stage("permissions", "ok", "per-step policy checks run before each step")
+        rtrace.stage("execution", "ok", f"task {task.id} started ({len(plan)} steps)")
+        t = rtrace.current()
+        if t is not None:
+            t.tool = "plan"
+            self.traces.link_task(t, task.id)
+        self._origins[task.id] = origin
+        return {"ok": True, "taskId": task.id, "tool": "plan"}
 
     async def _start_tool(self, intent: Intent, origin: Origin) -> dict[str, Any]:
         s = self.s
@@ -414,7 +468,7 @@ class Assistant:
                 origin = self._origins.pop(p["taskId"], Origin("local", False))
                 task = self.s.tasks.get(p["taskId"])
                 self._track_model(task)
-                text = self._result_text(p, task)
+                text = self._dedupe_permission_help(self._result_text(p, task))
                 t = self.traces.for_task(p["taskId"])
                 if t is not None:
                     t.verified = bool(p.get("verified")) if p["status"] == "COMPLETED" else False
@@ -434,6 +488,22 @@ class Assistant:
         for art in task.result.get("artifacts") or []:
             if art.get("kind") == "model3d":
                 self.active_model = art["id"]
+
+    def _dedupe_permission_help(self, text: str) -> str:
+        """The full 'open System Settings → …' instructions once per permission per 10 minutes; afterwards a short note."""
+        import time as _t
+        m = re.search(r"(Open System Settings → Privacy & Security → ([^,.]+?)(?: and| ,|,|\.))", text)
+        if not m:
+            return text
+        key = m.group(2).strip()
+        told = getattr(self, "_told_permission", {})
+        now = _t.time()
+        if now - told.get(key, 0) < 600:
+            text = text.replace(text[text.find("Open System Settings"):], f"(The {key} permission is still missing — see my earlier message.)")
+        else:
+            told[key] = now
+        self._told_permission = told
+        return text
 
     @staticmethod
     def _result_text(p: dict[str, Any], task) -> str:

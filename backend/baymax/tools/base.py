@@ -51,12 +51,25 @@ class ToolResult:
     verification: str = ""
     untrusted: bool = False  # contains external content (web pages, documents)
     needs_clarification: str = ""  # set when the tool could not proceed without user input
+    retryable: bool = False  # a transient failure (still loading, busy) that the task runner may retry, bounded
+
+    @property
+    def outcome(self) -> str:
+        """One of the result contract's states (never 'completed' without verification)."""
+        kind = str(self.data.get("errorKind", ""))
+        if self.ok:
+            return "completed_verified" if self.verified else "dispatched_unverified"
+        if self.needs_clarification and kind in ("", "invalid_arguments", "ambiguous"):
+            return "target_ambiguous" if "Which" in self.needs_clarification or kind == "ambiguous" else "rejected_validation"
+        return {"permission_denied": "permission_denied", "not_installed": "app_not_installed", "not_running": "app_not_running",
+                "not_found": "target_not_found", "invalid_arguments": "rejected_validation",
+                "login_required": "blocked_login"}.get(kind, "failed")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok, "summary": self.summary, "data": self.data, "artifacts": self.artifacts,
             "verified": self.verified, "verification": self.verification, "untrusted": self.untrusted,
-            "needsClarification": self.needs_clarification,
+            "needsClarification": self.needs_clarification, "retryable": self.retryable, "outcome": self.outcome,
         }
 
 

@@ -280,9 +280,16 @@ class WebResearchTool(Tool):
                               meta={"sources": [p.url for p in report.sources], "json": str(js), "analysisBy": report.analysis_by})
         # Sync to the Mac UI and paired phones: only URLs that were actually fetched, never model-written links.
         summary = report.analysis.strip() if report.analysis else " ".join(next(iter(report.excerpts.values()), []))
+        findings = [{"source": i, "text": sent[:300]} for i, sents in sorted(report.excerpts.items()) for sent in sents[:2]][:8]
+        limits = [f"Couldn't read: {e[:160]}" for e in report.errors[:4]]
+        if report.analysis:
+            limits.append("The summary was written by the local model from these sources; check key facts against the links.")
+        else:
+            limits.append("No local model was available, so the summary is quoted from the sources.")
         s.bus.publish("research.result", {"taskId": ctx.task_id or "", "query": q, "summary": summary[:1200],
                                           "summaryKind": "local-model analysis" if report.analysis else "source excerpts",
-                                          "sources": [{"title": pg.title[:200], "url": pg.url} for pg in report.sources]})
+                                          "sources": [{"title": pg.title[:200], "url": pg.url} for pg in report.sources],
+                                          "findings": findings, "limitations": limits})
         cited = "\n".join(f"[{i}] {pg.title[:90]} — {pg.url}" for i, pg in enumerate(report.sources, 1))
         return ToolResult(True, f"Read {len(report.sources)} sources and saved a cited report ({md.name})."
                                 + ("" if report.analysis else " No local model was available, so the report has excerpts only.")

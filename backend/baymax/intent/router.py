@@ -63,6 +63,66 @@ class IntentRouter:
                         r"(can|do) you hear me( now)?|can you listen( to me)?|you there|testing( testing)?|test|mic test|"
                         r"thank you|thanks|nice to meet you)( baymax)?", bare):
             return Intent("greeting", text=raw)
+        # ---- posts on X: drafting only shows the text; publishing goes through the composer and needs approval
+        m = re.match(r"^(?:draft|write|compose|prepare)\s+(?:a\s+|an?\s+x\s+|a\s+twitter\s+)?(?:post|tweet)\s*(?:saying|that says|:)?\s*[\"“']?(.+?)[\"”']?$", t)
+        if m:
+            draft = _strip_original(raw, m.group(1)).strip().strip("\"“”'")
+            return Intent("draft", args={"text": draft}, text=raw)
+        m = re.match(r"^(?:post|tweet|publish)\s+[\"“'](.+)[\"”']\s+(?:on|to)\s+(?:x|twitter)$", t)
+        if m:
+            return Intent("tool", "ai.delegate", {"service": "x", "prompt": _exact_tail(raw, m.group(1)), "submit": True},
+                          "Publish a post on X", raw)
+        if re.search(r"\b(?:x|twitter)\b", t) and re.search(r"\b(?:enter|type|paste|put|write)\b.{0,20}\b(?:post|draft|tweet|it)\b", t):
+            publish = bool(re.search(r"\b(?:publish|post|tweet|send)\s+it\b", t))
+            return Intent("tool", "ai.delegate", {"service": "x", "prompt": LAST_DRAFT, "submit": publish},
+                          "Publish the draft on X" if publish else "Put the draft in X's composer", raw)
+        if re.fullmatch(r"(?:now\s+)?(?:post|publish|tweet)\s+it(?:\s+on\s+(?:x|twitter))?", t):
+            return Intent("tool", "ai.delegate", {"service": "x", "prompt": LAST_DRAFT, "submit": True}, "Publish the draft on X", raw)
+
+        # ---- questions about apps and the front window (answered from macOS, not guessed)
+        if re.search(r"\b(what|which)\s+(?:apps|applications|programs)\s+(?:are|do i have)\s+(?:currently\s+)?(?:open|running)\b"
+                     r"|\blist\s+(?:the\s+|my\s+)?(?:open|running)\s+(?:apps|applications)\b", t):
+            return Intent("tool", "desktop.running_apps", {}, "List open apps", raw)
+        if re.search(r"\b(which|what)\s+(?:app|application|program)\s+(?:is\s+)?(?:currently\s+)?(?:active|in front|focused|frontmost)\b", t):
+            return Intent("tool", "desktop.active_window", {}, "Front app", raw)
+
+        # ---- safe keyboard shortcuts ("open a new tab in Chrome", "reload the page", "press command t")
+        app_tail = r"(?:\s+in\s+(?:the\s+)?(.+?))?"
+        for pattern, action in ((r"^open\s+(?:a\s+)?new\s+tab" + app_tail + "$", "new_tab"),
+                                (r"^open\s+(?:a\s+)?new\s+window" + app_tail + "$", "new_window"),
+                                (r"^(?:reload|refresh)\s+(?:the\s+|this\s+)?(?:page|tab)" + app_tail + "$", "reload")):
+            m = re.match(pattern, t)
+            if m:
+                return Intent("tool", "desktop.shortcut", {"action": action, "app": _title(m.group(1)) if m.group(1) else ""},
+                              action.replace("_", " "), raw)
+        m = re.match(r"^(?:press|hit|use)\s+(?:the\s+)?(?:command|cmd|⌘)\s*[+-]?\s*(\S)(?:\s+shortcut)?" + app_tail + "$", t)
+        if m:
+            action = {"t": "new_tab", "n": "new_window", "r": "reload", "f": "find", "l": "address_bar", "[": "back", "]": "forward",
+                      "a": "select_all", "c": "copy", "v": "paste", "z": "undo", "=": "zoom_in", "-": "zoom_out"}.get(m.group(1))
+            if action is None:
+                return Intent("chat", reply="I only press safe shortcuts (⌘T, ⌘N, ⌘R, ⌘F, ⌘L, ⌘[, ⌘], ⌘A, ⌘C, ⌘V, ⌘Z, ⌘=, ⌘-). "
+                                          "Which of those did you mean?", text=raw)
+            return Intent("tool", "desktop.shortcut", {"action": action, "app": _title(m.group(2)) if m.group(2) else ""},
+                          f"Press ⌘{m.group(1).upper()}", raw)
+
+        # ---- files by name (Spotlight) and documentation lookups (web research)
+        m = re.match(r"^(?:find|locate|where is|search for)\s+(?:the\s+|my\s+)?file\s+(?:named|called)\s+[\"“']?(.+?)[\"”']?$", t) \
+            or re.match(r"^(?:find|locate|where is)\s+(?:the\s+|my\s+)?([\w .-]+\.(?:pdf|docx?|xlsx?|pptx?|txt|md|csv|zip|png|jpe?g|key|pages|numbers|swift|py|java|js|ts))$", t)
+        if m:
+            return Intent("tool", "files.find_by_name", {"name": _strip_original(raw, m.group(1))}, "Find file", raw)
+        m = re.match(r"^(?:find|get|look up|show me)\s+(?:the\s+)?(?:latest\s+|current\s+|official\s+)?(?:documentation|docs|release notes)\s+(?:for|on|about)\s+(.+)$", t)
+        if m:
+            return Intent("tool", "research.web", {"query": f"official documentation {m.group(1)}"}, "Research documentation", raw)
+
+        # ---- double / right click an element described in words
+        m = re.match(r"^(double|right)[- ]?click\s+(?:on\s+)?(?:the\s+)?(.+)$", t)
+        if m:
+            target, app = _split_app(m.group(2))
+            args = {"query": target, "button": "right" if m.group(1) == "right" else "left", "count": 2 if m.group(1) == "double" else 1}
+            if app:
+                args["app"] = app
+            return Intent("tool", "screen.click_element", args, f"{m.group(1).title()}-click {target}", raw)
+
         # ---- delegate to another AI ("ask ChatGPT to …", "prepare this prompt in Claude: …", "send … to Gemini")
         ai = r"(chat ?gpt|claude|gemini|perplexity)"
         m = re.match(r"^(?:ask|tell|have|get)\s+" + ai + r"\s*,?\s+(?:to\s+)?(.+)$", t)
@@ -305,11 +365,40 @@ class IntentRouter:
         return False
 
 
+LAST_DRAFT = "\u0000last-draft\u0000"  # placeholder resolved by the assistant from the conversation (the latest draft)
+
 WAKE = r"(baymax|bay ?max|bay-max|bimax|bimex|beymax|baymex|beemax|bymax|bay mac|bae max|baemax|maymax)"
 
 
+def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" = None) -> "list[Intent] | None":
+    """'Open Safari and then open Terminal' -> two tool intents, run in order as one task. Only when every part is
+    itself a recognised action (2-4 parts); otherwise None and the sentence is handled as a whole."""
+    parts = [p.strip(" ,.") for p in re.split(r"\s*,?\s*\b(?:and then|then|and also|and|after that)\b\s*", raw, flags=re.I)]
+    parts = [p for p in parts if p]
+    if not 2 <= len(parts) <= 4:
+        return None
+    intents = [router.route(p, ctx) for p in parts]
+    if all(i.kind == "tool" and i.tool for i in intents):
+        return intents
+    return None
+
+
+def _exact_tail(raw: str, lowered: str) -> str:
+    """Original-case fragment, keeping the punctuation the router stripped when the fragment ends the sentence."""
+    i = raw.lower().find(lowered)
+    if i < 0:
+        return lowered
+    end = i + len(lowered)
+    rest = raw[end:]
+    if re.fullmatch(r"[.!?…]+[\"”']?\s*", rest):
+        end += len(rest.rstrip())
+    return raw[i:end]
+
+
 def _delegate(raw: str, service: str, prompt_lower: str, *, submit: bool) -> "Intent":
-    prompt = _strip_original(raw, prompt_lower).strip().strip("\"“”'")
+    prompt = _exact_tail(raw, prompt_lower).strip()
+    if len(prompt) > 1 and prompt[0] in "\"“'" and prompt[-1] in "\"”'":
+        prompt = prompt[1:-1]
     prompt = prompt[:1].upper() + prompt[1:]
     svc = service.replace(" ", "")
     label = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "perplexity": "Perplexity"}.get(svc, svc)

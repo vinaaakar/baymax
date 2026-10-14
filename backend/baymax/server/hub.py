@@ -147,8 +147,8 @@ class DeviceHub:
                 return proto.make("cursor.update", p)
             if etype == "gaze.target":
                 return proto.make("gaze.target", p)
-            if etype == "research.result":
-                return proto.make("research.result", p)
+            if etype == "research.result":  # the phone gets the schema's fields; the Mac panel also shows findings
+                return proto.make("research.result", {k: p[k] for k in ("taskId", "query", "summary", "sources", "summaryKind") if k in p})
         except (KeyError, ValueError, TypeError) as exc:
             log.debug("could not map event %s: %s", etype, exc)
         return None

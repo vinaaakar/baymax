@@ -115,6 +115,7 @@ class BaymaxServer:
         r.add_post("/api/tts/stop", self.tts_stop)
         r.add_get("/api/history", self.history)
         r.add_get("/api/requests", self.requests)
+        r.add_get("/api/permissions", self.permissions)
         r.add_get("/api/tasks", self.tasks)
         r.add_get("/api/tasks/{id}", self.task)
         r.add_post("/api/tasks/{id}/cancel", self.task_cancel)
@@ -337,6 +338,11 @@ class BaymaxServer:
 
     async def tts_stop(self, request: web.Request) -> web.Response:
         return web.json_response({"stopped": self.assistant.stop_speaking()})
+
+    async def permissions(self, request: web.Request) -> web.Response:
+        from ..capabilities import permission_report
+
+        return web.json_response({"permissions": permission_report(self.s)})
 
     async def requests(self, request: web.Request) -> web.Response:
         """Pipeline trace of recent requests: intent, tool, validation, permissions, execution, verification."""

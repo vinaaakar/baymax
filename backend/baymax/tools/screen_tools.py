@@ -104,9 +104,11 @@ class FindElementTool(Tool):
 
 class ClickElementTool(Tool):
     name = "screen.click_element"
-    description = "Press a UI element described in words (accessibility tree only, never blind coordinates). Asks if ambiguous."
+    description = ("Press, double-click or right-click a UI element described in words (found in the accessibility tree, never "
+                   "blind coordinates). Asks if ambiguous.")
     risk = Risk.MEDIUM
-    args = {"query": Arg("str", max_len=160), "app": Arg("str", False, max_len=80)}
+    args = {"query": Arg("str", max_len=160), "app": Arg("str", False, max_len=80),
+            "button": Arg("str", False, default="left", choices=("left", "right")), "count": Arg("int", False, default=1)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
@@ -124,8 +126,18 @@ class ClickElementTool(Tool):
                               {**notes, "element": el.to_dict()}, needs_clarification="")
         ctx.services.bus.publish("gaze.target", to_gaze(el, displays, duration_ms=3000))
         app = notes["app"]
+        button, count = args.get("button", "left"), args.get("count", 1)
+        if not 1 <= count <= 2:
+            return ToolResult(False, "I can click an element once or twice.", {**notes, "errorKind": "invalid_arguments"})
+        cx, cy = el.center
+        if not any(dp.contains(cx, cy) for dp in displays):
+            return ToolResult(False, f"“{el.label}” is outside every connected display, so I didn't click.", {**notes, "errorKind": "not_found"})
+        ctx.checkpoint()
         try:
-            await d.press_element(app, el.role, el.label)
+            if button == "left" and count == 1:
+                await d.press_element(app, el.role, el.label)  # accessibility action: works even if covered
+            else:  # double/right click need real pointer events at the element's verified centre
+                await d.click(cx, cy, button, count)
         except DesktopPermissionError as exc:
             raise ToolUnavailable(str(exc)) from None
         except DesktopUnavailable as exc:
@@ -142,7 +154,8 @@ class ClickElementTool(Tool):
 
         changed = bool(after) and (front != app or signature(after) != signature(before))
         detail = "the interface changed afterwards" if changed else "macOS accepted the press; no visible change was detected"
-        return ToolResult(True, f"Pressed “{el.label}” in {app} ({detail}).", {**notes, "element": el.to_dict(), "changed": changed,
+        verb = "Pressed" if button == "left" and count == 1 else ("Right-clicked" if button == "right" else "Double-clicked")
+        return ToolResult(True, f"{verb} “{el.label}” in {app} ({detail}).", {**notes, "element": el.to_dict(), "changed": changed,
                           "frontAfter": front}, verified=changed, verification=detail)
 
 

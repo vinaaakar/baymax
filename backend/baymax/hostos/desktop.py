@@ -46,6 +46,8 @@ class DesktopPermissionError(DesktopUnavailable):
 _APP_NAME = re.compile(r"^[\w .&'()+-]{1,80}$")
 ACCESSIBILITY_HELP = ("BAYMAX needs the Accessibility permission for this. Open System Settings → Privacy & Security → "
                       "Accessibility and enable the BAYMAX app (or Terminal if you started the backend from Terminal).")
+AUTOMATION_HELP = ("macOS isn't letting BAYMAX control {app}. Open System Settings → Privacy & Security → Automation, find BAYMAX "
+                   "(or Terminal if you started the backend from Terminal) and enable {app}.")
 SCREEN_HELP = ("BAYMAX needs the Screen Recording permission for this. Open System Settings → Privacy & Security → "
                "Screen & System Audio Recording and enable BAYMAX.")
 
@@ -124,6 +126,7 @@ class DesktopBackend:
     async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
     async def focus_element(self, app: str, role: str, x: float, y: float) -> None: raise DesktopUnavailable(self._why())
     async def press_return(self, app: str) -> None: raise DesktopUnavailable(self._why())
+    async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None: raise DesktopUnavailable(self._why())
     async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
     def _why(self) -> str:
@@ -134,6 +137,61 @@ class UnsupportedDesktop(DesktopBackend):
     def __init__(self) -> None:
         self.platform = sys.platform
 
+
+def keystroke_plan(text: str, chunk: int = 10) -> list[tuple[str, str]]:
+    """How text is typed: ("text", ≤chunk characters) events, with line breaks as ("newline", "") — sent as Shift+Return,
+    which inserts a line break in chat boxes and editors instead of submitting. Unicode is passed through unchanged."""
+    out: list[tuple[str, str]] = []
+    for i, line in enumerate(text.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
+        if i:
+            out.append(("newline", ""))
+        for j in range(0, len(line), chunk):
+            out.append(("text", line[j:j + chunk]))
+    return out
+
+
+# Keys and modifiers BAYMAX may press (shortcuts are further restricted by the shortcut tool's allowlist).
+KEY_CODES = {"return": 36, "tab": 48, "escape": 53, "delete": 51, "left": 123, "right": 124, "down": 125, "up": 126, "space": 49}
+MODIFIERS = ("command", "shift", "option", "control")
+
+_AS_KEYS = """on run argv
+  set appName to item 1 of argv
+  set k to item 2 of argv
+  set mods to {}
+  repeat with i from 3 to count of argv
+    set m to item i of argv
+    if m is "command" then set end of mods to command down
+    if m is "shift" then set end of mods to shift down
+    if m is "option" then set end of mods to option down
+    if m is "control" then set end of mods to control down
+  end repeat
+  tell application "System Events"
+    tell process appName to set frontmost to true
+    delay 0.2
+    if (length of k) > 1 then
+      key code (k as integer) using mods
+    else
+      keystroke k using mods
+    end if
+  end tell
+end run"""
+
+# Fallback typing (no Quartz): each line typed, Shift+Return between lines.
+_AS_TYPE_LINES = """on run argv
+  set appName to item 1 of argv
+  tell application "System Events"
+    tell process appName to set frontmost to true
+    delay 0.2
+    repeat with i from 2 to count of argv
+      keystroke (item i of argv)
+      if i < (count of argv) then keystroke return using shift down
+    end repeat
+  end tell
+end run"""
+
+_AS_ACTIVATE = """on run argv
+  tell application "System Events" to tell process (item 1 of argv) to set frontmost to true
+end run"""
 
 _AS_TYPE = """on run argv
   set appName to item 1 of argv
@@ -403,7 +461,11 @@ class MacDesktop(DesktopBackend):
         if res.ok:
             return res.stdout
         err = res.stderr
-        if any(code in err for code in ("-1719", "-25211", "not allowed assistive", "-1743")):
+        # Diagnose the API that actually failed: -1743 is Automation (Apple Events to one app), -1719/-25211 are Accessibility.
+        if "-1743" in err or "not authorized to send apple events" in err.lower():
+            target = args[0] if args else "that app"
+            raise DesktopPermissionError(AUTOMATION_HELP.format(app=target))
+        if any(code in err for code in ("-1719", "-25211", "not allowed assistive")):
             raise DesktopPermissionError(ACCESSIBILITY_HELP)
         if "-1728" in err and "process" in err:
             m = re.search(r'process "([^"]*)"', err)
@@ -484,8 +546,39 @@ class MacDesktop(DesktopBackend):
         Q.CGEventPost(Q.kCGHIDEventTap, ev)
 
     async def type_text(self, app: str, text: str) -> None:
+        """Type into the focused element of `app` (the caller focuses and verifies the field). Unicode-safe via
+        CGEventKeyboardSetUnicodeString; line breaks are Shift+Return so chat boxes are not submitted early."""
         app = validate_app_name(app)
-        await self._osascript(_AS_TYPE, app, text[:2000], timeout=30)
+        text = text[:4000]
+        Q = self._quartz
+        if Q is None or not hasattr(Q, "CGEventKeyboardSetUnicodeString"):
+            await self._osascript(_AS_TYPE_LINES, app, *text.replace("\r\n", "\n").split("\n"), timeout=60)
+            return
+        await self._osascript(_AS_ACTIVATE, app, timeout=10)
+        await asyncio.sleep(0.2)
+        if self.accessibility_trusted() is False:
+            raise DesktopPermissionError(ACCESSIBILITY_HELP)
+        for kind, chunk in keystroke_plan(text):
+            if kind == "newline":
+                for down in (True, False):
+                    ev = Q.CGEventCreateKeyboardEvent(None, KEY_CODES["return"], down)
+                    Q.CGEventSetFlags(ev, Q.kCGEventFlagMaskShift)
+                    Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            else:
+                for down in (True, False):
+                    ev = Q.CGEventCreateKeyboardEvent(None, 0, down)
+                    Q.CGEventKeyboardSetUnicodeString(ev, len(chunk.encode("utf-16-le")) // 2, chunk)
+                    Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            await asyncio.sleep(0.012)
+
+    async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None:
+        app = validate_app_name(app)
+        key = key.lower()
+        if not (key in KEY_CODES or re.fullmatch(r"[a-z0-9,.\[\]/=-]", key)):
+            raise DesktopUnavailable(f"key “{key}” is not supported")
+        if any(m not in MODIFIERS for m in modifiers):
+            raise DesktopUnavailable("unsupported modifier")
+        await self._osascript(_AS_KEYS, app, str(KEY_CODES[key]) if key in KEY_CODES else key, *modifiers, timeout=15)
 
     async def list_elements(self, app: str, limit: int = 60) -> list[UIElement]:
         app = validate_app_name(app)
