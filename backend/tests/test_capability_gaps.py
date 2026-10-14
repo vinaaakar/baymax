@@ -99,7 +99,7 @@ def _text(r):
     ("Identify the active window under CA", "desktop.active_window", {}),  # transcription noise after the command
     ("which is the front window", "desktop.active_window", {}),
     ("Move the pointer to the center of the screen", "desktop.move_cursor", {"position": "center"}),
-    ("put the mouse in the middle", None, None),  # "in" is not "to": not this rule (falls through, no crash)
+    ("put the mouse in the middle", "desktop.move_cursor", {"position": "center"}),
     ("Who the pointer to the center of the screen", "desktop.move_cursor", {"position": "center"}),  # misheard verb
     ("Type three separate lines into TextEdit", "screen.type_into",
      {"field": "text area", "text": "Line 1\nLine 2\nLine 3", "app": "TextEdit"}),

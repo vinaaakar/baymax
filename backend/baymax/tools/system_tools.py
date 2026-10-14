@@ -134,6 +134,22 @@ async def _check_on_display(ctx: ToolContext, x: float, y: float) -> ToolResult 
     return None
 
 
+CURSOR_POSITIONS = ("center", "top-left", "top-right", "bottom-left", "bottom-right")
+# Corners are approached CORNER_INSET points inside the display: the exact corner pixel can fire a macOS Hot Corner
+# (Mission Control, screen saver, lock screen...), which would be an action the user never asked for.
+CORNER_INSET = 5.0
+
+
+def _spot(dp: Any, spot: str) -> tuple[float, float]:
+    """Global point (top-left origin, points - the space CGEvent uses on every display, Retina or not) of a named spot."""
+    if spot == "center":
+        return dp.x + dp.width / 2, dp.y + dp.height / 2
+    v, h = spot.split("-")
+    x = dp.x + CORNER_INSET if h == "left" else dp.x + dp.width - 1 - CORNER_INSET
+    y = dp.y + CORNER_INSET if v == "top" else dp.y + dp.height - 1 - CORNER_INSET
+    return x, y
+
+
 class NewDocumentTool(Tool):
     name = "desktop.new_document"
     description = "Create a new, empty document in a document app (TextEdit by default) and confirm its window appeared."
@@ -167,18 +183,26 @@ class NewDocumentTool(Tool):
 
 class MoveCursorTool(Tool):
     name = "desktop.move_cursor"
-    description = "Move the mouse cursor to screen coordinates (points), or to the centre of the main display (position='center')."
+    description = ("Move the mouse cursor to screen coordinates (points), or to a named spot of the display the pointer is on: "
+                   "position='center', 'top-left', 'top-right', 'bottom-left' or 'bottom-right'.")
     risk = Risk.MEDIUM
-    args = {"x": Arg("float", False), "y": Arg("float", False), "position": Arg("str", False, choices=("center",))}
+    args = {"x": Arg("float", False), "y": Arg("float", False), "position": Arg("str", False, choices=CURSOR_POSITIONS)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
-        if args.get("position") == "center":
+        spot = args.get("position")
+        if spot:
             displays = await _desktop(d.displays())
-            main = next((dp for dp in displays if dp.is_primary), displays[0] if displays else None)
-            if main is None:
+            if not displays:
                 return ToolResult(False, "macOS didn't report any display, so I didn't move the pointer.", {"errorKind": "not_found"})
-            args = {**args, "x": main.x + main.width / 2, "y": main.y + main.height / 2}
+            try:  # the display the pointer is on now (the one being looked at), else the main display
+                px, py = await d.cursor_position()
+                here = next((dp for dp in displays if dp.contains(px, py)), None)
+            except DesktopUnavailable:
+                here = None
+            dp = here or next((dp for dp in displays if dp.is_primary), displays[0])
+            x, y = _spot(dp, spot)
+            args = {**args, "x": x, "y": y}
         if args.get("x") is None or args.get("y") is None:
             q = "Where should I move the pointer? You can say “the center of the screen” or name something on screen."
             return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
@@ -187,8 +211,12 @@ class MoveCursorTool(Tool):
         await _desktop(d.move_cursor(args["x"], args["y"]))
         x, y = await _desktop(d.cursor_position())
         ok = abs(x - args["x"]) < 2 and abs(y - args["y"]) < 2
-        return ToolResult(True, f"Cursor at ({x:.0f}, {y:.0f}).", {"x": x, "y": y}, verified=ok,
-                          verification="cursor position read back" if ok else "cursor position differs from target")
+        where = f"the {spot.replace('-', ' ')}" + (" corner" if spot and spot != "center" else "") + " of the screen" if spot else ""
+        if not ok:
+            return ToolResult(False, f"I tried to move the pointer to {where or f'({args['x']:.0f}, {args['y']:.0f})'}, but it is at "
+                                     f"({x:.0f}, {y:.0f}).", {"x": x, "y": y, "target": [args["x"], args["y"]], "errorKind": "not_verified"})
+        text = f"Moved the pointer to {where} ({x:.0f}, {y:.0f})." if where else f"Cursor at ({x:.0f}, {y:.0f})."
+        return ToolResult(True, text, {"x": x, "y": y, "position": spot}, verified=True, verification="cursor position read back")
 
 
 class ClickTool(Tool):
@@ -314,11 +342,47 @@ class ReadWindowTool(Tool):
             raise ToolUnavailable(str(exc)) from None
         except DesktopUnavailable as exc:
             return ToolResult(False, f"I couldn't read {label}'s window: {exc}.", {"app": label, "errorKind": "not_found"})
-        if not text.strip():
-            return ToolResult(True, f"{label}'s front window has no readable text (it may not expose accessibility text).",
-                              {"app": label, "text": ""}, verified=True, verification="accessibility tree queried")
-        return ToolResult(True, f"Read {len(text)} characters from {label}:\n{text[:1500]}", {"app": label, "text": text}, verified=True,
-                          verification="accessibility values read", untrusted=True)
+        if text.strip():
+            return ToolResult(True, f"Read {len(text)} characters from {label} (accessibility text):\n{text[:1500]}",
+                              {"app": label, "text": text, "source": "accessibility"}, verified=True,
+                              verification="accessibility values read", untrusted=True)
+        # No accessibility text is not proof the window is empty: recognise the text shown in that window instead.
+        return await _read_window_by_ocr(ctx, app, label)
+
+
+async def _read_window_by_ocr(ctx: ToolContext, app: str, label: str) -> ToolResult:
+    """Fallback for windows without accessibility text: on-device text recognition (Vision) of a fresh capture, kept
+    to the frame of that app's front window. Needs Screen Recording; only used when that window is the one in front
+    (its frame is known), so other apps' text is never mixed in."""
+    d = ctx.services.desktop
+    none = f"{label}'s window exposes no accessibility text"
+    try:
+        w = await d.active_window()
+    except DesktopUnavailable as exc:
+        return ToolResult(False, f"{none}, and I couldn't locate the window to recognise its text ({exc}).",
+                          {"app": label, "errorKind": "not_found"})
+    if w.app.lower() not in (app.lower(), label.lower()):
+        return ToolResult(False, f"{none}. To read it from the screen instead, bring {label} to the front and ask again.",
+                          {"app": label, "errorKind": "not_found", "front": w.app})
+    try:
+        items = await d.ocr_elements()
+    except DesktopPermissionError as exc:
+        return ToolResult(False, f"{none}, and reading it from the screen needs the Screen Recording permission. {exc}",
+                          {"app": label, "errorKind": "permission"})
+    except DesktopUnavailable as exc:
+        return ToolResult(False, f"{none}, and on-screen text recognition is unavailable: {exc}.", {"app": label, "errorKind": "unsupported"})
+    inside = [e for e in items if w.x <= e.center[0] <= w.x + w.width and w.y <= e.center[1] <= w.y + w.height]
+    if not inside:
+        return ToolResult(True, f"{none}, and no text was recognised on screen inside it — it looks empty.",
+                          {"app": label, "text": "", "source": "ocr"}, verified=True,
+                          verification="accessibility tree read and the window's screen area recognised")
+    inside.sort(key=lambda e: (round(e.y / 8), e.x))  # reading order: rows, then left to right
+    text = "\n".join(e.label for e in inside)
+    conf = sum(e.confidence for e in inside) / len(inside)
+    return ToolResult(True, f"{label} exposes no accessibility text, so I read it from the screen (text recognition, "
+                            f"average confidence {conf:.0%}; it may contain recognition errors):\n{text[:1500]}",
+                      {"app": label, "text": text, "source": "ocr", "confidence": round(conf, 3)}, verified=True,
+                      verification="Vision OCR of a fresh capture of the window's area", untrusted=True)
 
 
 class ScreenshotTool(Tool):

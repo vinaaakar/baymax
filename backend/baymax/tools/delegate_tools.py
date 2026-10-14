@@ -82,6 +82,7 @@ class DelegateToAITool(Tool):
             "prompt": Arg("str", max_len=4000, description="exact text to enter"),
             "submit": Arg("bool", False, default=False, description="press Send after entering (needs approval)"),
             "via": Arg("str", False, default="auto", choices=("auto", "app", "browser")),
+            "new_chat": Arg("bool", False, default=False, description="start a new chat first (⌘N in the app)"),
             "browser": Arg("str", False, default="", max_len=60)}
 
     def classify(self, args: dict[str, Any]) -> tuple[Risk, frozenset[str]]:
@@ -126,6 +127,11 @@ class DelegateToAITool(Tool):
                 ctx.progress(0.1, f"opening the {native.name} app")
                 await d.open_app(native.name)
                 target, data["via"] = native.process or native.name, "app"
+                if args.get("new_chat"):  # "create a new chat": the app's own New Chat shortcut (the website root is a new chat)
+                    await asyncio.sleep(0.8)
+                    await d.press_keys(target, "n", ("command",))
+                    data["newChat"] = True
+                    await asyncio.sleep(0.6)
             else:
                 browser = "Safari"
                 if args.get("browser"):

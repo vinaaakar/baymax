@@ -284,3 +284,59 @@ async def test_reading_an_interface_is_bounded_in_time(desk):
         took = time.monotonic() - start
         print(f"{app}: {len(els)} elements in {took:.1f}s, window {desk.last_ax_window}")
         assert took < 25 and desk.last_ax_window is not None
+
+
+async def test_pointer_to_the_top_left_corner_through_the_tool(desk, real_services):
+    """A named corner is a position on the display under the pointer (5 pt inset: no Hot Corner fires), never OCR."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    x0, y0 = await desk.cursor_position()
+    t = await _run(real_services, ("desktop.move_cursor", {"position": "top-left"}))
+    x, y = await desk.cursor_position()
+    await desk.move_cursor(x0, y0)
+    print(t.result["summary"])
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+    d = next(dp for dp in await desk.displays() if dp.contains(x0, y0))
+    assert abs(x - (d.x + 5)) < 2 and abs(y - (d.y + 5)) < 2
+
+
+async def test_read_the_current_window_in_safari(desk, real_services, tmp_path):
+    """'Read the current window' on a Safari page (a local file: no network). Accessibility text first; if Safari
+    exposes none, the on-screen text of that window (needs Screen Recording)."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    page = tmp_path / "baymax-read-test.html"
+    page.write_text("<html><body><h1>BAYMAX reading test 4217</h1><p>Neural networks learn from examples.</p></body></html>")
+    await desk.open_path_in_app("Safari", page)
+    for _ in range(20):
+        await asyncio.sleep(0.5)
+        if await desk.frontmost_app() == "Safari":
+            break
+    await asyncio.sleep(1.5)  # page render
+    t = await _run(real_services, ("desktop.read_window", {}))
+    print(t.result["summary"][:400], "| source:", t.result.get("data", {}).get("source"))
+    assert t.status is TaskStatus.COMPLETED, t.result
+    assert "4217" in t.result["data"]["text"], t.result["data"].get("text", "")[:500]
+    print("Close the Safari tab afterwards.")
+
+
+async def test_type_a_prompt_into_the_chatgpt_app_without_sending(desk, real_services):
+    """Only with the ChatGPT app installed (and signed in). Types a prompt into its message box and reads it back; the
+    prompt is NOT sent (clear it afterwards). On failure the message says which stage failed and what window was read."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    running, installed = await desk.list_apps()
+    if not any(a.name == "ChatGPT" for a in installed + running):
+        pytest.skip("the ChatGPT app is not installed on this Mac")
+    from baymax.tasks.models import TaskStatus
+
+    t = await _run(real_services, ("ai.delegate", {"service": "chatgpt", "prompt": "BAYMAX test prompt - do not send", "via": "app"}),
+                   timeout=90)
+    print(t.result["summary"], "| window:", t.result.get("data", {}).get("window"), "| elements:",
+          t.result.get("data", {}).get("elementsRead"))
+    assert t.status is TaskStatus.COMPLETED and t.result["data"].get("entered"), t.result
+    assert t.result["data"].get("submitted") is False

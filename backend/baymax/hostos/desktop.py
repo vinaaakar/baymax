@@ -158,6 +158,11 @@ class UnsupportedDesktop(DesktopBackend):
         self.platform = sys.platform
 
 
+def drop_inside(elements: list[ScreenElement], frames: list[tuple[float, float, float, float]]) -> list[ScreenElement]:
+    """Elements whose centre is not inside any of the frames (x, y, w, h) - used to ignore BAYMAX's own windows."""
+    return [e for e in elements if not any(x <= e.center[0] <= x + w and y <= e.center[1] <= y + h for x, y, w, h in frames)]
+
+
 def parse_window_header(dump: str) -> dict[str, Any] | None:
     """The `#window<TAB>count<TAB>how<TAB>name<TAB>subrole` header of an _AS_LOCATE dump: how many windows System Events
     could see, how one was chosen (main / focused / first / none), and its title and subrole."""
@@ -709,24 +714,71 @@ end run"""
 
 _AS_TEXT = """on run argv
   set appName to item 1 of argv
+  set budget to 12
+  if (count of argv) > 1 then set budget to (item 2 of argv) as integer
   set out to ""
+  set t0 to current date
   tell application "System Events"
     tell process appName
-      if (count of windows) = 0 then return ""
-      -- fetch the list once: iterating the specifier itself makes every item an unresolvable reference
-      set els to entire contents of window 1
-      repeat with e in els
+      try -- Chromium/Electron apps expose their web content only once an assistive client asks
+        set value of attribute "AXManualAccessibility" to true
+      end try
+      set w to item 1 of my pickWindow(appName)
+      if w is missing value then error "no window" number 1406
+      -- Breadth-first over each element's children (reaches into web areas such as Safari's page, which
+      -- "entire contents" did not), bounded by a time budget and the amount of text collected.
+      set queue to {w}
+      set qi to 1
+      repeat while qi ≤ (count of queue)
+        if (my secondsSince(t0)) > budget or (length of out) > 20000 or (count of queue) > 6000 then exit repeat
+        set cur to item qi of queue
+        set qi to qi + 1
+        set kids to {}
         try
-          if role of e is in {"AXStaticText", "AXTextField", "AXTextArea"} then
-            set v to value of e
-            if v is not missing value then set out to out & (v as text) & linefeed
-          end if
+          set kids to UI elements of cur
         end try
+        repeat with k in kids
+          set kid to contents of k
+          set end of queue to kid
+          try
+            set r to role of kid
+            if r is in {"AXStaticText", "AXTextField", "AXTextArea", "AXHeading"} then
+              set v to value of kid
+              if v is not missing value and (v as text) is not "" then set out to out & (v as text) & linefeed
+            end if
+          end try
+        end repeat
       end repeat
     end tell
   end tell
   return out
-end run"""
+end run
+
+on secondsSince(t0)
+  return (current date) - t0
+end secondsSince
+
+-- Which window to inspect: the app's main window (its document window; panels such as the Open dialog are never
+-- main), else its focused window, else window 1. Locate, focus and read-back all use this, so they look at the same
+-- window. Returns {window or missing value, how it was chosen, number of windows System Events can see}.
+on pickWindow(appName)
+  tell application "System Events"
+    tell process appName
+      set n to count of windows
+      if n = 0 then return {missing value, "none", 0}
+      repeat with i from 1 to n
+        try
+          if (value of attribute "AXMain" of window i) is true then return {window i, "main", n}
+        end try
+      end repeat
+      try
+        set fw to value of attribute "AXFocusedWindow"
+        if fw is not missing value then return {fw, "focused", n}
+      end try
+      return {window 1, "first", n}
+    end tell
+  end tell
+end pickWindow"""
 
 
 class MacDesktop(DesktopBackend):
@@ -927,7 +979,7 @@ class MacDesktop(DesktopBackend):
 
     async def read_window_text(self, app: str, limit: int = 4000) -> str:
         proc = await self.process_name(app)
-        return (await self._osascript(_AS_TEXT, proc, timeout=30))[:limit]
+        return (await self._osascript(_AS_TEXT, proc, "12", timeout=25))[:limit]
 
     async def list_apps(self) -> tuple[list[AppInfo], list[AppInfo]]:
         """(running regular apps, installed apps). Running apps come from NSWorkspace (no permission needed)."""
@@ -1118,7 +1170,21 @@ class MacDesktop(DesktopBackend):
         out: list[ScreenElement] = []
         for d in _quartz_displays(Q):  # fresh capture of every display, every request (no stale screenshots)
             out += await loop.run_in_executor(None, _vision_ocr, Q, d)
-        return out
+        # Text inside BAYMAX's own windows is not a target: its conversation shows the user's command itself (seen:
+        # "move the pointer to the top left corner" was "found" as text in BAYMAX's transcript).
+        return drop_inside(out, self._self_window_frames())
+
+    def _self_window_frames(self) -> list[tuple[float, float, float, float]]:
+        Q = self._quartz
+        if Q is None:
+            return []
+        info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements, Q.kCGNullWindowID) or []
+        frames = []
+        for w in info:
+            if str(w.get("kCGWindowOwnerName") or "") in _SELF_APPS:
+                b = w.get("kCGWindowBounds") or {}
+                frames.append((float(b.get("X", 0)), float(b.get("Y", 0)), float(b.get("Width", 0)), float(b.get("Height", 0))))
+        return frames
 
     async def screenshot(self, path: Path) -> Path:
         res = await self.p.run(["screencapture", "-x", str(path)], timeout=20)

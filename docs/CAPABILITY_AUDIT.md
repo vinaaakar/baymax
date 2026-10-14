@@ -64,3 +64,37 @@ desktop and model, which proves logic, not macOS behaviour.
 - From the iPhone: the seven session commands above.
 - ChatGPT: "Open ChatGPT and do some research on …" — expect an approval request with the exact prompt; with the ChatGPT
   app installed, the prompt typed and read back; otherwise a message naming the stage that failed.
+
+## Reliability recovery — round 2 (pointer, window reading, ChatGPT, research)
+
+### Root causes (traced with the real router and code)
+
+| Observed | Path | Root cause | Fix |
+|---|---|---|---|
+| `Move the pointer to the top left corner` → "Pointing at “Move the pointer to the top left corner” (text recognised on screen)" | router → `screen.point_at` → `_locate` (AX, then OCR) | No rule for corners, so "top left corner" became a target to *search for*; OCR then matched the user's own command shown in BAYMAX's conversation window and moved the pointer onto it | Corners/centre are `desktop.move_cursor {position}` computed from the bounds of the display under the pointer (5 pt inset so Hot Corners never fire), read back; OCR ignores text inside BAYMAX's own windows (`drop_inside`) |
+| `Move the pointer to the center of` | same | the centre rule didn't accept a cut-off "of" | rule tolerates it |
+| `Read the current window` → "Safari's front window has no readable text" | `desktop.read_window` → `_AS_TEXT` | `entire contents of window 1` does not reach into Safari's web area, and "no AX text" was reported as "no text" | `_AS_TEXT` walks `UI elements` breadth-first from the main window (bounded), sets `AXManualAccessibility`; if still no text, recognises the text inside that window's frame (Vision, Screen Recording) and says so with confidence; otherwise explains which permission/limitation stopped it |
+| "Opened chatgpt.ai / gpt.ai …", "Asked Safari to open chatgpt.ai" | no rule → local model → `apps.open_url` with an invented domain | model-proposed addresses were trusted | (e20a8f5) proposals must come from the user's words; a named site opens at its official address (`KNOWN_SITES`: chatgpt → https://chatgpt.com); else BAYMAX asks |
+| "I can't find an app called “Chatgpt Undo Some Research On How I Walk”" | generic `open X` rule | the whole sentence became the app name ("and do" misheard as "undo") | `_research_intent` extracts destination + browser + topic; the generic rule never takes a phrase with task words as an app name (asks instead); compound commands still become plans |
+| `Create a new chat and do some research on how AI works` → "couldn't work out the details" | no rule | — | no service named → `research.web` (real sources, summary, saved report); with a service ("…new chat in ChatGPT…") → `ai.delegate` with `new_chat` (⌘N in the app) |
+| ChatGPT message box not found within 30 s | `ai.delegate` field search | unknown: only 18 labelled elements were readable in the ChatGPT window | `AXManualAccessibility` set before reading (e20a8f5); **needs `diagnose_ax.py ChatGPT` output** to confirm |
+
+### Status of the affected functionality
+
+| Capability | Status | Evidence |
+|---|---|---|
+| Move to coordinates | working | Mac: read back (earlier runs); unit |
+| Move to centre / corners | implemented | unit (display under the pointer, external display, failure when the pointer doesn't arrive); Mac test added |
+| Point at an element (AX/OCR) without clicking | working | Mac: element centre; unit: never clicks, ignores BAYMAX's own text |
+| Active app / window | working | Mac 12/12 (cf0e0b0) |
+| Read current window — accessibility | implemented (rewritten) | unit; Mac test on a Safari page added |
+| Read current window — OCR fallback | implemented | unit; needs Screen Recording on the Mac |
+| Open ChatGPT / in Safari | implemented | unit: official site when the app isn't installed; Safari when asked |
+| Research (web search) | implemented | unit (local server); not run against the live web here |
+| Research via ChatGPT | **partial** | prompt typed after approval; BAYMAX does not read ChatGPT's answer; message box not found in the ChatGPT app on the Mac (unresolved) |
+
+### Manual checklist (Mac, then iPhone)
+
+1. `BAYMAX_MACOS_INTEGRATION=1 .venv/bin/python -m pytest -v tests_macos` — 15 tests (the ChatGPT one skips if the app isn't installed).
+2. `.venv/bin/python tests_macos/diagnose_ax.py ChatGPT` with a ChatGPT chat window visible — send the output.
+3. From the iPhone: `Move the pointer to the top left corner` (pointer near the corner, no Mission Control), `Move the pointer to the center of the screen`, `Read the current window` with Safari on a web page, `Open ChatGPT`, `Open ChatGPT in Safari`, `Create a new chat and research how AI works` (sources listed), `Open ChatGPT in Safari and research how AI works` (approval with the exact prompt).

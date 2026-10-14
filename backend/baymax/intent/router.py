@@ -107,21 +107,9 @@ class IntentRouter:
         if re.match(r"^(?:test|try|check)\s+(?:a\s+|the\s+)?(?:multiple|multi)[- ]?lines?\s+text", t):
             return Intent("chat", reply="Do you want me to type three separate lines into a text document? Say “type three lines "
                                         "into TextEdit” (or “create a new TextEdit document” first).", text=raw)
-        m = re.match(r"^(?:open|use|go to|launch)\s+(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?"
-                     r"(?:\s+(?:in|on|using|with|through)\s+(?:the\s+)?(safari|google chrome|chrome|firefox|arc|brave|edge|browser))?"
-                     r"\s*,?\s+(?:and\s+)?(?:then\s+)?"
-                     r"(?:do|perform|run|make)\s+(?:some\s+|a\s+|the\s+)?research\s+(?:based\s+)?(?:on|about|into|regarding|of)\s+(.+)$", t)
-        if m:
-            svc = m.group(1).replace(" ", "")
-            label = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "perplexity": "Perplexity"}[svc]
-            topic = _exact_tail(raw, m.group(3)).strip()
-            args = {"service": svc, "prompt": f"Research this and summarize it with sources: {topic}", "submit": True}
-            if m.group(2):  # "in Safari": the website in that browser, not the native app
-                args["via"] = "browser"
-                if m.group(2) != "browser":
-                    args["browser"] = {"chrome": "Google Chrome", "google chrome": "Google Chrome", "brave": "Brave Browser",
-                                       "edge": "Microsoft Edge"}.get(m.group(2), m.group(2).title())
-            return Intent("tool", "ai.delegate", args, f"Ask {label} to research"[:120], raw)
+        research = _research_intent(t, raw)
+        if research is not None:
+            return research
 
         # ---- questions about apps and the front window (answered from macOS, not guessed)
         if re.search(r"\b(what|which)\s+(?:apps|applications|programs)\s+(?:are|do i have)\s+(?:currently\s+)?(?:open|running)\b"
@@ -326,10 +314,19 @@ class IntentRouter:
         m = re.match(r"^(?:move|put) (?:the )?(?:mouse|cursor|pointer) to \(?(\d+)[ ,]+(\d+)\)?$", t)
         if m:
             return Intent("tool", "desktop.move_cursor", {"x": float(m.group(1)), "y": float(m.group(2))}, "Move cursor", raw)
-        # "move the pointer to the center of the screen" (also tolerates a misheard verb: "who the pointer to the center")
-        if re.match(r"^(?:\w+\s+)?(?:the\s+|my\s+)?(?:mouse|cursor|pointer)(?:\s+(?:pointer|cursor))?\s+(?:to|into|at)\s+(?:the\s+)?"
-                    r"(?:very\s+)?(?:center|centre|middle)(?:\s+of\s+(?:the\s+|my\s+)?(?:screen|display|monitor))?$", t):
-            return Intent("tool", "desktop.move_cursor", {"position": "center"}, "Move the pointer to the center", raw)
+        # "move the pointer to the center / top-left corner (of the screen)": positions computed from the display's real
+        # bounds - never searched for as on-screen text. Tolerates a misheard verb ("who the pointer…") and a cut-off "of".
+        m = re.match(r"^(?:\w+\s+)?(?:the\s+|my\s+)?(?:mouse|cursor|pointer)(?:\s+(?:pointer|cursor))?\s+(?:to|into|at|in)\s+(?:the\s+)?"
+                     r"(?:very\s+)?(center|centre|middle|(?:top|upper|bottom|lower)[\s-]?(?:left|right)(?:[\s-]?hand)?(?:\s+(?:corner|side))?)"
+                     r"(?:\s+of(?:\s+(?:the\s+|my\s+)?(?:screen|display|monitor))?)?$", t)
+        if m:
+            spot = m.group(1)
+            if spot in ("center", "centre", "middle"):
+                pos = "center"
+            else:
+                v = "top" if re.match(r"(top|upper)", spot) else "bottom"
+                pos = f"{v}-{'left' if 'left' in spot else 'right'}"
+            return Intent("tool", "desktop.move_cursor", {"position": pos}, f"Move the pointer to the {pos.replace('-', ' ')}", raw)
         m = re.match(r"^scroll (up|down)(?: (\d+))?(?: lines?)?$", t)
         if m:
             n = int(m.group(2) or 5)
@@ -433,6 +430,18 @@ class IntentRouter:
                 return Intent("tool", "apps.open_url", {"url": url}, f"Open {url}", raw)
             app = re.sub(r"^(the )?(app |application )?", "", target)
             app = re.sub(r"\s+(app|application)$", "", app)
+            if app in ("gpt", "the gpt", "g p t"):
+                return Intent("chat", reply="Do you mean ChatGPT? Say “open ChatGPT”.", text=raw)
+            task = _TASK_WORDS.search(app)
+            if task and len(app.split()) > 2 and split_compound(self, raw, ctx):
+                return Intent("chat", text=raw)  # "open Safari and then open Terminal": every part is an action -> a plan
+            if task and len(app.split()) > 2:
+                # "open chatgpt undo some research on how i walk": an app *plus* a task, never one app name
+                svc = re.match(r"(chat ?gpt|claude|gemini|perplexity)\b", app)
+                name = {"chatgpt": "ChatGPT", "chat gpt": "ChatGPT"}.get(svc.group(1), svc.group(1).title()) if svc else None
+                q = (f"Do you want me to open {name} and do something there? Say “open {name}”, or “open {name} and research "
+                     "<topic>”." if name else "That sounds like an app plus a task. Which app should I open, and what should I do there?")
+                return Intent("chat", reply=q, text=raw)
             if 0 < len(app) <= 40:
                 return Intent("tool", "apps.open", {"app": _title(app)}, f"Open {_title(app)}", raw)
 
@@ -474,6 +483,51 @@ def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" 
                 cur.args = {**cur.args, "app": prev.args["app"]}
         return intents
     return None
+
+
+# Words that make an "open …" phrase a task rather than an app name.
+_TASK_WORDS = re.compile(r"\b(and|undo|then|research|search|ask|tell|write|type|find|look up|summari[sz]e|explain|about|how)\b")
+_BROWSER_RX = r"safari|google chrome|chrome|firefox|arc|brave|edge|browser"
+_BROWSER_NAMES = {"chrome": "Google Chrome", "google chrome": "Google Chrome", "brave": "Brave Browser", "edge": "Microsoft Edge"}
+_SERVICE_LABELS = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "perplexity": "Perplexity"}
+_CONNECT = r"\s*,?\s*(?:(?:and|undo|n|then|to)\s+)?(?:then\s+)?(?:(?:do|perform|run|make|start|undo)\s+)?(?:some\s+|a\s+|the\s+)?"
+_TOPIC = r"research(?:\s+(?:based\s+)?(?:on|about|into|regarding|of|for))?\s+(.+)$"
+
+
+def _research_intent(t: str, raw: str) -> "Intent | None":
+    """Research requests as action + destination + topic (never one app name):
+    "open ChatGPT (in Safari) and do some research on X", "create a new chat in ChatGPT and research X" -> ai.delegate
+    with the topic (sending needs approval); "create a new chat and research X" (no service named) and "research X" ->
+    research.web, which returns real sources. Speech slips like "undo" for "and do" are tolerated."""
+    m = re.match(r"^(?:(?:open|use|go to|launch|start)\s+|(?:create|start|open|make)\s+(?:a\s+)?(new\s+chat)\s+(?:in|on|with)\s+)?"
+                 r"(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?(?:\s+(?:in|on|using|with|through)\s+(?:the\s+)?(" + _BROWSER_RX + r"))?"
+                 r"(?:\s+(?:and\s+)?(?:create|start|open)\s+(?:a\s+)?(new\s+chat))?" + _CONNECT + _TOPIC, t)
+    if m:
+        topic = _research_topic(raw, m.group(5))
+        if topic is None:
+            return Intent("chat", reply="What should I research? For example: “open ChatGPT and research how AI works”.", text=raw)
+        svc = m.group(2).replace(" ", "")
+        args: dict[str, Any] = {"service": svc, "prompt": f"Research this and summarize it with sources: {topic}", "submit": True}
+        if m.group(1) or m.group(4):
+            args["new_chat"] = True
+        if m.group(3):  # "in Safari": the website in that browser, not the native app
+            args["via"] = "browser"
+            if m.group(3) != "browser":
+                args["browser"] = _BROWSER_NAMES.get(m.group(3), m.group(3).title())
+        return Intent("tool", "ai.delegate", args, f"Ask {_SERVICE_LABELS[svc]} to research"[:120], raw)
+    m = re.match(r"^(?:create|start|open|make)\s+(?:a\s+)?new\s+chat" + _CONNECT + _TOPIC, t)
+    if m:
+        topic = _research_topic(raw, m.group(1))
+        if topic is None:
+            return Intent("chat", reply="What should I research?", text=raw)
+        return Intent("tool", "research.web", {"query": topic}, f"Research {topic}"[:120], raw)
+    return None
+
+
+def _research_topic(raw: str, lowered: str) -> str | None:
+    topic = _exact_tail(raw, lowered.strip()).strip().rstrip(".!?").strip()
+    words = [w for w in re.findall(r"[\w']+", topic.lower()) if w not in ("how", "what", "the", "a", "an", "on", "about", "some")]
+    return topic if words else None  # "research on how" (speech cut off) has no topic
 
 
 def _exact_tail(raw: str, lowered: str) -> str:
