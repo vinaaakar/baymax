@@ -120,6 +120,7 @@ def validate_glb(data: bytes, required_roles: dict[str, int] | None = None, obje
                 rep.errors.append(f"mesh {mi}: non-finite positions")
             if int(idx.max()) >= pos.shape[0]:
                 rep.errors.append(f"mesh {mi}: index out of range")
+                continue
             acc = gltf["accessors"][prim["attributes"]["POSITION"]]
             if "min" in acc and "max" in acc:
                 if not (np.allclose(pos.min(axis=0), acc["min"], atol=1e-4) and np.allclose(pos.max(axis=0), acc["max"], atol=1e-4)):

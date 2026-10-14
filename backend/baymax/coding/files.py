@@ -132,6 +132,11 @@ class FileOps:
         tmp.replace(p)
         if hashlib.sha256(p.read_bytes()).hexdigest() != hashlib.sha256(content.encode("utf-8")).hexdigest():
             raise EditError(f"verification failed: {rel} does not contain the written content")
+        if p.suffix == ".py":
+            # Python validates cached bytecode by mtime (1 s resolution) and size, so a same-size edit within
+            # the same second would otherwise run stale code. Drop the cache entries for this module.
+            for pyc in (p.parent / "__pycache__").glob(f"{p.stem}.*.pyc"):
+                pyc.unlink(missing_ok=True)
         added, removed = _diffstat(old, content)
         change = FileChange(self.ws.relative(p), "modified" if existed else "created", added, removed, backup)
         self.changes.merge(change)

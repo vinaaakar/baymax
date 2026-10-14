@@ -69,7 +69,7 @@ def inspect_project(root: Path) -> ProjectInfo:
     if names & {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pytest.ini"} or counts.get("Python"):
         info.build_systems.append("python")
         if (root / "tests").exists() or (root / "test").exists() or "pytest.ini" in names or any(p.name.startswith("test_") for p in files):
-            info.test_commands.append(["python", "-m", "pytest", "-q"])
+            info.test_commands.append(["python3", "-m", "pytest", "-q"])
     if "package.json" in names:
         info.build_systems.append("npm")
         try:

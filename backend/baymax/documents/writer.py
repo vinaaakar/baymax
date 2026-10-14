@@ -40,7 +40,7 @@ def write_markdown(path: Path, title: str, body: str, meta: dict[str, Any] | Non
 def write_csv(path: Path, series: dict[str, Sequence[float]]) -> Path:
     keys = list(series)
     buf = io.StringIO()
-    w = csv.writer(buf)
+    w = csv.writer(buf, lineterminator="\n")
     w.writerow(keys)
     for row in zip(*(series[k] for k in keys)):
         w.writerow(row)

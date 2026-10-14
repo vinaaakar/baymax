@@ -98,22 +98,26 @@ def spring_mass(mass: float = 1.0, stiffness: float = 20.0, damping: float = 0.5
     return tel
 
 
-def dc_motor_pid(target_rpm: float = 1500.0, kp: float = 0.02, ki: float = 0.4, kd: float = 0.0, duration: float = 3.0, dt: float = 0.0005,
+def dc_motor_pid(target_rpm: float = 1500.0, kp: float = 3.0, ki: float = 20.0, kd: float = 0.0, duration: float = 3.0, dt: float = 0.0002,
                  load_torque: float = 0.0) -> Telemetry:
-    # Simple DC motor: J dw/dt = Kt i - b w - T_load ; L di/dt = V - R i - Ke w
+    """DC motor speed loop (mechanical time constant J*R/(Kt*Ke + b*R) ~ 2.9 s). Default PI gains were chosen
+    by a grid search for <1% overshoot; settling (~1.7 s to 1500 rpm) is limited by the 24 V supply.
+    Conditional, clamped integration prevents wind-up while the voltage is saturated."""
+    # J dw/dt = Kt i - b w - T_load ; L di/dt = V - R i - Ke w
     J, b, Kt, Ke, R, L, vmax = 0.01, 0.001, 0.05, 0.05, 1.0, 0.5e-3, 24.0
-    w = i = integ = prev_err = 0.0
+    w = i = i_term = prev_err = 0.0
     target = target_rpm * 2 * math.pi / 60
     n = int(duration / dt)
     T, RPM, VOLT, CUR = np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n)
     for k in range(n):
         err = target - w
-        deriv = (err - prev_err) / dt
+        deriv = (err - prev_err) / dt if k else 0.0
         prev_err = err
-        u = kp * err + ki * integ + kd * deriv
-        if -vmax < u < vmax:  # anti-windup
-            integ += err * dt
+        u = kp * err + i_term + kd * deriv
         v = max(-vmax, min(vmax, u))
+        # anti-windup: integrate only when not pushing further into saturation, and bound the integral term
+        if v == u or (u > vmax) != (err > 0):
+            i_term = max(-vmax, min(vmax, i_term + ki * err * dt))
         di = (v - R * i - Ke * w) / L
         i += di * dt
         dw = (Kt * i - b * w - load_torque) / J

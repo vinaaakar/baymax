@@ -16,7 +16,7 @@ from .planner import COMPOSITE_ID, Planner
 from .scene import COLORS, ModelSpec, parse_color
 
 VIEWS = {"front": "front", "back": "back", "rear": "back", "side": "side", "left": "left", "right": "right", "top": "top",
-         "above": "top", "bird": "top", "bottom": "bottom", "below": "bottom", "iso": "iso", "isometric": "iso", "3/4": "iso", "angle": "iso"}
+         "above": "top", "bird": "top", "bottom": "bottom", "below": "bottom", "iso": "iso", "isometric": "iso", "3/4": "iso"}
 GROW = re.compile(r"\b(bigger|larger|increase|enlarge|grow|wider|taller|longer|thicker|more)\b")
 SHRINK = re.compile(r"\b(smaller|decrease|reduce|shrink|narrower|shorter|thinner|less)\b")
 

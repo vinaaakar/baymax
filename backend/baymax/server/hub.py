@@ -35,7 +35,7 @@ RATE = 20.0  # messages per second
 BURST = 40.0
 
 
-@dataclass
+@dataclass(eq=False)  # identity semantics: sessions live in a set
 class DeviceSession:
     ws: web.WebSocketResponse
     remote: str

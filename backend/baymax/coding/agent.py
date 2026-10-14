@@ -21,6 +21,7 @@ from ..hostos.process import ProcessManager, ProcessResult
 from ..llm.prompts import untrusted
 from ..security.commands import CommandRejected, validate_command
 from ..security.policy import Risk
+from ..security.workspace import WorkspaceViolation
 from .files import EditError, FileOps
 from .project import ProjectInfo, inspect_project
 
@@ -85,7 +86,8 @@ class CodingAgent:
         verdict = validate_command(argv)
         if verdict.risk is not Risk.LOW:
             raise CommandRejected(f"'{' '.join(argv)}' is not a low-risk test command")
-        res: ProcessResult = await self.processes.run(list(verdict.argv), cwd=str(root), timeout=self.timeout, max_output=self.max_output)
+        res: ProcessResult = await self.processes.run(list(verdict.argv), cwd=str(root), timeout=self.timeout, max_output=self.max_output,
+                                                      env={"PYTHONDONTWRITEBYTECODE": "1"})
         return TestRun(" ".join(argv), res.returncode, res.ok, res.timed_out, res.tail(6000))
 
     async def run(self, root: Path, files: FileOps, goal: str, chat: Chat | None, progress: Progress,
@@ -131,13 +133,13 @@ class CodingAgent:
                 try:
                     files.edit(e["path"], e["search"], e["replace"])
                     applied.append(e["path"])
-                except (EditError, OSError, ValueError) as exc:
+                except (EditError, WorkspaceViolation, OSError, ValueError) as exc:
                     errors.append(f"{e['path']}: {exc}")
             for f in new_files:
                 try:
                     files.write(f["path"], f["content"])
                     applied.append(f["path"])
-                except (EditError, OSError, ValueError) as exc:
+                except (EditError, WorkspaceViolation, OSError, ValueError) as exc:
                     errors.append(f"{f['path']}: {exc}")
             entry["applied"], entry["errors"] = applied, errors
             if cmd:
