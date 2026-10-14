@@ -90,8 +90,14 @@ export default function BaymaxCharacter(props: CharacterProps) {
       renderer.domElement.style.width = "100%";
       renderer.domElement.style.height = "100%";
       camera.aspect = w / h;
-      // keep the whole character in frame on narrow screens
-      camera.fov = w / h < 0.62 ? 34 : 28;
+      // Fit the whole character (about 2.4 x 2.2 units incl. margins) for any window shape.
+      camera.fov = 28;
+      const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const halfH = halfV * camera.aspect;
+      const dist = Math.max(1.35 / halfV, 1.2 / halfH);
+      const lookY = framing === "portrait" ? 1.12 : 1.05;
+      camera.position.set(0, lookY + 0.15, dist);
+      camera.lookAt(0, lookY, 0);
       camera.updateProjectionMatrix();
     };
     const ro = new ResizeObserver(resize);
