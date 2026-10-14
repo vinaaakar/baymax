@@ -53,9 +53,9 @@ function createWindow(name: WinName): BrowserWindow {
   const win =
     name === "companion"
       ? new BrowserWindow({
-          // Landscape desk companion: the face fills the window; controls appear on hover (like the iPhone in landscape).
-          ...common, width: 560, height: 320, x: workArea.x + workArea.width - 580, y: workArea.y + workArea.height - 340,
-          frame: false, resizable: true, minWidth: 420, minHeight: 250, alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
+          // Landscape companion: 2D Baymax (head and body) with the status bar on top and controls along the bottom.
+          ...common, width: 640, height: 400, x: workArea.x + workArea.width - 660, y: workArea.y + workArea.height - 420,
+          frame: false, resizable: true, minWidth: 480, minHeight: 320, alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
           titleBarStyle: "hidden", hasShadow: true, title: "BAYMAX",
         })
       : name === "conversation"

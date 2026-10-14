@@ -50,7 +50,7 @@ async def face_state(s: aiohttp.ClientSession, shot: Path | None = None) -> list
             if not val:
                 continue
             info = json.loads(val)
-            if shot is not None and info["w"] < 600:  # the compact companion window
+            if shot is not None and info["url"].endswith("#/companion"):  # the companion window
                 await ws.send_json({"id": 2, "method": "Page.captureScreenshot", "params": {"format": "png"}})
                 img = await ws.receive_json(timeout=15)
                 import base64
@@ -167,8 +167,21 @@ async def main() -> int:
                 t0 = time.monotonic()
                 root.warp_pointer(x, y)
                 d.sync()
+                nudged = False
                 while True:
-                    m = await recv("cursor.update", timeout=3)
+                    try:
+                        m = await recv("cursor.update", timeout=3)
+                    except asyncio.TimeoutError:
+                        if nudged:
+                            raise
+                        # X11 only: Chromium occasionally misses one synthetic warp; move 1 px and back (reported, once).
+                        print(f"  X11 missed the warp to ({x},{y}); nudging once")
+                        nudged = True
+                        root.warp_pointer(x + 1, y)
+                        d.sync()
+                        root.warp_pointer(x, y)
+                        d.sync()
+                        continue
                     p = m["payload"]
                     if os.environ.get("E2E_DEBUG"):
                         print("  recv", p["vx"], p["vy"], "want", round(x / W, 4), round(y / Hh, 4))
@@ -189,12 +202,12 @@ async def main() -> int:
                 for attempt in range(3):  # DevTools can be slow to answer while the renderer is busy; retry, never guess
                     try:
                         faces[name] = await face_state(s, ROOT / "docs/images/companion-2d-electron.png" if name == "right" else None)
-                        if any(f["w"] < 600 for f in faces[name]):
+                        if any(f["url"].endswith("#/companion") for f in faces[name]):
                             break
                     except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
                         print(f"  devtools read {attempt + 1} failed: {exc!r}")
                         faces[name] = []
-            comp = [(fl, fr) for fl in faces["left"] for fr in faces["right"] if fl["url"] == fr["url"] and fl["w"] < 600]
+            comp = [(fl, fr) for fl in faces["left"] for fr in faces["right"] if fl["url"] == fr["url"] and fl["url"].endswith("#/companion")]
             face_ok = bool(comp)
             for fl, fr in comp:
                 lx, rx = float(fl["pupil"].split(",")[0]), float(fr["pupil"].split(",")[0])

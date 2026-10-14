@@ -73,10 +73,10 @@ describe("cursor gate (Electron main)", () => {
   });
 
   it("companion looks toward a screen target relative to its window", () => {
-    const win = { x: 1000, y: 500, width: 560, height: 320 };
+    const win = { x: 1000, y: 500, width: 640, height: 400 };
     expect(lookFromWindow({ x: 0, y: 0 }, win).x).toBe(-1);
     expect(lookFromWindow({ x: 0, y: 0 }, win).y).toBeGreaterThan(0);
-    const c = lookFromWindow({ x: 1280, y: 660 }, win);
+    const c = lookFromWindow({ x: 1320, y: 648 }, win);
     expect(c.x).toBeCloseTo(0);
     expect(c.y).toBeCloseTo(0);
   });

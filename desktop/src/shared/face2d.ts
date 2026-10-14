@@ -126,3 +126,22 @@ export function fitFace(w: number, h: number, dome = true): FaceFit {
   const scale = Math.min((W * f.widthFrac) / (2 * FACE.head.rx), (H * heightFrac) / (2 * FACE.head.ry * (1 + f.parallaxRoom)));
   return { scale: r6(scale), cx: r6(W / 2), cy: r6(H * (landscape ? f.landscapeCenterY : f.centerY)), composition: "full" };
 }
+
+/** Mac companion "bust": the head sitting on Baymax's body (see spec face2d.bust). The head math is the same full head. */
+export function fitBust(w: number, h: number): FaceFit {
+  const W = w > 0 && Number.isFinite(w) ? w : 1;
+  const H = h > 0 && Number.isFinite(h) ? h : 1;
+  const B = FACE.bust;
+  const scale = Math.min(W * B.headWidthFrac, H * B.headHeightFrac);
+  return { scale: r6(scale), cx: r6(W / 2), cy: r6(H * B.headCenterY), composition: "full" };
+}
+
+/** Body outline (face units, relative to the head centre): a narrow neck under the head sloping out into the round belly. */
+export function bustBodyPath(): string {
+  const b = FACE.bust.body;
+  const n = b.neckHalfWidth, m = b.midHalfWidth, w = b.bottomHalfWidth;
+  return `M ${-n} ${b.neckY} C ${-n - 0.6} ${b.neckY + 0.06} ${-m + 0.12} ${b.neckY + 0.8} ${-m} ${b.midY} ` +
+    `C ${-m - 0.12} ${b.midY + 0.5} ${-w} ${b.bottomY - 0.5} ${-w} ${b.bottomY} L ${w} ${b.bottomY} ` +
+    `C ${w} ${b.bottomY - 0.5} ${m + 0.12} ${b.midY + 0.5} ${m} ${b.midY} ` +
+    `C ${m - 0.12} ${b.neckY + 0.8} ${n + 0.6} ${b.neckY + 0.06} ${n} ${b.neckY} Q 0 ${b.neckY - 0.08} ${-n} ${b.neckY} Z`;
+}

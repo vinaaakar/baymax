@@ -50,8 +50,8 @@ export class CursorGate {
 }
 
 /** Direction from the companion window towards a global screen point, normalised to -1..1 for the rig. */
-/** Look direction from the face (centred in the landscape companion window) toward a global point. */
-export function lookFromWindow(target: Point, win: Rect, eyeHeightFraction = 0.5): Point {
+/** Look direction from the face (head centre at 37 % of the companion window's height) toward a global point. */
+export function lookFromWindow(target: Point, win: Rect, eyeHeightFraction = 0.37): Point {
   const cx = win.x + win.width / 2;
   const cy = win.y + win.height * eyeHeightFraction;
   const clamp = (v: number) => Math.max(-1, Math.min(1, v));

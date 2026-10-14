@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../api/store";
 import BaymaxCharacter, { describeState } from "../character/BaymaxCharacter";
-import { ApprovalBanners, ChatInput, useActiveTasks, useClient, useVoice } from "../components/common";
+import { ApprovalBanners, ChatInput, ConnectionPill, EStopButton, MicButton, ProgressBar, useActiveTasks, useClient, useVoice } from "../components/common";
 import { DEFAULT_GAZE } from "../shared/gaze";
 import type { CharacterState } from "../shared/protocol";
 
@@ -79,37 +79,46 @@ export default function Companion() {
 
   const toggleSleep = () => client?.post("/api/sleep", { sleeping: !sleeping });
   const task = active[0];
-  const [typing, setTyping] = useState(false);
   return (
-    // Desk-companion face mode: only the face and a small keyboard button. Everything else is in the right-click menu
-    // and the menu-bar tray. Alerts (E-stop, approvals, errors) appear only while they need you.
-    <div className={`stage companion-layout face-mode ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""}`}
+    // Like the earlier Mac companion: status pills and ⌘ on top, Baymax (2D head and body) filling the window behind,
+    // mic / text / Send and Sleep / Conversation / STOP along the bottom.
+    <div className={`stage companion-layout bust-mode ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""}`}
       onContextMenu={(e) => { e.preventDefault(); window.baymax?.showCompanionMenu?.(); }}>
-      <div className="drag-strip drag" aria-hidden="true" />
+      <div className="topbar drag">
+        <ConnectionPill compact />
+        <span className="spacer" />
+        <button className="btn small no-drag" onClick={() => window.baymax?.openWindow("workspace")} title="Open engineering workspace" aria-label="Open engineering workspace">⌘</button>
+      </div>
+      {/* Baymax fills the window; the bars sit over the lower body, as in the earlier Mac companion. */}
       <div className="face-region">
         <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={cursor.look} cursorLive={cursor.live && !sleeping}
-          point={gaze.point} taskKind={task?.kind} progress={task?.progress} onClick={() => sleeping && toggleSleep()} />
+          point={gaze.point} taskKind={task?.kind} progress={task?.progress} composition="bust" onClick={() => sleeping && toggleSleep()} />
       </div>
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
-      <div className="face-overlay">
+      <div className="controls">
         {showCaption && lastAssistant && state !== "SLEEPING" && (
           <div className="speech-caption" aria-hidden="true" title={lastAssistant.text}>{lastAssistant.text}</div>
         )}
         {estop.engaged && <div className="banner estop" role="alert">Emergency Stop is engaged — controlled actions are blocked.</div>}
         <ApprovalBanners />
-        {voice.error && <div className="banner" role="alert">{voice.error}</div>}
-        {typing ? (
-          <ChatInput autoFocus onDone={() => setTyping(false)} placeholder={sleeping ? "Asleep — wake me first" : "Ask BAYMAX…"}
-            disabled={sleeping || state === "DISCONNECTED"} />
-        ) : (
-          <button className="keyboard-btn no-drag" onClick={() => setTyping(true)} title="Type to BAYMAX (right-click for more)"
-            aria-label="Type a message">
-            <svg width="20" height="14" viewBox="0 0 20 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <rect x="0.7" y="0.7" width="18.6" height="12.6" rx="2.2" />
-              <path d="M4 4.5h1M7 4.5h1M10 4.5h1M13 4.5h1M16 4.5h0M4 7.2h1M7 7.2h1M10 7.2h1M13 7.2h1M5.5 10h9" strokeLinecap="round" />
-            </svg>
+        {task && (
+          <button className="task-chip no-drag" onClick={() => window.baymax?.openWindow("workspace")} title="Inspect task">
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}{task.detail ? ` — ${task.detail}` : ""}</span>
+            <ProgressBar value={task.progress} />
+            <span className="btn small" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); client?.post(`/api/tasks/${task.taskId}/cancel`); }}>Cancel</span>
           </button>
         )}
+        {voice.error && <div className="banner" role="alert">{voice.error}</div>}
+        <div className="row">
+          <MicButton voice={voice} disabled={sleeping || state === "DISCONNECTED"} />
+          <ChatInput placeholder={sleeping ? "Asleep — wake me first" : "Ask BAYMAX…"} disabled={sleeping || state === "DISCONNECTED"} />
+        </div>
+        <div className="row">
+          <button className="btn small no-drag" onClick={toggleSleep}>{sleeping ? "Wake" : "Sleep"}</button>
+          <button className="btn small no-drag" onClick={() => window.baymax?.openWindow("conversation")}>Conversation</button>
+          <span className="spacer" />
+          <EStopButton compact />
+        </div>
       </div>
     </div>
   );

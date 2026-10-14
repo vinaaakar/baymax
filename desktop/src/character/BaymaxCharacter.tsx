@@ -3,7 +3,7 @@
 // Frame-rate capped, paused when hidden, honours prefers-reduced-motion, and animates only from the real application state.
 import { useEffect, useRef, useState } from "react";
 import type { CharacterState } from "../shared/protocol";
-import { expressionFor, FACE, faceGeometry, fitFace, VISUAL_SPEC, type Expression, type FaceGeometry } from "../shared/face2d";
+import { bustBodyPath, expressionFor, FACE, faceGeometry, fitBust, fitFace, VISUAL_SPEC, type Expression, type FaceGeometry } from "../shared/face2d";
 import { blend, frameRateFor, REST, targetPose, type Pose } from "./rig";
 
 export interface CharacterProps {
@@ -18,6 +18,7 @@ export interface CharacterProps {
   quality?: "low" | "high";
   onClick?: () => void;
   onFrame?: (f: { expression: Expression; geometry: FaceGeometry }) => void; // diagnostics
+  composition?: "head" | "bust"; // "bust": the head on Baymax's 2D body with arms (Mac companion)
 }
 
 export function prefersReducedMotion(): boolean {
@@ -25,6 +26,7 @@ export function prefersReducedMotion(): boolean {
 }
 
 const C = VISUAL_SPEC.colors;
+const B = FACE.bust;
 const S = FACE.shading;
 
 interface Frame { pose: Pose; t: number; w: number; h: number }
@@ -71,7 +73,9 @@ export default function BaymaxCharacter(props: CharacterProps) {
   }, []);
 
   const expression = expressionFor(props.state, { cursorLive: !!props.cursorLive, pointing: !!props.point, taskKind: props.taskKind });
-  const fit = fitFace(frame.w, frame.h, false); // Mac: the whole head (the dome is the iPhone's landscape layout)
+  const bust = props.composition === "bust";
+  // Mac: the whole head, alone or on the 2D body (the dome is the iPhone's landscape layout).
+  const fit = bust ? fitBust(frame.w, frame.h) : fitFace(frame.w, frame.h, false);
   const g = faceGeometry(frame.pose, expression, props.point ?? null, fit.composition);
   useEffect(() => props.onFrame?.({ expression, geometry: g }));
 
@@ -114,6 +118,16 @@ export default function BaymaxCharacter(props: CharacterProps) {
           <filter id="bx-shadow" x="-30%" y="-30%" width="160%" height="170%">
             <feDropShadow dx="0" dy={S.shadowOffset[1] * s} stdDeviation={S.shadowBlur * s} floodColor={S.shadow} floodOpacity="0.55" />
           </filter>
+          <radialGradient id="bx-body" cx="0.42" cy="0.12" r="0.95">
+            <stop offset="0" stopColor="#FFFFFF" />
+            <stop offset="0.5" stopColor={B.colors.body} />
+            <stop offset="1" stopColor={B.colors.bodyShade} />
+          </radialGradient>
+          <linearGradient id="bx-arm" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor={B.colors.armShade} />
+            <stop offset="0.55" stopColor={B.colors.arm} />
+            <stop offset="1" stopColor={B.colors.armShade} />
+          </linearGradient>
         </defs>
 
         {/* Stage glow behind the head: rises with real activity (pose glow). */}
@@ -132,6 +146,22 @@ export default function BaymaxCharacter(props: CharacterProps) {
           <ProgressArc cx={hx} cy={hy} rx={g.head.rx * s * 1.07} ry={g.head.ry * s * 1.07} progress={props.progress ?? null} t={t} />
         )}
 
+        {bust && (
+          // 2D body under the head: arms behind the body, body breathing slightly; the arms follow the rig's arm pose.
+          <g transform={`translate(${cx} ${cy}) scale(${s})`} data-part="body">
+            {([-1, 1] as const).map((side) => {
+              const A = B.arm;
+              const out = side < 0 ? frame.pose.armL - 0.16 + frame.pose.armLFwd * 0.55 : frame.pose.armR - 0.16 + frame.pose.armRFwd * 0.55;
+              const deg = ((side < 0 ? 1 : -1) * Math.max(-0.2, Math.min(0.9, out)) * 0.8 * 180) / Math.PI;
+              return (
+                <g key={side} transform={`translate(${side * A.x} ${A.top}) rotate(${deg})`}>
+                  <rect x={-A.width / 2} y={0} width={A.width} height={A.height} rx={A.radius} fill="url(#bx-arm)" />
+                </g>
+              );
+            })}
+            <path d={bustBodyPath()} fill="url(#bx-body)" transform={`translate(0 ${B.body.neckY}) scale(1 ${1 + (frame.pose.breathe - 1) * 2}) translate(0 ${-B.body.neckY})`} />
+          </g>
+        )}
         <g transform={`translate(${hx} ${hy}) rotate(${roll})`} filter="url(#bx-shadow)">
           <ellipse cx={0} cy={0} rx={g.head.rx * s} ry={g.head.ry * s} fill="url(#bx-skin)" data-part="head" />
         </g>

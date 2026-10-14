@@ -158,6 +158,33 @@
       "pointerMaxY": -0.12,
       "maxX": 0.22,
       "margin": 0.04
+    },
+    "bust": {
+      "description": "Mac companion: the 2D head sitting on Baymax's round body with arms at the sides (flat vector shapes, no 3D). Face units, origin at the head centre, y down.",
+      "headWidthFrac": 0.145,
+      "headHeightFrac": 0.235,
+      "headCenterY": 0.37,
+      "body": {
+        "neckY": 0.6,
+        "neckHalfWidth": 0.72,
+        "midY": 2.45,
+        "midHalfWidth": 2.1,
+        "bottomY": 3.6,
+        "bottomHalfWidth": 2.3
+      },
+      "arm": {
+        "x": 2.12,
+        "top": 1.75,
+        "width": 0.62,
+        "height": 2.2,
+        "radius": 0.31
+      },
+      "colors": {
+        "body": "#EEEAE8",
+        "bodyShade": "#CFC8C6",
+        "arm": "#E2DDDB",
+        "armShade": "#BDB5B3"
+      }
     }
   },
   "face2dTestVectors": [

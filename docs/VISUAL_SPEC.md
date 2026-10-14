@@ -38,9 +38,10 @@ draws SwiftUI `Canvas` paths (`ios/BaymaxCompanion/Character/CharacterView.swift
 - **Depth without 3D:** for gaze, the eye group slides across the face (up to 0.30 sideways, 0.20 up/down). The eye nearest the edge
   narrows by up to 28 % and the eyes move slightly closer together. The head shifts a little (parallax) and rolls with the pose.
   The eyes always stay inside the head; this is tested for cursor positions on and beyond the screen edges.
-- **Mac companion:** the whole head, centred and large, in a 560×320 window, with only a small keyboard button at the
-  bottom-left. Right-click and the menu-bar tray hold Conversation, Workspace, Sleep/Wake, Emergency Stop and Hide.
-  Emergency Stop is also the global shortcut ⌘⇧. (Cmd+Shift+period).
+- **Mac companion:** the earlier Mac layout, drawn in flat 2D. Baymax's head sits on his round, bell-shaped body with arms at
+  the sides (spec `face2d.bust`), filling a 640×400 window. On top: the Mac / model / iPhone status pills and ⌘ (Workspace).
+  At the bottom: mic, text field and Send, then Sleep, Conversation and STOP. Right-click and the menu-bar tray offer the
+  same actions; Emergency Stop is also the global shortcut ⌘⇧. (Cmd+Shift+period).
 - **iPhone, landscape (desk mode):** like the reference device, the head is a dome rising from the bottom edge. The eyes sit in
   the dome and their travel follows its curve. Only ⚙︎ (Settings & pairing) and ⌨︎ are shown, top-right. Long-press the face
   for Conversation, Current task, Sleep/Wake, Settings and Emergency Stop.

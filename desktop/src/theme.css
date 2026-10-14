@@ -40,6 +40,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .stage.companion-layout > .face-region { position: relative; flex: 1; min-height: 120px; }
 .stage.companion-layout > .controls { position: relative; left: auto; right: auto; bottom: auto; padding: 0 12px 12px; }
 .character-canvas canvas { display: block; }
+/* Mac companion: Baymax fills the window; status bar and controls are overlaid (always visible). */
+.stage.companion-layout.bust-mode > .face-region { position: absolute; inset: 0; min-height: 0; }
+.stage.companion-layout.bust-mode > .topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 3; padding: 10px 12px; }
+.stage.companion-layout.bust-mode > .controls { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 10px 12px 12px; }
 /* Desk-companion face mode (Mac): the face edge to edge, a small keyboard button bottom-left, alerts only when needed. */
 .stage.companion-layout.face-mode > .face-region { position: absolute; inset: 0; min-height: 0; }
 .stage.companion-layout.face-mode > .drag-strip { position: absolute; top: 0; left: 0; right: 0; height: 26px; z-index: 2; }
