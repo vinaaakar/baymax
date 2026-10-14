@@ -35,8 +35,8 @@ and `VisualSpecParityTests` fails if any number differs from the JSON.
 - **Arms:** none. Pointing is done with the head and eyes.
 - **Framing (identical on both platforms):**
   - Vertical FOV is 28°.
-  - Half-height = clamp(max(0.6, 0.5 / aspect), …, 1.0).
-  - The bust centre sits 40 % from the top, but the frame top never cuts the head (head top + 0.26 margin, which leaves room for status pills).
+  - Half-height = min(max(0.5, 0.44 / aspect), 1.2).
+  - The head-and-collar centre sits 42 % from the top, but the frame top never cuts the head (head top + 0.16 margin, which leaves room for status pills).
   - The camera looks straight ahead.
 
   Test vectors for aspect ratios 0.46, 0.68, 1.0, 1.6 and 2.4 are in the JSON.
