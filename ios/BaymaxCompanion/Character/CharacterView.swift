@@ -29,7 +29,7 @@ struct CharacterView: View {
 }
 
 /// Draws one frame. Layers, back to front: stage glow, rings/arcs, head (gradient + soft shadow), eye line, eyes,
-/// then indicators (pointing chevron and target lock, thinking dots, research magnifier, cursor glyph, sleep "z").
+/// then indicators (pointing chevron and target lock, thinking dots, research magnifier, sleep "z").
 private struct FacePainter {
     let g: FaceGeometry
     let expression: FaceExpression
@@ -147,14 +147,6 @@ private struct FacePainter {
                 handle.addLine(to: CGPoint(x: c.x + 0.12 * s, y: c.y + 0.12 * s))
                 ctx.stroke(handle, with: .color(Theme.white.opacity(0.85)), style: StrokeStyle(lineWidth: max(1.5, 0.026 * s), lineCap: .round))
             }
-        case .tracking:
-            // Small cursor glyph: real cursor samples are arriving from the Mac.
-            let k = 0.0018 * s, ox = hx + g.head.rx * s * 1.1, oy = hy + g.head.ry * s * 0.55
-            let pts: [(Double, Double)] = [(0, 0), (0, 34), (9, 26), (15, 40), (21, 37), (15, 24), (27, 24)]
-            var cursor = Path()
-            cursor.addLines(pts.map { CGPoint(x: ox + $0.0 * k, y: oy + $0.1 * k) })
-            cursor.closeSubpath()
-            ctx.fill(cursor, with: .color(Theme.muted.opacity(0.75)))
         case .sleeping:
             ctx.draw(Text("z").font(.system(size: max(10, 0.2 * s), weight: .semibold)).foregroundColor(Theme.muted.opacity(0.7)),
                      at: CGPoint(x: hx + g.head.rx * s * 1.05, y: hy - g.head.ry * s * (0.7 + 0.08 * sin(t))))

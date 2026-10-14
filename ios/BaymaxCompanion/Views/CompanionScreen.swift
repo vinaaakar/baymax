@@ -2,8 +2,8 @@ import BaymaxKit
 import SwiftUI
 
 /// The main iPhone screen — a desk companion, landscape first.
-/// Landscape (default): the face fills the screen like a desk device; tap it to show the status bar and controls,
-/// which hide again after a few seconds unless something needs attention. Portrait (top to bottom): compact status +
+/// Landscape (default): the face fills the screen like a desk device, with only a small keyboard button; long-press the
+/// face for conversation, sleep, settings and Emergency Stop. Portrait (top to bottom): compact status +
 /// settings, the face (its own region), short status messages, and one compact row of controls. In landscape with the conversation open, the face
 /// shrinks to the left and the conversation panel sits beside it. Rules live in BaymaxKit.CompanionLayout.
 struct CompanionScreen: View {
@@ -15,9 +15,6 @@ struct CompanionScreen: View {
     @State private var draft = ""
     @FocusState private var focused: Bool
     @AppStorage("baymax.debugCursor") private var debugCursor = false
-    @State private var chromeShown = false
-    @State private var chromeToken = 0
-    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 
     var body: some View {
         GeometryReader { geo in
@@ -62,50 +59,84 @@ struct CompanionScreen: View {
         }
     }
 
-    /// Bars stay visible whenever something needs the user (or VoiceOver is on); otherwise they appear on tap and hide again.
-    private var chromePinned: Bool {
-        voiceOver || typing || model.speechIn.state == .listening || model.estopEngaged || !model.approvals.isEmpty
-            || model.activeTask != nil || !model.display.connected || model.connectionProblem != nil
-    }
-
-    private func revealChrome() {
-        chromeShown = true
-        chromeToken += 1
-    }
-
-    /// Landscape face mode: the face fills the screen, like the reference desk device. Tap to show the bars.
+    /// Landscape face mode, like the reference desk device: only the face and a small keyboard button (bottom-left).
+    /// Conversation, sleep, settings/pairing and Emergency Stop are in the long-press menu on the face; alerts
+    /// (E-stop, approvals, errors, connection problems) appear only while they need you.
     private func immersiveFace(_ layout: CompanionLayout) -> some View {
-        let visible = chromeShown || chromePinned
-        return ZStack {
+        ZStack(alignment: .bottomLeading) {
             face.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
-            VStack(spacing: 6) {
-                topBar.padding(.top, 4)
-                Spacer(minLength: 0)
-                statusArea(layout)
-                controlRow(layout)
+                .contextMenu { faceMenu }
+            VStack(alignment: .leading, spacing: 6) {
+                alerts
+                if typing {
+                    HStack {
+                        TextField("Ask BAYMAX…", text: $draft).textFieldStyle(.plain).padding(10)
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                            .focused($focused).submitLabel(.send)
+                            .onSubmit { sendDraft() }
+                        Button("Send") { sendDraft() }
+                            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.display.connected)
+                        Button { typing = false; focused = false } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }
+                            .accessibilityLabel("Close keyboard input")
+                    }
+                } else {
+                    Button { typing = true; focused = true } label: {
+                        Image(systemName: "keyboard").font(.system(size: 17)).frame(width: 44, height: 36)
+                            .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.10)))
+                    }
+                    .foregroundStyle(Theme.white.opacity(0.6))
+                    .accessibilityLabel("Type a message")
+                    .accessibilityHint("Long-press the face for conversation, sleep, settings and emergency stop")
+                }
             }
-            .padding(.horizontal, 12)
-            .background(alignment: .bottom) {
-                LinearGradient(colors: [.clear, Theme.background.opacity(0.92)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 140).ignoresSafeArea().allowsHitTesting(false)
-            }
-            .opacity(visible ? 1 : 0)
-            .allowsHitTesting(visible)
-            .animation(.easeInOut(duration: 0.22), value: visible)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+            .foregroundStyle(Theme.white)
             if debugCursor {
                 VStack {
                     CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping).frame(maxWidth: 360)
                     Spacer()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(12)
                 .allowsHitTesting(false)
             }
         }
-        .task(id: chromeToken) {
-            guard chromeShown else { return }
-            try? await Task.sleep(for: .seconds(6))
-            chromeShown = false
+    }
+
+    private func sendDraft() {
+        model.send(text: draft)
+        draft = ""
+        typing = false
+        focused = false
+    }
+
+    @ViewBuilder
+    private var faceMenu: some View {
+        Button { showConversation = true } label: { Label("Conversation", systemImage: "text.bubble") }
+        if model.activeTask != nil {
+            Button { showTasks = true } label: { Label("Current task", systemImage: "list.bullet.rectangle") }
+        }
+        Button { model.setSleeping(!model.sleeping) } label: {
+            Label(model.sleeping ? "Wake" : "Sleep", systemImage: model.sleeping ? "sun.max" : "moon.zzz")
+        }
+        Button { showSettings = true } label: { Label("Settings & pairing", systemImage: "gearshape") }
+        Button(role: .destructive) { model.emergencyStop() } label: { Label("Emergency Stop", systemImage: "exclamationmark.octagon") }
+    }
+
+    /// Only what needs the user right now; nothing is shown when everything is fine.
+    @ViewBuilder
+    private var alerts: some View {
+        if model.estopEngaged {
+            Label("Emergency Stop engaged — reset it on the Mac", systemImage: "exclamationmark.octagon.fill")
+                .font(.footnote.weight(.semibold)).padding(8)
+                .background(Color(hex: 0x5C0C18), in: RoundedRectangle(cornerRadius: 12))
+        }
+        ForEach(model.approvals) { ApprovalCard(item: $0).frame(maxWidth: 420) }
+        if let problem = model.connectionProblem { messageRow(problem, icon: "wifi.exclamationmark").frame(maxWidth: 420) }
+        if (model.state == .error || model.state == .concerned), !model.stateReason.isEmpty {
+            messageRow(model.stateReason, icon: model.state == .error ? "exclamationmark.triangle" : "hand.raised").frame(maxWidth: 420)
         }
     }
 
@@ -116,10 +147,10 @@ struct CompanionScreen: View {
             .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
             .saturation(model.state == .disconnected ? 0.5 : 1)
             .contentShape(Rectangle())
-            .onTapGesture { if model.sleeping { model.setSleeping(false) } else { revealChrome() } }
+            .onTapGesture { if model.sleeping { model.setSleeping(false) } }
             .accessibilityElement()
             .accessibilityLabel("BAYMAX, \(model.state.accessibilityDescription)")
-            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "Double-tap to show the controls")
+            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "Long-press for conversation, sleep, settings and emergency stop")
             .accessibilityAddTraits(.isImage)
     }
 

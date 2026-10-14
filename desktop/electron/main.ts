@@ -1,5 +1,5 @@
 // BAYMAX desktop main process.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, session, systemPreferences, Tray } from "electron";
 import http from "http";
 import path from "path";
 import { startBackend, type BackendHandle } from "./backend";
@@ -136,6 +136,20 @@ ipcMain.handle("baymax:config", () => {
   if (!backend) throw new Error("backend not ready");
   return { apiBase: backend.apiBase, token: backend.token };
 });
+// The companion shows only the face; everything else is in this right-click menu (and the menu-bar tray).
+ipcMain.on("baymax:companionMenu", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  Menu.buildFromTemplate([
+    { label: "Conversation", click: () => createWindow("conversation") },
+    { label: "Engineering Workspace", click: () => createWindow("workspace") },
+    { type: "separator" },
+    sleeping ? { label: "Wake", click: () => apiPost("/api/sleep", { sleeping: false }) } : { label: "Sleep", click: () => apiPost("/api/sleep", { sleeping: true }) },
+    { type: "separator" },
+    { label: "Emergency Stop", accelerator: "CmdOrCtrl+Shift+.", click: () => apiPost("/api/estop", { engaged: true, reason: "companion menu" }) },
+    { label: "Hide Companion", click: () => windows.companion?.hide() },
+  ]).popup(win ? { window: win } : undefined);
+});
+
 ipcMain.on("baymax:open", (_e, name: WinName) => {
   if (name === "companion" || name === "conversation" || name === "workspace") createWindow(name);
 });
@@ -162,6 +176,10 @@ app.whenReady().then(async () => {
     return;
   }
   buildTray();
+  // Emergency Stop is always one keystroke away, even though the companion no longer shows a STOP button.
+  if (!globalShortcut.register("CmdOrCtrl+Shift+.", () => apiPost("/api/estop", { engaged: true, reason: "keyboard shortcut" })))
+    log("could not register the Emergency Stop shortcut (another app may use Cmd+Shift+.)");
+  app.on("will-quit", () => globalShortcut.unregisterAll());
   createWindow("companion");
   startCursorTracking();
   presence = new PresenceLink(backend.apiBase, backend.token, {

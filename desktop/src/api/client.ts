@@ -9,6 +9,7 @@ declare global {
     baymax?: {
       config: () => Promise<BackendConfig>;
       openWindow: (name: "companion" | "conversation" | "workspace") => void;
+      showCompanionMenu?: () => void;
       onCursor: (cb: (p: { x: number; y: number }) => void) => () => void;
       onGaze?: (cb: (g: { x: number; y: number; label: string; durationMs: number }) => void) => () => void;
       requestMicrophone: () => Promise<boolean>;

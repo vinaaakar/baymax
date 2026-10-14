@@ -39,9 +39,12 @@ draws SwiftUI `Canvas` paths (`ios/BaymaxCompanion/Character/CharacterView.swift
   narrows by up to 28 % and the eyes move slightly closer together. The head shifts a little (parallax) and rolls with the pose.
   The eyes always stay inside the head; this is tested for cursor positions on and beyond the screen edges.
 - **Landscape face mode (default on both):** like the reference desk device, the head fills about 87 % of the screen height,
-  centred, and nothing else is shown. The Mac companion is a 560×320 landscape window whose bars fade in on hover. The iPhone
-  shows its bars when you tap the face and hides them after 6 s. Bars stay visible while listening, during a task, for
-  approvals, E-stop, connection problems, or when VoiceOver is on.
+  centred. The only control on screen is a small keyboard button at the bottom-left, which opens a text field.
+  - Mac: everything else (Conversation, Workspace, Sleep/Wake, Emergency Stop, Hide) is in the right-click menu and the menu-bar
+    tray. Emergency Stop is also the global shortcut ⌘⇧. (Cmd+Shift+period).
+  - iPhone: long-press the face for Conversation, Current task, Sleep/Wake, Settings & pairing and Emergency Stop.
+  - Alerts (Emergency Stop engaged, approvals, errors, connection problems) appear only while they need you.
+    BAYMAX's latest reply shows briefly as a caption on the Mac.
 - **Fit:** in portrait the head fills 70 % of the width or 56 % of the height, whichever is smaller. It is never cropped.
   With the conversation open in landscape, the face moves to a narrower region beside it.
 - **Evidence:**
@@ -59,7 +62,7 @@ screen targets and the running task's kind (`expressionFor` / `FaceExpression.fr
 | Expression | When | What the face does |
 |---|---|---|
 | IDLE | idle, no cursor samples | slow breathing and blinking, resting gaze |
-| TRACKING | idle while real cursor samples arrive | eyes follow the cursor; small cursor glyph |
+| TRACKING | idle while real cursor samples arrive | eyes follow the cursor |
 | LISTENING | microphone recording | ring that pulses with the real microphone level |
 | THINKING | the model is working | eyes up and aside; three soft dots |
 | RESEARCHING | a research task is running | dots plus a magnifier orbiting the head |

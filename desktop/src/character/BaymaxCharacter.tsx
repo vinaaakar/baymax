@@ -157,10 +157,6 @@ export default function BaymaxCharacter(props: CharacterProps) {
             <line x1={0.05 * s} y1={0.05 * s} x2={0.12 * s} y2={0.12 * s} stroke={C.text} strokeWidth={Math.max(1.5, 0.026 * s)} strokeLinecap="round" />
           </g>
         )}
-        {expression === "TRACKING" && (
-          <path data-indicator="tracking" transform={`translate(${hx + g.head.rx * s * 1.1} ${hy + g.head.ry * s * 0.55}) scale(${0.0018 * s})`}
-            d="M0 0 L0 34 L9 26 L15 40 L21 37 L15 24 L27 24 Z" fill={C.muted} opacity={0.75} />
-        )}
         {expression === "SLEEPING" && (
           <text x={hx + g.head.rx * s * 1.05} y={hy - g.head.ry * s * (0.7 + 0.08 * Math.sin(t))} fill={C.muted}
             fontSize={0.2 * s} fontWeight={600} opacity={0.7} data-indicator="sleeping">z</text>

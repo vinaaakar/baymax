@@ -136,7 +136,7 @@
       }
     },
     "indicators": {
-      "TRACKING": "small cursor glyph under the face while real cursor samples arrive",
+      "TRACKING": "no glyph: the eyes follow the real cursor",
       "LISTENING": "ring around the head that pulses with the real microphone level",
       "THINKING": "three soft dots above the head",
       "RESEARCHING": "magnifier glyph orbiting the head while a research task runs",

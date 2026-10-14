@@ -101,7 +101,8 @@ export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoi
   );
 }
 
-export function ChatInput({ placeholder = "Ask BAYMAX…", disabled }: { placeholder?: string; disabled?: boolean }) {
+export function ChatInput({ placeholder = "Ask BAYMAX…", disabled, autoFocus, onDone }:
+  { placeholder?: string; disabled?: boolean; autoFocus?: boolean; onDone?: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const send = async () => {
@@ -110,6 +111,7 @@ export function ChatInput({ placeholder = "Ask BAYMAX…", disabled }: { placeho
     if (!t || !client) return;
     setBusy(true);
     setText("");
+    onDone?.();
     try {
       await client.post("/api/chat", { text: t, speak: false });
     } catch (e) {
@@ -122,7 +124,8 @@ export function ChatInput({ placeholder = "Ask BAYMAX…", disabled }: { placeho
     <form className="row no-drag" style={{ flex: 1 }} onSubmit={(e) => { e.preventDefault(); send(); }}>
       <label className="sr-only" htmlFor="chat-input">Message</label>
       <input id="chat-input" className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder}
-        disabled={disabled} autoComplete="off" maxLength={4000} />
+        disabled={disabled} autoComplete="off" maxLength={4000} autoFocus={autoFocus}
+        onKeyDown={(e) => { if (e.key === "Escape") onDone?.(); }} />
       <button className="btn primary" type="submit" disabled={busy || !text.trim() || disabled}>Send</button>
     </form>
   );
