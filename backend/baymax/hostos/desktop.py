@@ -274,8 +274,8 @@ _AS_LOCATE = """on run argv
   tell application "System Events"
     tell process appName
       set els to {}
-      set pick to my pickWindow(appName)
-      set w to item 1 of pick
+      set chosenWin to my pickWindow(appName)
+      set w to item 1 of chosenWin
       set wName to ""
       set wSub to ""
       if w is not missing value then
@@ -288,7 +288,7 @@ _AS_LOCATE = """on run argv
         set els to entire contents of w
       end if
       -- header (fewer than 8 columns, so element parsers skip it): which window was read
-      set out to "#window" & tab & (item 3 of pick) & tab & (item 2 of pick) & tab & wName & tab & wSub & linefeed
+      set out to "#window" & tab & (item 3 of chosenWin) & tab & (item 2 of chosenWin) & tab & wName & tab & wSub & linefeed
       try
         set els to els & (menu bar items of menu bar 1)
       end try

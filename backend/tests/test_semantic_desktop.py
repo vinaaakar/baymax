@@ -320,3 +320,41 @@ def test_locate_focus_and_read_back_inspect_the_same_chosen_window():
         assert "on pickWindow(appName)" in script and "my pickWindow(appName)" in script
         assert "entire contents of window 1" not in script  # never a blind "window 1" (could be a panel or nothing)
         assert '"AXMain"' in script and '"AXFocusedWindow"' in script
+
+
+# Words that are commands/properties inside `tell application "System Events"` (or AppleScript itself). Using one as a
+# variable name doesn't compile on macOS ("Expected expression but found command name", -2741) - this happened with
+# `pick`. AppleScript can't be compiled on Linux CI, so check the variable names instead. ("set frontmost to true" is a
+# deliberate property assignment, so frontmost is not listed.)
+_SE_TERMS = {"pick", "click", "select", "perform", "keystroke", "key", "delay", "name", "value", "position", "size", "role",
+             "description", "title", "focused", "enabled", "selected", "window", "windows", "process", "item", "text",
+             "contents", "action", "attribute", "menu", "button", "file", "folder", "disk", "application", "id", "class",
+             "properties", "visible", "subrole", "help", "entire", "count", "exists", "quit", "open", "close",
+             "save", "print", "make", "move", "duplicate", "delete", "increment", "decrement", "confirm", "cancel", "show",
+             "raise", "result", "error", "return", "minimized", "scroll", "list", "record", "reference"}
+
+
+def _applescripts():
+    import re as _re
+
+    from baymax.hostos import desktop as dk
+
+    scripts = {n: v for n, v in vars(dk).items() if n.startswith("_AS_") and isinstance(v, str)}
+    diag = (ROOT / "backend/tests_macos/diagnose_ax.py").read_text()
+    for i, m in enumerate(_re.finditer(r'"""(on run argv.*?)"""', diag, _re.S)):
+        scripts[f"diagnose_ax#{i}"] = m.group(1)
+    return scripts
+
+
+def test_applescript_variables_never_reuse_system_events_terms():
+    import re as _re
+
+    scripts = _applescripts()
+    assert "_AS_LOCATE" in scripts and any(k.startswith("diagnose_ax") for k in scripts)
+    bad = []
+    for name, src in scripts.items():
+        for var in _re.findall(r"\bset\s+(\w+)\s+to\b|\brepeat with\s+(\w+)\s+(?:in|from)\b|\bon\s+\w+\((\w+)\)", src):
+            v = next(x for x in var if x)
+            if v.lower() in _SE_TERMS:
+                bad.append((name, v))
+    assert not bad, f"AppleScript variables named like System Events terms (won't compile on macOS): {bad}"
