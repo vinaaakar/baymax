@@ -36,14 +36,14 @@ desktop and model, which proves logic, not macOS behaviour.
 | Voice input | iPhone Speech, Mac `voice/stt.py` (whisper.cpp) | mic permission, whisper model | partial | unit (filters) | garbled transcripts are only rejected or questioned, not corrected |
 | Open apps | `apps.open` | — | implemented | iPhone session (TextEdit opened, confirmed running) | — |
 | Open websites | `apps.open_url` | Automation (to read the URL back) | implemented | unit | URL read-back unverified on the Mac |
-| New TextEdit document | `desktop.new_document` | Automation for TextEdit | implemented (new) | unit; Mac test added, **not yet run** | document apps with a scripting dictionary only |
-| Safe text entry | `screen.type_into`, `ai.delegate` | Accessibility | implemented | **Mac**: focus + Unicode multi-line typing + exact read-back (`desk` API); tool-level Mac test added, not yet run | app auto-capitalization/autocorrect is reported, not undone |
-| Active window | `desktop.active_window` | — (title: Accessibility) | implemented | **Mac**: `test_frontmost_app_and_window`; tool-level test added | |
+| New TextEdit document | `desktop.new_document` | Automation for TextEdit | implemented | **Mac** (12/12 run): created and confirmed by its window | document apps with a scripting dictionary only |
+| Safe text entry | `screen.type_into`, `ai.delegate` | Accessibility | implemented (`ai.delegate`: see below) | **Mac**: focus + Unicode multi-line typing + exact read-back, also through the `screen.type_into` tool and task manager | app auto-capitalization/autocorrect is reported, not undone |
+| Active window | `desktop.active_window` | — (title: Accessibility) | implemented | **Mac**: through the tool (after fixing cf0e0b0: it used the first listed window, a Terminal strip) | |
 | Read window | `desktop.read_window` | Accessibility | implemented, **unverified after fix** | unit | `_AS_TEXT` had the "entire contents" iteration bug until dc83be8 |
 | Screen inspection / find | `screen.find_element`, `screen.inspect` | Accessibility; OCR needs Screen Recording | partial | **Mac**: AX elements with enabled/identifier and frame centre | OCR (Vision) path not run on the Mac |
-| Pointer control | `desktop.move_cursor`, `screen.point_at` | Accessibility, PyObjC Quartz | implemented | **Mac**: move + read-back, element centre; centre-of-screen test added | |
+| Pointer control | `desktop.move_cursor`, `screen.point_at` | Accessibility, PyObjC Quartz | implemented | **Mac**: move + read-back, element centre, centre of the main display through the tool | |
 | Clicks | `screen.click_element`, `desktop.click` | Accessibility | partial | unit | AXPress (`_AS_PRESS`) fixed in dc83be8, not re-run on the Mac; double/right click unverified |
-| ChatGPT/Claude/Gemini | `ai.delegate` | Accessibility, Automation, app or website login | **broken → fixed, unverified** | unit (stages, login wall, timeout) | sending needs approval; BAYMAX does not read the answer back |
+| ChatGPT/Claude/Gemini | `ai.delegate` | Accessibility, Automation, app or website login | **broken → fixed, unverified with ChatGPT** | unit (stages, login wall, timeout); **Mac**: the bounded interface read finishes in time (Finder, TextEdit) | sending needs approval; BAYMAX does not read the answer back |
 | Web research | `research.web` | internet (DuckDuckGo/SearXNG) | implemented | unit with a local test server | not run against the live web here; summary by the 3B model |
 | Open repository in editor | `apps.open_project` | — | implemented | unit | |
 | Find code / explain error | `coding.find`, `coding.explain_error` | — / model | implemented | unit | |
@@ -60,8 +60,7 @@ desktop and model, which proves logic, not macOS behaviour.
 
 ## Still to verify on the hardware
 
-- `BAYMAX_MACOS_INTEGRATION=1 .venv/bin/python -m pytest -v tests_macos` (12 tests: new-document → three lines → read-back
-  through the tools, active window, pointer to centre, bounded interface read).
+- Done: `tests_macos` 12/12 passed on the MacBook (cf0e0b0).
 - From the iPhone: the seven session commands above.
 - ChatGPT: "Open ChatGPT and do some research on …" — expect an approval request with the exact prompt; with the ChatGPT
   app installed, the prompt typed and read back; otherwise a message naming the stage that failed.
