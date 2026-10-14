@@ -283,3 +283,40 @@ def test_semantic_requests_route_to_the_right_tool(q, tool, args):
 
     i = IntentRouter(RequestClassifier(GeneratorRegistry())).route(q)
     assert i.kind == "tool" and i.tool == tool and i.args == args
+
+
+# ------------------------------------------------------------------ which window the accessibility scripts read
+class _Res:
+    def __init__(self, stdout):
+        self.ok, self.stdout, self.stderr, self.timed_out = True, stdout, "", False
+
+
+class _DumpRunner:
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+    async def run(self, argv, timeout=20):
+        return _Res(self.stdout)
+
+
+async def test_locate_reports_the_window_it_read_and_the_header_is_not_an_element():
+    from baymax.hostos.desktop import parse_window_header
+
+    dump = "#window\t6\tmain\tUntitled 6\tAXStandardWindow\n" + ax("AXTextArea", "", 0, 52, 600, 400) + "\n" \
+           + ax("AXMenuBarItem", "File", 40, 0, 36, 24) + "\n"
+    d = MacDesktop.__new__(MacDesktop)
+    d.p = _DumpRunner(dump)
+    els = await d.accessibility_elements("TextEdit")
+    assert [e.role for e in els] == ["AXTextArea", "AXMenuBarItem"]
+    assert d.last_ax_window == {"windows": 6, "chosen": "main", "name": "Untitled 6", "subrole": "AXStandardWindow"}
+    assert parse_window_header("#window\t0\tnone\t\t\n" + ax("AXMenuBarItem", "File", 40, 0, 36, 24))["windows"] == 0
+    assert parse_window_header(ax("AXButton", "OK", 1, 1, 9, 9)) is None  # older dumps have no header
+
+
+def test_locate_focus_and_read_back_inspect_the_same_chosen_window():
+    from baymax.hostos import desktop as dk
+
+    for script in (dk._AS_LOCATE, dk._AS_FOCUS, dk._AS_VALUE):
+        assert "on pickWindow(appName)" in script and "my pickWindow(appName)" in script
+        assert "entire contents of window 1" not in script  # never a blind "window 1" (could be a panel or nothing)
+        assert '"AXMain"' in script and '"AXFocusedWindow"' in script

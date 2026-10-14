@@ -100,6 +100,7 @@ class InputCancelled(DesktopUnavailable):
 
 class DesktopBackend:
     platform = "unknown"
+    last_ax_window: dict[str, Any] | None = None  # set by accessibility_elements(): the window that was inspected
     typing_interval_s = 0.012  # pause between typed chunks (≤10 characters each); configurable cadence
     _input_gen = 0  # bumped by cancel_input(); in-flight typing/clicks check it between events
 
@@ -152,6 +153,20 @@ class DesktopBackend:
 class UnsupportedDesktop(DesktopBackend):
     def __init__(self) -> None:
         self.platform = sys.platform
+
+
+def parse_window_header(dump: str) -> dict[str, Any] | None:
+    """The `#window<TAB>count<TAB>how<TAB>name<TAB>subrole` header of an _AS_LOCATE dump: how many windows System Events
+    could see, how one was chosen (main / focused / first / none), and its title and subrole."""
+    for line in dump.splitlines()[:1]:
+        parts = line.split("\t")
+        if parts and parts[0] == "#window" and len(parts) >= 5:
+            try:
+                count = int(parts[1])
+            except ValueError:
+                count = -1
+            return {"windows": count, "chosen": parts[2], "name": parts[3], "subrole": parts[4].strip()}
+    return None
 
 
 def keystroke_plan(text: str, chunk: int = 10) -> list[tuple[str, str]]:
@@ -259,7 +274,21 @@ _AS_LOCATE = """on run argv
   tell application "System Events"
     tell process appName
       set els to {}
-      if (count of windows) > 0 then set els to entire contents of window 1
+      set pick to my pickWindow(appName)
+      set w to item 1 of pick
+      set wName to ""
+      set wSub to ""
+      if w is not missing value then
+        try
+          set wName to my oneLine(name of w as text)
+        end try
+        try
+          set wSub to subrole of w as text
+        end try
+        set els to entire contents of w
+      end if
+      -- header (fewer than 8 columns, so element parsers skip it): which window was read
+      set out to "#window" & tab & (item 3 of pick) & tab & (item 2 of pick) & tab & wName & tab & wSub & linefeed
       try
         set els to els & (menu bar items of menu bar 1)
       end try
@@ -326,7 +355,29 @@ on oneLine(t)
   set AppleScript's text item delimiters to ""
   if length of t > 500 then set t to text 1 thru 500 of t
   return t
-end oneLine"""
+end oneLine
+
+-- Which window to inspect: the app's main window (its document window; panels such as the Open dialog are never
+-- main), else its focused window, else window 1. Locate, focus and read-back all use this, so they look at the same
+-- window. Returns {window or missing value, how it was chosen, number of windows System Events can see}.
+on pickWindow(appName)
+  tell application "System Events"
+    tell process appName
+      set n to count of windows
+      if n = 0 then return {missing value, "none", 0}
+      repeat with i from 1 to n
+        try
+          if (value of attribute "AXMain" of window i) is true then return {window i, "main", n}
+        end try
+      end repeat
+      try
+        set fw to value of attribute "AXFocusedWindow"
+        if fw is not missing value then return {fw, "focused", n}
+      end try
+      return {window 1, "first", n}
+    end tell
+  end tell
+end pickWindow"""
 
 # Focus the element with this role at this position (from the accessibility dump), so typing goes into it.
 _AS_FOCUS = """on run argv
@@ -337,13 +388,14 @@ _AS_FOCUS = """on run argv
   tell application "System Events"
     tell process appName
       set frontmost to true
-      if (count of windows) = 0 then error "no window" number 1406
+      set w to item 1 of my pickWindow(appName)
+      if w is missing value then error "no window" number 1406
       try
-        perform action "AXRaise" of window 1
+        perform action "AXRaise" of w
       end try
       delay 0.1
       -- "entire contents" is a plain list: it can't be filtered with "whose" (error -1700), so check each element.
-      repeat with e in (entire contents of window 1)
+      repeat with e in (entire contents of w)
         try
           if role of e is roleName then
             set p to position of e
@@ -367,7 +419,29 @@ _AS_FOCUS = """on run argv
     end tell
   end tell
   error "element not found" number 1404
-end run"""
+end run
+
+-- Which window to inspect: the app's main window (its document window; panels such as the Open dialog are never
+-- main), else its focused window, else window 1. Locate, focus and read-back all use this, so they look at the same
+-- window. Returns {window or missing value, how it was chosen, number of windows System Events can see}.
+on pickWindow(appName)
+  tell application "System Events"
+    tell process appName
+      set n to count of windows
+      if n = 0 then return {missing value, "none", 0}
+      repeat with i from 1 to n
+        try
+          if (value of attribute "AXMain" of window i) is true then return {window i, "main", n}
+        end try
+      end repeat
+      try
+        set fw to value of attribute "AXFocusedWindow"
+        if fw is not missing value then return {fw, "focused", n}
+      end try
+      return {window 1, "first", n}
+    end tell
+  end tell
+end pickWindow"""
 
 # Exact text of one element (line breaks preserved) — used to verify what was typed.
 _AS_VALUE = """on run argv
@@ -377,8 +451,9 @@ _AS_VALUE = """on run argv
   set ty to (item 4 of argv) as number
   tell application "System Events"
     tell process appName
-      if (count of windows) = 0 then error "no window" number 1406
-      repeat with e in (entire contents of window 1)
+      set w to item 1 of my pickWindow(appName)
+      if w is missing value then error "no window" number 1406
+      repeat with e in (entire contents of w)
         try
           if role of e is roleName then
             set p to position of e
@@ -393,7 +468,29 @@ _AS_VALUE = """on run argv
     end tell
   end tell
   error "element not found" number 1404
-end run"""
+end run
+
+-- Which window to inspect: the app's main window (its document window; panels such as the Open dialog are never
+-- main), else its focused window, else window 1. Locate, focus and read-back all use this, so they look at the same
+-- window. Returns {window or missing value, how it was chosen, number of windows System Events can see}.
+on pickWindow(appName)
+  tell application "System Events"
+    tell process appName
+      set n to count of windows
+      if n = 0 then return {missing value, "none", 0}
+      repeat with i from 1 to n
+        try
+          if (value of attribute "AXMain" of window i) is true then return {window i, "main", n}
+        end try
+      end repeat
+      try
+        set fw to value of attribute "AXFocusedWindow"
+        if fw is not missing value then return {fw, "focused", n}
+      end try
+      return {window 1, "first", n}
+    end tell
+  end tell
+end pickWindow"""
 
 _AS_RETURN = """on run argv
   set appName to item 1 of argv
@@ -806,6 +903,7 @@ class MacDesktop(DesktopBackend):
     async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]:
         app = validate_app_name(app)
         out = await self._osascript(_AS_LOCATE, app, str(max(1, min(limit, 1500))), timeout=25)
+        self.last_ax_window = parse_window_header(out)  # which window was read (diagnostics)
         return parse_ax_dump(out.replace(",", "."), app)  # some locales print decimal commas
 
     async def focus_element(self, app: str, role: str, x: float, y: float) -> None:

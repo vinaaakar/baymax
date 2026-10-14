@@ -3,9 +3,9 @@
     cd ~/Developer/BAYMAX/backend
     BAYMAX_MACOS_INTEGRATION=1 .venv/bin/python -m pytest -v tests_macos
 
-They use the real MacDesktop backend (NSWorkspace, AppleScript/System Events, CGEvent). The typing test opens a NEW
-TextEdit document, types Unicode + multi-line text into it, reads it back through Accessibility, and leaves the
-document open for you to close without saving. No files are written, nothing is sent or deleted.
+They use the real MacDesktop backend (NSWorkspace, AppleScript/System Events, CGEvent). The TextEdit tests create a
+NEW TextEdit document (the first run asks for Automation permission for TextEdit), type Unicode + multi-line text into
+it, read it back through Accessibility, and leave the document open for you to close without saving. No files are written, nothing is sent or deleted.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 
 import pytest
 
@@ -28,6 +29,40 @@ def desk():
     from baymax.hostos.process import ProcessManager
 
     return make_desktop(ProcessManager())
+
+
+_NEW_DOCUMENT = """tell application "TextEdit"
+  activate
+  set d to make new document
+  return name of d
+end tell"""
+
+
+async def _fresh_textedit_document(desk, timeout: float = 8.0):
+    """Deterministic TextEdit setup. A new document is made through TextEdit's own scripting (a ⌘N keystroke could land
+    in whichever app is in front), then we wait until macOS reports TextEdit frontmost AND the accessibility query is
+    reading that document's window AND it exposes a text area. Fails with what was actually seen otherwise."""
+    await desk.open_app("TextEdit")
+    name = (await desk._osascript(_NEW_DOCUMENT, timeout=15)).strip()
+    assert name, "TextEdit did not report the new document's name"
+    deadline = time.monotonic() + timeout
+    seen: dict = {}
+    while True:
+        front = await desk.frontmost_app()
+        els = await desk.accessibility_elements("TextEdit")
+        win = desk.last_ax_window or {}
+        areas = [e for e in els if e.role == "AXTextArea"]
+        seen = {"frontmost": front, "new document": name, "window inspected": win, "roles": sorted({e.role for e in els})}
+        if front == "TextEdit" and win.get("name") == name and areas:
+            return name, areas[0]
+        if time.monotonic() > deadline:
+            break
+        await asyncio.sleep(0.5)
+    hint = ""
+    if win.get("windows") == 0:
+        hint = (" System Events sees NO TextEdit windows although TextEdit has some: they are probably on another desktop"
+                " Space or in full screen. Move them to this desktop (or close them) and run again.")
+    pytest.fail(f"TextEdit's new document never became the inspected window with a text area: {seen}.{hint}")
 
 
 def test_permissions_are_reported(desk):
@@ -55,14 +90,7 @@ async def test_frontmost_app_and_window(desk):
 async def test_type_unicode_multiline_into_textedit_and_read_back(desk):
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility to the terminal running pytest first")
-    await desk.open_app("TextEdit")
-    await asyncio.sleep(1.0)
-    await desk.press_keys("TextEdit", "n", ("command",))  # new, empty document
-    await asyncio.sleep(1.0)
-    els = await desk.accessibility_elements("TextEdit")
-    areas = [e for e in els if e.role == "AXTextArea"]
-    assert areas, f"no AXTextArea in TextEdit's front window (found roles: {sorted({e.role for e in els})})"
-    field = areas[0]
+    _, field = await _fresh_textedit_document(desk)
     await desk.focus_element("TextEdit", field.role, field.x, field.y)  # raises if focus is not confirmed
     text = "BAYMAX test ✓ Grüße 東京 👋\nsecond line — ünïcödé\nthird line."
     await desk.type_text("TextEdit", text)
@@ -105,8 +133,7 @@ async def test_ax_dump_reports_enabled_state_and_pointer_reaches_a_real_element_
     Nothing is clicked."""
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
-    await desk.open_app("TextEdit")
-    await asyncio.sleep(1.0)
+    await _fresh_textedit_document(desk)
     els = await desk.accessibility_elements("TextEdit")
     controls = [e for e in els if e.role in ("AXButton", "AXTextArea", "AXCheckBox", "AXPopUpButton")]
     assert controls, f"no controls in TextEdit (roles: {sorted({e.role for e in els})})"
@@ -129,11 +156,7 @@ async def test_typing_stops_when_input_is_cancelled(desk):
 
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
-    await desk.open_app("TextEdit")
-    await asyncio.sleep(1.0)
-    await desk.press_keys("TextEdit", "n", ("command",))
-    await asyncio.sleep(1.0)
-    field = next(e for e in await desk.accessibility_elements("TextEdit") if e.role == "AXTextArea")
+    _, field = await _fresh_textedit_document(desk)
     await desk.focus_element("TextEdit", field.role, field.x, field.y)
     desk.typing_interval_s = 0.03
     job = asyncio.create_task(desk.type_text("TextEdit", "stop me " * 60))
