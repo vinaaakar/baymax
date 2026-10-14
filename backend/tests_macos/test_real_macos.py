@@ -251,15 +251,29 @@ async def test_create_textedit_document_type_three_lines_and_read_back_through_t
 
 
 async def test_identify_the_active_window_through_the_tool(desk, real_services):
+    """The tool must name the app macOS reports as frontmost at that moment (with its real window title). macOS may hand
+    focus back to Terminal right after the test activates TextEdit, so the expectation is read live, before and after
+    the tool runs, and the check is repeated if focus moved during it."""
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
+    from baymax.hostos.desktop import _AS_ACTIVATE
     from baymax.tasks.models import TaskStatus
 
     name, _, _ = await _fresh_textedit_document(desk)
-    t = await _run(real_services, ("desktop.active_window", {}))
-    assert t.status is TaskStatus.COMPLETED and "TextEdit" in t.result["summary"], t.result
-    print(t.result["summary"])
-    assert name in t.result["summary"] or "can't read the window title" in t.result["summary"]
+    for _attempt in range(3):
+        await desk._osascript(_AS_ACTIVATE, "TextEdit", timeout=10)
+        await asyncio.sleep(0.5)
+        before = await desk.frontmost_app()
+        t = await _run(real_services, ("desktop.active_window", {}))
+        after = await desk.frontmost_app()
+        if before == after:
+            break
+    print(f"front before/after: {before}/{after} | {t.result['summary']}")
+    assert before == after, "focus kept changing while the tool ran"
+    assert t.status is TaskStatus.COMPLETED and t.result["data"]["app"] == before, t.result
+    assert "title" in t.result["data"], t.result  # the real title, or None with the reason in the summary
+    if before == "TextEdit":
+        assert name in t.result["summary"] or "can't read the window title" in t.result["summary"]
 
 
 async def test_pointer_to_the_center_of_the_main_display_through_the_tool(desk, real_services):
