@@ -9,6 +9,7 @@ from typing import Any
 
 from ..coding.files import EditError, FileOps
 from ..hostos.apps import AppInfo, resolve_app
+from ..hostos.sites import resolve_destination, same_site
 from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
 from ..security.commands import CommandRejected, validate_command
 from ..security.policy import Risk
@@ -59,6 +60,10 @@ class OpenAppTool(Tool):
         d = ctx.services.desktop
         app, problem = await resolve_app_arg(ctx, args["app"], must_run=False)
         if problem:
+            dest = resolve_destination(args["app"])
+            if dest is not None and dest.kind == "site" and problem.data.get("errorKind") == "not_found":
+                # "open Gemini": no such app installed, but it's a well-known website
+                return await OpenUrlTool().run(ctx, {"url": args["app"], "browser": ""})
             return problem
         if app is None:
             q = "Which app should I open?"
@@ -80,14 +85,41 @@ class OpenAppTool(Tool):
 
 class OpenUrlTool(Tool):
     name = "apps.open_url"
-    description = "Open an http(s) URL in the default browser."
+    description = "Open a website (URL, domain or well-known site name like 'Gemini') in a browser, e.g. 'open Gemini in Safari'."
     risk = Risk.MEDIUM
-    args = {"url": Arg("str", max_len=2000)}
+    args = {"url": Arg("str", description="URL, domain or site name", max_len=2000),
+            "browser": Arg("str", False, default="", description="browser app, e.g. Safari (default: system default)", max_len=80)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-        await _desktop(ctx.services.desktop.open_url(args["url"]))
-        return ToolResult(True, f"Opened {args['url']} in the default browser.", {"url": args["url"]}, verified=True,
-                          verification="LaunchServices accepted the URL (exit status 0); page content was not inspected")
+        d = ctx.services.desktop
+        dest = resolve_destination(args["url"])
+        if dest is None:
+            return ToolResult(False, "Which website should I open?", {"errorKind": "invalid_arguments"}, needs_clarification="Which website?")
+        browser = None
+        if args.get("browser"):
+            app, problem = await resolve_app_arg(ctx, args["browser"], must_run=False)
+            if problem:
+                return problem
+            browser = app.name if app else None
+        await _desktop(d.open_url(dest.url, browser))
+        where = f" in {browser}" if browser else ""
+        what = f"a web search for “{dest.label}”" if dest.kind == "search" else dest.host
+        data = {"url": dest.url, "kind": dest.kind, "browser": browser or "default"}
+        if browser:  # verify: the browser's front tab actually shows the site
+            actual = None
+            for _ in range(16):  # up to ~4 s for the page to start loading
+                ctx.checkpoint()
+                actual = await d.browser_url(browser)
+                if actual and same_site(actual, dest):
+                    return ToolResult(True, f"Opened {what}{where}.", {**data, "actualUrl": actual}, verified=True,
+                                      verification=f"{browser}'s front tab is at {actual}")
+                await asyncio.sleep(0.25)
+            note = (f"{browser} is showing {actual}" if actual else
+                    f"I couldn't read {browser}'s address bar to confirm (allow BAYMAX under Automation for {browser})")
+            return ToolResult(True, f"Asked {browser} to open {what}, but I couldn't confirm the page loaded: {note}.",
+                              {**data, "actualUrl": actual}, verified=False, verification=note)
+        return ToolResult(True, f"Opened {what} in your default browser.", data, verified=False,
+                          verification="macOS accepted the URL; the default browser's page was not inspected")
 
 
 class MoveCursorTool(Tool):

@@ -197,6 +197,11 @@ class IntentRouter:
         m = re.match(r"^(?:press|click) (?:the )?[\"“'](.+)[\"”'] (?:button )?in (?:the )?(.+?)(?: app)?$", raw, re.I)
         if m:
             return Intent("tool", "desktop.press_element", {"app": m.group(2).strip(), "name": m.group(1)}, f"Press {m.group(1)}", raw)
+        # ---- "what's on my screen / what can you do with the current screen": inspect the real front window
+        if re.search(r"\b(what('?s| is) on (my |the |this )?screen|what do you see|(current|this|my) screen)\b", t) \
+                and not re.search(r"\bscreenshot\b", t):
+            return Intent("tool", "desktop.read_window", {}, "Read the current window", raw)
+
         # ---- the window the user is working in
         if re.search(r"\b(point|look|turn|face)\b.{0,20}\b(toward|towards|at|to)\b.{0,12}\b(the |my )?(window|app)\b.{0,25}"
                      r"(i'?m|i am|i'?m using|i am using|using|active|current|front)", t) \
@@ -232,6 +237,13 @@ class IntentRouter:
         m = re.match(r"^(?:list|show) (?:the )?(?:buttons|elements|controls|ui elements)(?: in| of) (?:the )?(.+?)(?: app)?$", t)
         if m:
             return Intent("tool", "desktop.list_elements", {"app": _title(m.group(1))}, f"Inspect {m.group(1)}", raw)
+
+        # ---- "open <site> in <browser>": the browser is the app, the site is the destination
+        m = re.match(r"^(?:open|launch|go to|visit|browse to|navigate to|load|show me)\s+(.+?)\s+(?:in|on|using|with)\s+"
+                     r"(safari|google chrome|chrome|firefox|arc|brave(?: browser)?|edge|microsoft edge|opera|vivaldi|chromium)$", t)
+        if m:
+            dest = _strip_original(raw, m.group(1))
+            return Intent("tool", "apps.open_url", {"url": dest, "browser": _title(m.group(2))}, f"Open {dest} in {_title(m.group(2))}", raw)
 
         # ---- open apps / urls
         m = re.match(r"^(?:open|launch|start|go to|visit|browse to|navigate to)\s+(.+)$", t)

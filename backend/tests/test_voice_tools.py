@@ -96,7 +96,7 @@ async def fake_ollama_tools():
             return web.json_response({"message": {"role": "assistant", "content": "",
                                                   "tool_calls": [{"function": {"name": "apps__open", "arguments": {"app": "Safari"}}}]},
                                       "done": True})
-        if "tools" in body and "pretend" in user:
+        if "pretend" in user:  # claims an action with or without tools offered
             return web.json_response({"message": {"role": "assistant", "content": plan.get("text", "I've opened Safari for you!")}, "done": True})
         return web.json_response({"message": {"role": "assistant", "content": "Hello."}, "done": True})
 

@@ -19,6 +19,7 @@ instructions.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import shutil
 import sys
@@ -30,6 +31,8 @@ from typing import Any
 from .apps import AppInfo
 from ..screen.elements import Display, ScreenElement, parse_ax_dump, vision_box_to_global
 from .process import ProcessManager
+
+log = logging.getLogger(__name__)
 
 
 class DesktopUnavailable(Exception):
@@ -97,7 +100,8 @@ class DesktopBackend:
 
     async def open_app(self, name: str) -> None: raise DesktopUnavailable(self._why())
     async def is_app_running(self, name: str) -> bool: raise DesktopUnavailable(self._why())
-    async def open_url(self, url: str) -> None: raise DesktopUnavailable(self._why())
+    async def open_url(self, url: str, app: str | None = None) -> None: raise DesktopUnavailable(self._why())
+    async def browser_url(self, app: str) -> str | None: raise DesktopUnavailable(self._why())
     async def frontmost_app(self) -> str: raise DesktopUnavailable(self._why())
     async def move_cursor(self, x: float, y: float) -> None: raise DesktopUnavailable(self._why())
     async def cursor_position(self) -> tuple[float, float]: raise DesktopUnavailable(self._why())
@@ -359,7 +363,8 @@ class MacDesktop(DesktopBackend):
             raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
         if "1404" in err or "element not found" in err:
             raise DesktopUnavailable("the requested interface element was not found (the app may not expose accessibility info)")
-        raise DesktopUnavailable(f"AppleScript failed: {err.strip()[-300:]}")
+        log.warning("AppleScript failed: %s", err.strip()[-500:])  # full detail for developers, not the chat
+        raise DesktopUnavailable("macOS couldn't complete that step (details are in the BAYMAX log)")
 
     async def open_app(self, name: str) -> None:
         name = validate_app_name(name)
@@ -372,12 +377,25 @@ class MacDesktop(DesktopBackend):
         out = await self._osascript('on run argv\nreturn application (item 1 of argv) is running\nend run', name)
         return out.strip() == "true"
 
-    async def open_url(self, url: str) -> None:
+    async def open_url(self, url: str, app: str | None = None) -> None:
         if not re.match(r"^https?://[^\s]+$", url):
             raise ValueError("only http(s) URLs can be opened")
-        res = await self.p.run(["open", url], timeout=20)
+        argv = ["open", "-a", validate_app_name(app), url] if app else ["open", url]  # argv list: no shell, no injection
+        res = await self.p.run(argv, timeout=20)
         if not res.ok:
-            raise DesktopUnavailable(f"could not open URL: {res.stderr.strip()[-200:]}")
+            raise DesktopUnavailable(f"macOS could not open the page{' in ' + app if app else ''}")
+
+    async def browser_url(self, app: str) -> str | None:
+        """URL of the front tab, to verify navigation (needs the Automation permission for that browser)."""
+        app = validate_app_name(app)
+        script = ('on run argv\n tell application (item 1 of argv)\n if (count of windows) = 0 then return ""\n'
+                  + (' return URL of current tab of front window\n' if app == "Safari" else ' return URL of active tab of front window\n')
+                  + ' end tell\nend run')
+        try:
+            out = (await self._osascript(script, app, timeout=8)).strip()
+        except DesktopUnavailable:
+            return None
+        return out or None
 
     async def frontmost_app(self) -> str:
         out = await self._osascript('tell application "System Events" to get name of first process whose frontmost is true')

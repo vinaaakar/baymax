@@ -41,6 +41,9 @@ class FakeDesktop(DesktopBackend):
         self.clipboard = ""
         self.window_title: str | None = "BAYMAX — README.md"
         self.document = None
+        self.tab_url: dict[str, str] = {}  # browser -> URL of its front tab
+        self.redirects: dict[str, str] = {}  # requested URL -> where the browser actually lands
+        self.automation = True  # macOS Automation permission for reading the browser's address bar
 
     def capabilities(self):
         return {"platform": "fake", "available": True, "accessibilityTrusted": self.accessibility}
@@ -59,8 +62,15 @@ class FakeDesktop(DesktopBackend):
     async def is_app_running(self, name):
         return name in self.running
 
-    async def open_url(self, url):
-        self.calls.append(("open_url", url))
+    async def open_url(self, url, app=None):
+        self.calls.append(("open_url", url, app))
+        if app:
+            self.running.add(app)
+            self.front = app
+            self.tab_url[app] = self.redirects.get(url, url)
+
+    async def browser_url(self, app):
+        return self.tab_url.get(app) if self.automation else None
 
     async def frontmost_app(self):
         return self.front

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -176,8 +177,14 @@ class Assistant:
             return {"ok": True, "message": self._reply("I'm awake. How can I help?", origin)}
         if k == "greeting":
             s.character.dispatch(CharacterEvent.RESET)
+            asks_hearing = bool(re.search(r"\b(hear|listen|listening)\b", intent.text, re.I))
             if origin.source == "voice":
                 text = f"Yes, I can hear you. I understood: “{intent.text}”. What would you like me to do?"
+            elif asks_hearing:  # typed: report the real voice pipeline, not a pleasantry
+                stt = s.stt.status()
+                voice = ("Push-to-talk is ready (speech is transcribed locally with whisper.cpp)." if stt.get("available")
+                         else f"Voice input isn't available right now: {stt.get('message', 'speech recognition is not set up')}.")
+                text = f"I'm reading what you type. {voice}"
             else:
                 text = "Hello, I'm here. What would you like me to do? (Ask “what can you do?” for ideas.)"
             return {"ok": True, "message": self._reply(text, origin)}
@@ -247,7 +254,11 @@ class Assistant:
             return {"ok": True, "message": self._reply(intent.reply, origin)}
         history = s.conversation.model_messages(12)
         memories = s.memory.contents()
-        tools = {t.name: t for t in s.tools.model_tools()}
+        # Constrained tool selection: the model only sees tools whose purpose matches this request. Ordinary
+        # questions ("what is Newton's third law?") are answered with no tools offered at all.
+        tools = {t.name: t for t in s.tools.model_tools() if tool_is_relevant(t.name, intent.text)}
+        if not tools:
+            return await self._plain_chat(memories, history, origin)
         if s.settings.llm.native_tools and not self._native_tools_unsupported:
             try:
                 native = await s.llm.chat_tools([{"role": "system", "content": system_prompt(memories) + "\n" + NATIVE_TOOLS_HINT}] + history,
@@ -276,7 +287,6 @@ class Assistant:
                         return {"ok": True, "message": self._reply(
                             f"I wanted to use {call.name} but the details were incomplete ({exc}). Could you say it another way?", origin)}
                     proposal = Intent("tool", call.name, call.arguments, call.name, source="model", text=intent.text)
-                    self._reply(f"I'll use {call.name} for that.", Origin(origin.source, False), role="assistant")
                     return await self._start_tool(proposal, origin)
                 return await self._model_text_reply(native.content, tools, intent, origin)
         messages = [{"role": "system", "content": system_prompt(memories) + "\n" + tool_proposal_prompt([t.schema() for t in tools.values()])}]
@@ -328,7 +338,6 @@ class Assistant:
             return await self._plain_chat(s.memory.contents(), s.conversation.model_messages(12), origin)
         if proposal.kind == "tool":
             proposal.text = intent.text
-            self._reply(f"I'll use {proposal.tool} for that.", Origin(origin.source, False), role="assistant")
             return await self._start_tool(proposal, origin)
         if proposal.kind == "clarify":
             s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="clarification needed")
@@ -375,7 +384,7 @@ class Assistant:
         detail = summary or (task.error if task else "") or "unknown error"
         if task and task.result and task.result.get("needsClarification"):
             return detail
-        return f"That didn't work: {detail}"
+        return detail[:1].upper() + detail[1:] if detail else "That didn't work."
 
     def snapshot(self) -> dict[str, Any]:
         return {"sleeping": self.sleeping, "activeModel": self.active_model, "character": self.s.character.snapshot()}

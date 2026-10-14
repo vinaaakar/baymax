@@ -10,6 +10,8 @@ The fake Ollama server below misbehaves exactly like that on purpose.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from aiohttp import web
 
@@ -272,3 +274,67 @@ async def test_users_exact_messages(env):
     assert r.get("sleeping") and desk.calls == []  # asleep: no new work
     await say("Wake up.")
     assert not a.sleeping
+
+
+# ---------------------------------------------------------------- Oct 14 (second report): intent-constrained pipeline
+from baymax.hostos.sites import resolve_destination, same_site  # noqa: E402
+from test_intent_and_memory import R  # noqa: E402
+
+
+def test_open_site_in_browser_separates_destination_from_app():
+    i = R.route("Open Gemini in Safari")
+    assert i.kind == "tool" and i.tool == "apps.open_url" and i.args == {"url": "Gemini", "browser": "Safari"}
+    d = resolve_destination("Gemini")
+    assert d.kind == "site" and d.url == "https://gemini.google.com"
+    assert resolve_destination("example.org/docs").url == "https://example.org/docs"
+    assert resolve_destination("my cousin's bakery").kind == "search"  # unknown: an explicit search, never a made-up URL
+    assert same_site("https://gemini.google.com/app", d) and not same_site("https://duckduckgo.com/?q=gemini", d)
+
+
+async def test_open_gemini_in_safari_is_verified_from_the_address_bar(env):
+    desk = env["desk"]
+    desk.redirects["https://gemini.google.com"] = "https://gemini.google.com/app"
+    r = await env["a"].handle_text("Open Gemini in Safari")
+    t = await env["s"].tasks.wait(r["taskId"], 10)
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.error
+    assert ("open_url", "https://gemini.google.com", "Safari") in desk.calls
+    assert not any(c[0] == "open_app" and "Gemini" in str(c[1]) for c in desk.calls)  # "Gemini in Safari" is not an app
+
+
+async def test_unconfirmed_page_is_not_claimed(env):
+    env["desk"].automation = False
+    r = await env["a"].handle_text("Open Gemini in Safari")
+    t = await env["s"].tasks.wait(r["taskId"], 10)
+    assert not t.verified and "couldn't confirm" in t.result["summary"] and "Automation" in t.result["summary"]
+
+
+async def test_knowledge_question_is_answered_without_offering_tools(env):
+    r = await env["a"].handle_text("What is Newton's third law?")
+    assert "taskId" not in r and env["desk"].calls == []
+    assert env["calls"] and all("tools" not in b for b in env["calls"])
+
+
+async def test_typed_can_you_hear_me_reports_real_voice_status(env):
+    r = await env["a"].handle_text("Can you hear me?", source="local")
+    text = _text(r)
+    assert "taskId" not in r and "Voice input isn't available" in text  # whisper binary is missing in this env
+    assert "can hear you" not in text
+
+
+async def test_estop_blocks_actions_but_not_conversation(env):
+    env["s"].estop.engage("test")
+    r = await env["a"].handle_text("Open Safari")
+    assert "taskId" not in r and "Emergency Stop" in _text(r) and env["desk"].calls == []
+    r = await env["a"].handle_text("Hello")
+    assert "Hello" in _text(r)
+    r = await env["a"].handle_text("What is Newton's third law?")
+    assert _text(r) and "Emergency Stop" not in _text(r)
+
+
+async def test_no_internal_tool_names_in_replies(env):
+    env["desk"].front = "Terminal"
+    r = await env["a"].handle_text("read the current window")
+    await env["s"].tasks.wait(r["taskId"], 5)
+    await asyncio.sleep(0.2)  # the completion message is posted right after the task finishes
+    texts = [m["text"] for m in env["s"].conversation.recent(20) if m["role"] == "assistant"]
+    assert texts and not any("desktop." in t or "I'll use" in t or "AppleScript" in t for t in texts)
