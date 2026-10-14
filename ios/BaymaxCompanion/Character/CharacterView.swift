@@ -18,9 +18,10 @@ struct CharacterView: View {
         let fps = CharacterRig.frameRate(for: state, reducedMotion: reduceMotion, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
         TimelineView(.animation(minimumInterval: 1.0 / Double(fps))) { timeline in
             Canvas { ctx, size in
+                let fit = Face2D.fit(width: size.width, height: size.height)
                 let g = animator.step(now: timeline.date.timeIntervalSinceReferenceDate, state: state, level: level, gaze: gaze,
-                                      taskKind: taskKind, reducedMotion: reduceMotion)
-                FacePainter(g: g, expression: animator.expression, fit: Face2D.fit(width: size.width, height: size.height),
+                                      taskKind: taskKind, reducedMotion: reduceMotion, composition: fit.composition)
+                FacePainter(g: g, expression: animator.expression, fit: fit,
                             size: size, level: level, progress: progress, t: animator.time).draw(&ctx)
             }
         }
@@ -42,6 +43,28 @@ private struct FacePainter {
     private var s: Double { fit.scale }
     private var hx: Double { fit.cx + g.head.cx * s }
     private var hy: Double { fit.cy + g.head.cy * s }
+
+    // Indicator anchors: beside the whole head (portrait), or above the dome (landscape, where the head fills the width).
+    private var dome: Bool { fit.composition == .dome }
+    private var top: Double { hy - g.head.ry * s }
+    private func dot(_ i: Int) -> CGPoint {
+        dome ? CGPoint(x: hx + Double(i - 1) * 0.13 * s, y: top - 0.1 * s)
+             : CGPoint(x: hx + g.head.rx * s * 1.12 + Double(i) * 0.13 * s, y: hy - g.head.ry * s * (0.62 + Double(i) * 0.12))
+    }
+    private var magnifier: CGPoint {
+        if dome {
+            let a = Double.pi * 1.5 + sin(t * 0.9) * 0.9
+            return CGPoint(x: hx + cos(a) * g.head.rx * s * 1.07, y: hy + sin(a) * g.head.ry * s * 1.12)
+        }
+        return CGPoint(x: hx + cos(t * 1.4) * g.head.rx * s * 1.18, y: hy + sin(t * 1.4) * g.head.ry * s * 0.85)
+    }
+    private var sleepZ: CGPoint {
+        dome ? CGPoint(x: hx + g.head.rx * s * 0.45, y: hy - g.head.ry * s * (0.95 + 0.06 * sin(t)))
+             : CGPoint(x: hx + g.head.rx * s * 1.05, y: hy - g.head.ry * s * (0.7 + 0.08 * sin(t)))
+    }
+    private var linkOff: CGPoint {
+        dome ? CGPoint(x: hx, y: top - 0.12 * s) : CGPoint(x: hx + g.head.rx * s * 1.2, y: hy + g.head.ry * s * 0.6)
+    }
 
     private func hex(_ h: String) -> Color { Color(hex: UInt32(h.dropFirst(), radix: 16) ?? 0xFFFFFF) }
 
@@ -133,12 +156,12 @@ private struct FacePainter {
         case .thinking, .researching:
             for i in 0..<3 {
                 let r = 0.035 * s
-                let c = CGPoint(x: hx + g.head.rx * s * 1.12 + Double(i) * 0.13 * s, y: hy - g.head.ry * s * (0.62 + Double(i) * 0.12))
+                let c = dot(i)
                 ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
                          with: .color(Theme.white.opacity(0.25 + 0.6 * max(0, sin(t * 3 - Double(i) * 0.8)))))
             }
             if expression == .researching {
-                let c = CGPoint(x: hx + cos(t * 1.4) * g.head.rx * s * 1.18, y: hy + sin(t * 1.4) * g.head.ry * s * 0.85)
+                let c = magnifier
                 let r = 0.07 * s
                 ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Theme.white.opacity(0.85)),
                            lineWidth: max(1.5, 0.022 * s))
@@ -149,10 +172,10 @@ private struct FacePainter {
             }
         case .sleeping:
             ctx.draw(Text("z").font(.system(size: max(10, 0.2 * s), weight: .semibold)).foregroundColor(Theme.muted.opacity(0.7)),
-                     at: CGPoint(x: hx + g.head.rx * s * 1.05, y: hy - g.head.ry * s * (0.7 + 0.08 * sin(t))))
+                     at: sleepZ)
         case .disconnected:
             var link = Path()
-            let y = hy + g.head.ry * s * 0.6, x = hx + g.head.rx * s * 1.2
+            let x = linkOff.x, y = linkOff.y
             link.move(to: CGPoint(x: x - 0.1 * s, y: y)); link.addLine(to: CGPoint(x: x - 0.02 * s, y: y))
             link.move(to: CGPoint(x: x + 0.02 * s, y: y)); link.addLine(to: CGPoint(x: x + 0.1 * s, y: y))
             link.move(to: CGPoint(x: x - 0.03 * s, y: y - 0.05 * s)); link.addLine(to: CGPoint(x: x + 0.03 * s, y: y + 0.05 * s))

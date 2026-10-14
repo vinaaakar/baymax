@@ -2,7 +2,8 @@ import BaymaxKit
 import SwiftUI
 
 /// The main iPhone screen — a desk companion, landscape first.
-/// Landscape (default): the face fills the screen like a desk device, with only a small keyboard button; long-press the
+/// Landscape (default): the face is a dome rising from the bottom edge, like a desk device, with only settings and keyboard
+/// icons (top-right); long-press the
 /// face for conversation, sleep, settings and Emergency Stop. Portrait (top to bottom): compact status +
 /// settings, the face (its own region), short status messages, and one compact row of controls. In landscape with the conversation open, the face
 /// shrinks to the left and the conversation panel sits beside it. Rules live in BaymaxKit.CompanionLayout.
@@ -59,15 +60,22 @@ struct CompanionScreen: View {
         }
     }
 
-    /// Landscape face mode, like the reference desk device: only the face and a small keyboard button (bottom-left).
+    /// Landscape face mode, like the reference desk device: the face as a dome rising from the bottom edge, and two
+    /// small icons top-right (settings, keyboard).
     /// Conversation, sleep, settings/pairing and Emergency Stop are in the long-press menu on the face; alerts
     /// (E-stop, approvals, errors, connection problems) appear only while they need you.
     private func immersiveFace(_ layout: CompanionLayout) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .topTrailing) {
             face.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
                 .contextMenu { faceMenu }
-            VStack(alignment: .leading, spacing: 6) {
-                alerts
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 8) {
+                    iconButton("gearshape", label: "Settings and pairing") { showSettings = true }
+                    iconButton("keyboard", label: typing ? "Close keyboard input" : "Type a message") {
+                        typing.toggle()
+                        focused = typing
+                    }
+                }
                 if typing {
                     HStack {
                         TextField("Ask BAYMAX…", text: $draft).textFieldStyle(.plain).padding(10)
@@ -76,22 +84,13 @@ struct CompanionScreen: View {
                             .onSubmit { sendDraft() }
                         Button("Send") { sendDraft() }
                             .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.display.connected)
-                        Button { typing = false; focused = false } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }
-                            .accessibilityLabel("Close keyboard input")
                     }
-                } else {
-                    Button { typing = true; focused = true } label: {
-                        Image(systemName: "keyboard").font(.system(size: 17)).frame(width: 44, height: 36)
-                            .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.10)))
-                    }
-                    .foregroundStyle(Theme.white.opacity(0.6))
-                    .accessibilityLabel("Type a message")
-                    .accessibilityHint("Long-press the face for conversation, sleep, settings and emergency stop")
+                    .frame(maxWidth: 520)
                 }
+                alerts
             }
             .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.top, 8)
             .foregroundStyle(Theme.white)
             if debugCursor {
                 VStack {
@@ -103,6 +102,17 @@ struct CompanionScreen: View {
                 .allowsHitTesting(false)
             }
         }
+    }
+
+    /// Small, quiet icon in the top-right corner (like the reference device).
+    private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 15)).frame(width: 40, height: 34)
+                .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.10)))
+        }
+        .foregroundStyle(Theme.white.opacity(0.6))
+        .accessibilityLabel(label)
     }
 
     private func sendDraft() {

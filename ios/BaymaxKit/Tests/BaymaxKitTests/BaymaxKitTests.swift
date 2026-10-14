@@ -230,7 +230,8 @@ final class VisualSpecParityTests: XCTestCase {
         for v in spec["face2dTestVectors"] as! [[String: Any]] {
             let expr = FaceExpression(rawValue: v["expression"] as! String)!
             let pt = (v["point"] as? [String: Double]).map { Look(x: $0["x"]!, y: $0["y"]!) }
-            let g = Face2D.geometry(pose(v["pose"] as! [String: Double]), expression: expr, point: pt)
+            let comp = FaceComposition(rawValue: v["composition"] as? String ?? "full")!
+            let g = Face2D.geometry(pose(v["pose"] as! [String: Double]), expression: expr, point: pt, composition: comp)
             let want = v["geometry"] as! [String: Any]
             let name = v["name"] as! String
             assertEllipse(g.head, want["head"], name)
@@ -247,8 +248,10 @@ final class VisualSpecParityTests: XCTestCase {
                 XCTAssertNil(g.pointer, name)
             }
         }
-        for v in spec["fitTestVectors"] as! [[String: Double]] {
+        for vv in spec["fitTestVectors"] as! [[String: Any]] {
+            let v = vv.compactMapValues { $0 as? Double }
             let f = Face2D.fit(width: v["w"]!, height: v["h"]!)
+            XCTAssertEqual(f.composition.rawValue, vv["composition"] as? String)
             XCTAssertEqual(f.scale, v["scale"]!, accuracy: 3e-6)
             XCTAssertEqual(f.cx, v["cx"]!, accuracy: 3e-6)
             XCTAssertEqual(f.cy, v["cy"]!, accuracy: 3e-6)
@@ -317,13 +320,26 @@ final class CompanionLayoutTests: XCTestCase {
         XCTAssertEqual(CompanionLayout.compute(width: 520, height: 300, conversationOpen: true).mode, .faceWithConversationSheet)
     }
 
-    func testFaceIsNeverCropped() {
-        for (w, h) in [(390.0, 844.0), (844.0, 390.0), (300.0, 300.0), (1600.0, 500.0)] {
+    func testPortraitShowsWholeHeadAndLandscapeIsADome() {
+        for (w, h) in [(390.0, 844.0), (300.0, 300.0)] {
             let f = Face2D.fit(width: w, height: h)
+            XCTAssertEqual(f.composition, .full)
             XCTAssertLessThanOrEqual(f.cx + f.scale * FaceSpec.headRx, w)
             XCTAssertGreaterThanOrEqual(f.cy - f.scale * FaceSpec.headRy, 0)
             XCTAssertLessThanOrEqual(f.cy + f.scale * FaceSpec.headRy, h)
         }
-        XCTAssertGreaterThan(Face2D.fit(width: 844, height: 390).scale, Face2D.fit(width: 390, height: 844).scale * 0.9)
+        for (w, h) in [(844.0, 390.0), (932.0, 430.0)] {
+            let f = Face2D.fit(width: w, height: h)
+            XCTAssertEqual(f.composition, .dome)
+            XCTAssertGreaterThanOrEqual(f.cy, h)  // only the upper part shows
+            XCTAssertGreaterThan(f.cy - f.scale * FaceSpec.headRy, 0)
+            for lx in stride(from: -1.0, through: 1.0, by: 0.5) {
+                for ly in stride(from: -1.0, through: 1.0, by: 0.5) {
+                    let p = CharacterRig.target(.idle, t: 1, input: RigInput(lookX: lx, lookY: ly, reducedMotion: true))
+                    let g = Face2D.geometry(p, expression: .tracking, composition: .dome)
+                    for e in [g.eyeL, g.eyeR] { XCTAssertLessThan(f.cy + (g.head.cy + e.cy + e.ry) * f.scale, h) }
+                }
+            }
+        }
     }
 }

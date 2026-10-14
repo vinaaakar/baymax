@@ -71,8 +71,8 @@ export default function BaymaxCharacter(props: CharacterProps) {
   }, []);
 
   const expression = expressionFor(props.state, { cursorLive: !!props.cursorLive, pointing: !!props.point, taskKind: props.taskKind });
-  const g = faceGeometry(frame.pose, expression, props.point ?? null);
   const fit = fitFace(frame.w, frame.h);
+  const g = faceGeometry(frame.pose, expression, props.point ?? null, fit.composition);
   useEffect(() => props.onFrame?.({ expression, geometry: g }));
 
   const { scale: s, cx, cy } = fit;
@@ -82,6 +82,17 @@ export default function BaymaxCharacter(props: CharacterProps) {
   const level = props.level ?? 0;
   const t = frame.t;
   const ringR = (k: number) => ({ rx: g.head.rx * s * k, ry: g.head.ry * s * k });
+  // Indicator anchors: beside the whole head (portrait), or above the dome (landscape, where the head fills the width).
+  const dome = fit.composition === "dome";
+  const top = hy - g.head.ry * s;
+  const dot = (i: number) => (dome ? { x: hx + (i - 1) * 0.13 * s, y: top - 0.1 * s }
+    : { x: hx + g.head.rx * s * 1.12 + i * 0.13 * s, y: hy - g.head.ry * s * (0.62 + i * 0.12) });
+  const magA = Math.PI * 1.5 + Math.sin(t * 0.9) * 0.9;
+  const mag = dome ? { x: hx + Math.cos(magA) * g.head.rx * s * 1.07, y: hy + Math.sin(magA) * g.head.ry * s * 1.12 }
+    : { x: hx + Math.cos(t * 1.4) * g.head.rx * s * 1.18, y: hy + Math.sin(t * 1.4) * g.head.ry * s * 0.85 };
+  const zz = dome ? { x: hx + g.head.rx * s * 0.45, y: hy - g.head.ry * s * (0.95 + 0.06 * Math.sin(t)) }
+    : { x: hx + g.head.rx * s * 1.05, y: hy - g.head.ry * s * (0.7 + 0.08 * Math.sin(t)) };
+  const off = dome ? { x: hx, y: top - 0.12 * s } : { x: hx + g.head.rx * s * 1.2, y: hy + g.head.ry * s * 0.6 };
   const deg = (a: number) => (a * 180) / Math.PI;
 
   return (
@@ -146,23 +157,23 @@ export default function BaymaxCharacter(props: CharacterProps) {
         {(expression === "THINKING" || expression === "RESEARCHING") && (
           <g data-indicator="thinking">
             {[0, 1, 2].map((i) => (
-              <circle key={i} cx={hx + g.head.rx * s * 1.12 + i * 0.13 * s} cy={hy - g.head.ry * s * (0.62 + i * 0.12)} r={0.035 * s} fill={C.text}
+              <circle key={i} cx={dot(i).x} cy={dot(i).y} r={0.035 * s} fill={C.text}
                 opacity={0.25 + 0.6 * Math.max(0, Math.sin(t * 3 - i * 0.8))} />
             ))}
           </g>
         )}
         {expression === "RESEARCHING" && (
-          <g data-indicator="researching" transform={`translate(${hx + Math.cos(t * 1.4) * g.head.rx * s * 1.18} ${hy + Math.sin(t * 1.4) * g.head.ry * s * 0.85})`}>
+          <g data-indicator="researching" transform={`translate(${mag.x} ${mag.y})`}>
             <circle r={0.07 * s} fill="none" stroke={C.text} strokeWidth={Math.max(1.5, 0.022 * s)} opacity={0.85} />
             <line x1={0.05 * s} y1={0.05 * s} x2={0.12 * s} y2={0.12 * s} stroke={C.text} strokeWidth={Math.max(1.5, 0.026 * s)} strokeLinecap="round" />
           </g>
         )}
         {expression === "SLEEPING" && (
-          <text x={hx + g.head.rx * s * 1.05} y={hy - g.head.ry * s * (0.7 + 0.08 * Math.sin(t))} fill={C.muted}
+          <text x={zz.x} y={zz.y} fill={C.muted}
             fontSize={0.2 * s} fontWeight={600} opacity={0.7} data-indicator="sleeping">z</text>
         )}
         {expression === "DISCONNECTED" && (
-          <g data-indicator="disconnected" transform={`translate(${hx + g.head.rx * s * 1.2} ${hy + g.head.ry * s * 0.6})`} stroke={C.muted} strokeWidth={2} opacity={0.8}>
+          <g data-indicator="disconnected" transform={`translate(${off.x} ${off.y})`} stroke={C.muted} strokeWidth={2} opacity={0.8}>
             <line x1={-0.1 * s} y1={0} x2={-0.02 * s} y2={0} /><line x1={0.02 * s} y1={0} x2={0.1 * s} y2={0} />
             <line x1={-0.03 * s} y1={-0.05 * s} x2={0.03 * s} y2={0.05 * s} />
           </g>

@@ -36,8 +36,10 @@ public enum FaceSpec {
     public static let foreshortenWidth = 0.28, foreshortenSpacing = 0.1
     public static let parallaxYaw = 0.12, parallaxPitch = 0.1, parallaxBody = 1.5
     public static let pointerRadius = 1.1
-    public static let fitWidthFrac = 0.7, fitHeightFrac = 0.56, fitCenterY = 0.42
-    public static let fitLandscapeHeightFrac = 0.94, fitLandscapeCenterY = 0.5, fitParallaxRoom = 0.08
+    public static let fitWidthFrac = 0.7, fitHeightFrac = 0.56, fitCenterY = 0.42, fitParallaxRoom = 0.08
+    /// Landscape "dome": the head rises from the bottom edge (like the reference desk device); eyes sit in its upper part.
+    public static let domeHalfWidthFrac = 0.47, domeHeightFrac = 0.86, domeSink = 0.04, domeEyeY = -0.36
+    public static let domeTravelUp = 0.16, domeTravelDown = 0.1, domePointerMaxY = -0.12, domeMaxX = 0.22, domeMargin = 0.04
     /// Per-expression eye scale (left, right).
     public static let eyeScale: [FaceExpression: (Double, Double)] = [.confused: (1, 0.82), .concerned: (0.94, 0.94)]
     // Shading (hex): see design spec face2d.shading.
@@ -67,10 +69,13 @@ public struct FaceGeometry: Equatable, Sendable {
     }
 }
 
+public enum FaceComposition: String, Sendable { case full, dome }
+
 public struct FaceFit: Equatable, Sendable {
     public var scale: Double  // points per face unit
     public var cx: Double     // resting head centre
     public var cy: Double
+    public var composition: FaceComposition
 }
 
 public enum Face2D {
@@ -78,45 +83,60 @@ public enum Face2D {
     static func r6(_ v: Double) -> Double { (v * 1e6).rounded() / 1e6 }
 
     /// Pose (CharacterRig) -> 2D face geometry. `point` is the look target (-1..1, x right+, y up+) while pointing.
-    public static func geometry(_ pose: Pose, expression: FaceExpression, point: Look? = nil) -> FaceGeometry {
+    public static func geometry(_ pose: Pose, expression: FaceExpression, point: Look? = nil,
+                                composition: FaceComposition = .full) -> FaceGeometry {
         typealias F = FaceSpec
+        let dome = composition == .dome
+        let eyeY = dome ? F.domeEyeY : F.eyeY
         let hx = clamp(pose.headYaw, -0.6, 0.6) * F.parallaxYaw
         let hy = clamp(pose.headPitch, -0.6, 0.6) * F.parallaxPitch - pose.bodyY * F.parallaxBody
         let breathe = 1 + (pose.breathe - 1) * F.breatheGain
         let head = FaceEllipse(cx: r6(hx), cy: r6(hy), rx: r6(F.headRx), ry: r6(F.headRy * breathe))
 
-        let maxX = F.headRx - F.eyeX - F.eyeRx - F.eyeMargin
+        let maxX = dome ? F.domeMaxX : F.headRx - F.eyeX - F.eyeRx - F.eyeMargin
         let maxY = F.headRy - abs(F.eyeY) - F.eyeRy - F.eyeMargin
         let gx = clamp(clamp(pose.eyeX, -1, 1) * F.travelX + clamp(pose.headYaw, -0.6, 0.6) * F.yawFollow, -maxX, maxX)
-        let gy = clamp(-clamp(pose.eyeY, -1, 1) * F.travelY + clamp(pose.headPitch, -0.6, 0.6) * F.pitchFollow, -maxY, maxY)
         let turn = maxX > 0 ? gx / maxX : 0
         let spacing = F.eyeX * (1 - F.foreshortenSpacing * abs(turn))
+        var minGy = -maxY, maxGy = maxY
+        if dome {
+            // The visible dome is lower toward its sides: the outer eye's top must stay under the curve.
+            let outer = (abs(gx) + spacing + F.eyeRx) / F.headRx
+            let roof = F.headRy * max(0, 1 - outer * outer).squareRoot() - F.domeMargin
+            minGy = min(F.domeTravelDown, max(-F.domeTravelUp, -roof + F.eyeRy - eyeY))
+            maxGy = F.domeTravelDown
+        }
+        let gy = clamp(-clamp(pose.eyeY, -1, 1) * F.travelY + clamp(pose.headPitch, -0.6, 0.6) * F.pitchFollow, minGy, maxGy)
         let open = clamp(pose.eyeOpen, 0, 1)
         let ry = max(F.eyeMinOpen, F.eyeRy * open)
         let (sl, sr) = F.eyeScale[expression] ?? (1, 1)
         let narrowL = 1 - F.foreshortenWidth * max(0, -turn)
         let narrowR = 1 - F.foreshortenWidth * max(0, turn)
-        let eyeL = FaceEllipse(cx: r6(gx - spacing), cy: r6(F.eyeY + gy), rx: r6(F.eyeRx * narrowL * sl), ry: r6(ry * sl))
-        let eyeR = FaceEllipse(cx: r6(gx + spacing), cy: r6(F.eyeY + gy), rx: r6(F.eyeRx * narrowR * sr), ry: r6(ry * sr))
+        let eyeL = FaceEllipse(cx: r6(gx - spacing), cy: r6(eyeY + gy), rx: r6(F.eyeRx * narrowL * sl), ry: r6(ry * sl))
+        let eyeR = FaceEllipse(cx: r6(gx + spacing), cy: r6(eyeY + gy), rx: r6(F.eyeRx * narrowR * sr), ry: r6(ry * sr))
 
         var pointer: (angle: Double, x: Double, y: Double)?
         if expression == .pointing, let p = point {
             let tx = clamp(p.x, -1, 1), ty = clamp(p.y, -1, 1)
             let angle = atan2(-ty, tx == 0 && ty == 0 ? 1 : tx)
-            pointer = (r6(angle), r6(head.cx + cos(angle) * F.headRx * F.pointerRadius), r6(head.cy + sin(angle) * F.headRy * F.pointerRadius))
+            let py = head.cy + sin(angle) * F.headRy * F.pointerRadius
+            pointer = (r6(angle), r6(head.cx + cos(angle) * F.headRx * F.pointerRadius), r6(dome ? min(py, F.domePointerMaxY) : py))
         }
         return FaceGeometry(head: head, headRotation: r6(clamp(pose.headRoll, -0.5, 0.5)), eyeL: eyeL, eyeR: eyeR,
                             lineThickness: F.lineThickness, pupil: (r6(gx), r6(gy)), pointer: pointer,
                             glow: clamp(pose.glow, 0, 1), dim: clamp(pose.dim, 0, 1))
     }
 
-    /// Points per face unit and the head's resting centre for a view of w x h. Landscape shows a larger face.
+    /// Points per face unit and the head's resting centre for a view of w x h (same as fitFace in face2d.ts).
+    /// Landscape: dome (head centre just below the bottom edge). Portrait/narrow: the whole head.
     public static func fit(width w: Double, height h: Double) -> FaceFit {
         typealias F = FaceSpec
         let W = w > 0 && w.isFinite ? w : 1, H = h > 0 && h.isFinite ? h : 1
-        let landscape = W / H >= 1.2
-        let heightFrac = landscape ? F.fitLandscapeHeightFrac : F.fitHeightFrac
-        let scale = min(W * F.fitWidthFrac / (2 * F.headRx), H * heightFrac / (2 * F.headRy * (1 + F.fitParallaxRoom)))
-        return FaceFit(scale: r6(scale), cx: r6(W / 2), cy: r6(H * (landscape ? F.fitLandscapeCenterY : F.fitCenterY)))
+        if W / H >= 1.2 {
+            let scale = min(W * F.domeHalfWidthFrac / F.headRx, H * F.domeHeightFrac / (F.headRy * (1 + F.fitParallaxRoom)))
+            return FaceFit(scale: r6(scale), cx: r6(W / 2), cy: r6(H + F.domeSink * scale), composition: .dome)
+        }
+        let scale = min(W * F.fitWidthFrac / (2 * F.headRx), H * F.fitHeightFrac / (2 * F.headRy * (1 + F.fitParallaxRoom)))
+        return FaceFit(scale: r6(scale), cx: r6(W / 2), cy: r6(H * F.fitCenterY), composition: .full)
     }
 }

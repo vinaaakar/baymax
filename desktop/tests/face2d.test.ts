@@ -10,10 +10,10 @@ const inside = (x: number, y: number, h: { cx: number; cy: number; rx: number; r
 describe("2D face geometry (design/baymax-visual-spec.json face2d)", () => {
   it("matches the shared vectors used by the iPhone port", () => {
     for (const v of VISUAL_SPEC.face2dTestVectors) {
-      const g = faceGeometry(v.pose as typeof REST, v.expression as Expression, v.point);
+      const g = faceGeometry(v.pose as typeof REST, v.expression as Expression, v.point, v.composition as "full" | "dome");
       expect(g).toEqual(v.geometry);
     }
-    for (const v of VISUAL_SPEC.fitTestVectors) expect(fitFace(v.w, v.h)).toEqual({ scale: v.scale, cx: v.cx, cy: v.cy });
+    for (const v of VISUAL_SPEC.fitTestVectors) expect(fitFace(v.w, v.h)).toEqual({ scale: v.scale, cx: v.cx, cy: v.cy, composition: v.composition });
     for (const v of VISUAL_SPEC.expressionTestVectors) {
       expect(expressionFor(v.state as never, { cursorLive: v.cursorLive, pointing: v.pointing, taskKind: v.taskKind })).toBe(v.expression);
     }
@@ -54,15 +54,35 @@ describe("2D face geometry (design/baymax-visual-spec.json face2d)", () => {
     expect(faceGeometry(REST, "IDLE", { x: 1, y: 0 }).pointer).toBeNull();
   });
 
-  it("sleeping closes the eyes to thin lines; landscape shows a larger face", () => {
+  it("sleeping closes the eyes to thin lines; portrait shows the whole head", () => {
     const g = faceGeometry(targetPose("SLEEPING", 1, { lookX: 0, lookY: 0, level: 0, reducedMotion: true }), "SLEEPING");
     expect(g.eyeL.ry).toBeLessThan(0.02);
-    expect(fitFace(844, 390).scale).toBeGreaterThan(fitFace(390, 844).scale * 0.9);
-    for (const [w, h] of [[390, 844], [844, 390], [300, 300], [1600, 500]]) {
+    for (const [w, h] of [[390, 844], [300, 300], [430, 932]]) {
       const f = fitFace(w, h);
+      expect(f.composition).toBe("full");
       expect(f.cx + f.scale * FACE.head.rx).toBeLessThanOrEqual(w); // never cropped
       expect(f.cy - f.scale * FACE.head.ry).toBeGreaterThanOrEqual(0);
       expect(f.cy + f.scale * FACE.head.ry).toBeLessThanOrEqual(h);
+    }
+  });
+
+  it("landscape is a dome rising from the bottom edge, with the eyes always visible inside it", () => {
+    for (const [w, h] of [[844, 390], [560, 320], [932, 430], [1600, 500]]) {
+      const f = fitFace(w, h);
+      expect(f.composition).toBe("dome");
+      expect(f.cy).toBeGreaterThanOrEqual(h);                              // centre at/below the bottom edge: only the top shows
+      expect(f.cy - f.scale * FACE.head.ry).toBeGreaterThan(0);            // top of the dome is on screen
+      expect(f.cx - f.scale * FACE.head.rx).toBeGreaterThanOrEqual(0);     // sides on screen
+      for (let lx = -1; lx <= 1; lx += 0.25) {
+        for (let ly = -1; ly <= 1; ly += 0.25) {
+          const g = faceGeometry(targetPose("IDLE", 1, { lookX: lx, lookY: ly, level: 0, reducedMotion: true }), "TRACKING", null, "dome");
+          for (const e of [g.eyeL, g.eyeR]) {
+            const bottom = f.cy + (g.head.cy + e.cy + e.ry) * f.scale;
+            expect(bottom).toBeLessThan(h);                                 // eyes never slide off the bottom
+            expect(inside(e.cx, e.cy - e.ry, { cx: 0, cy: 0, rx: g.head.rx, ry: g.head.ry })).toBe(true); // nor out of the dome
+          }
+        }
+      }
     }
   });
 

@@ -104,10 +104,8 @@
       "widthFrac": 0.7,
       "heightFrac": 0.56,
       "centerY": 0.42,
-      "landscapeHeightFrac": 0.94,
-      "landscapeCenterY": 0.5,
       "parallaxRoom": 0.08,
-      "description": "Landscape (width/height >= 1.2) is the desk-companion face mode: the head fills ~87% of the height, centred, like the reference device; controls are overlaid on demand."
+      "description": "Portrait / narrow views (width/height < 1.2): the whole head, centred at centerY. Landscape views use the dome composition."
     },
     "shading": {
       "description": "Head: radial gradient from skin (upper-left highlight) to skinShade at the rim, plus a soft drop shadow. Eyes: flat face color with a tiny highlight. Stage: radial burgundy glow behind the head.",
@@ -146,6 +144,18 @@
       "SLEEPING": "eyes closed to thin lines, stage dimmed, 'z' glyph",
       "ERROR": "red ring flash",
       "DISCONNECTED": "stage dimmed, eyes half closed, link-off glyph"
+    },
+    "dome": {
+      "description": "Landscape desk-companion composition (like the reference device): the head is a dome rising from the bottom edge of the screen; only its upper part is visible and the eyes sit in it.",
+      "halfWidthFrac": 0.47,
+      "heightFrac": 0.86,
+      "sink": 0.04,
+      "eyeY": -0.36,
+      "travelUp": 0.16,
+      "travelDown": 0.1,
+      "pointerMaxY": -0.12,
+      "maxX": 0.22,
+      "margin": 0.04
     }
   },
   "face2dTestVectors": [
@@ -171,6 +181,7 @@
       },
       "expression": "IDLE",
       "point": null,
+      "composition": "full",
       "geometry": {
         "head": {
           "cx": 0,
@@ -229,6 +240,7 @@
       },
       "expression": "TRACKING",
       "point": null,
+      "composition": "full",
       "geometry": {
         "head": {
           "cx": -0.03334,
@@ -287,6 +299,7 @@
       },
       "expression": "TRACKING",
       "point": null,
+      "composition": "full",
       "geometry": {
         "head": {
           "cx": 0.03386,
@@ -348,6 +361,7 @@
         "x": -0.8,
         "y": 0.5
       },
+      "composition": "full",
       "geometry": {
         "head": {
           "cx": -0.0336,
@@ -410,6 +424,7 @@
       },
       "expression": "SLEEPING",
       "point": null,
+      "composition": "full",
       "geometry": {
         "head": {
           "cx": 0,
@@ -468,6 +483,7 @@
       },
       "expression": "CONFUSED",
       "point": null,
+      "composition": "full",
       "geometry": {
         "head": {
           "cx": 0.012,
@@ -503,6 +519,249 @@
         "glow": 0,
         "dim": 0
       }
+    },
+    {
+      "name": "dome rest",
+      "pose": {
+        "bodyY": 0,
+        "breathe": 1,
+        "lean": 0,
+        "sway": 0,
+        "headYaw": 0,
+        "headPitch": 0.05,
+        "headRoll": 0,
+        "eyeX": 0,
+        "eyeY": 0,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.16,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "IDLE",
+      "point": null,
+      "composition": "dome",
+      "geometry": {
+        "head": {
+          "cx": 0,
+          "cy": 0.005,
+          "rx": 1,
+          "ry": 0.74,
+          "rotation": 0
+        },
+        "eyeL": {
+          "cx": -0.36,
+          "cy": -0.3525,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.36,
+          "cy": -0.3525,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.36,
+          "y1": -0.3525,
+          "x2": 0.36,
+          "y2": -0.3525,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0,
+          "y": 0.0075
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
+    },
+    {
+      "name": "dome cursor top-left",
+      "pose": {
+        "bodyY": 0.000897,
+        "breathe": 1.005983,
+        "lean": 0,
+        "sway": 0.000549,
+        "headYaw": -0.27783,
+        "headPitch": -0.069316,
+        "headRoll": 0.001072,
+        "eyeX": -0.9,
+        "eyeY": 0.7,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.16,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "TRACKING",
+      "point": null,
+      "composition": "dome",
+      "geometry": {
+        "head": {
+          "cx": -0.03334,
+          "cy": -0.008277,
+          "rx": 1,
+          "ry": 0.742656,
+          "rotation": 0.001072
+        },
+        "eyeL": {
+          "cx": -0.544,
+          "cy": -0.392983,
+          "rx": 0.0756,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.104,
+          "cy": -0.392983,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.544,
+          "y1": -0.392983,
+          "x2": 0.104,
+          "y2": -0.392983,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": -0.22,
+          "y": -0.032983
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
+    },
+    {
+      "name": "dome cursor bottom-right",
+      "pose": {
+        "bodyY": 0.000897,
+        "breathe": 1.005983,
+        "lean": 0,
+        "sway": 0.000549,
+        "headYaw": 0.28217,
+        "headPitch": 0.170684,
+        "headRoll": 0.001072,
+        "eyeX": 0.9,
+        "eyeY": -0.7,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.16,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "TRACKING",
+      "point": null,
+      "composition": "dome",
+      "geometry": {
+        "head": {
+          "cx": 0.03386,
+          "cy": 0.015723,
+          "rx": 1,
+          "ry": 0.742656,
+          "rotation": 0.001072
+        },
+        "eyeL": {
+          "cx": -0.104,
+          "cy": -0.26,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.544,
+          "cy": -0.26,
+          "rx": 0.0756,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.104,
+          "y1": -0.26,
+          "x2": 0.544,
+          "y2": -0.26,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0.22,
+          "y": 0.1
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
+    },
+    {
+      "name": "dome pointing down-right",
+      "pose": {
+        "bodyY": 0.000897,
+        "breathe": 1.005983,
+        "lean": 0.0045,
+        "sway": 0.000549,
+        "headYaw": 0.21,
+        "headPitch": 0.144,
+        "headRoll": 0.001072,
+        "eyeX": 0.6,
+        "eyeY": -0.8,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.55,
+        "armLFwd": 0,
+        "armRFwd": 0.54,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "POINTING",
+      "point": {
+        "x": 0.6,
+        "y": -0.8
+      },
+      "composition": "dome",
+      "geometry": {
+        "head": {
+          "cx": 0.0252,
+          "cy": 0.013055,
+          "rx": 1,
+          "ry": 0.742656,
+          "rotation": 0.001072
+        },
+        "eyeL": {
+          "cx": -0.104,
+          "cy": -0.26,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.544,
+          "cy": -0.26,
+          "rx": 0.0756,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.104,
+          "y1": -0.26,
+          "x2": 0.544,
+          "y2": -0.26,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0.22,
+          "y": 0.1
+        },
+        "pointer": {
+          "angle": 0.927295,
+          "x": 0.6852,
+          "y": -0.12
+        },
+        "glow": 0,
+        "dim": 0
+      }
     }
   ],
   "fitTestVectors": [
@@ -511,42 +770,56 @@
       "h": 844,
       "scale": 136.5,
       "cx": 195,
-      "cy": 354.48
+      "cy": 354.48,
+      "composition": "full"
     },
     {
       "w": 844,
       "h": 390,
-      "scale": 229.354354,
+      "scale": 396.68,
       "cx": 422,
-      "cy": 195
+      "cy": 405.8672,
+      "composition": "dome"
     },
     {
       "w": 932,
       "h": 430,
-      "scale": 252.877878,
+      "scale": 438.04,
       "cx": 466,
-      "cy": 215
+      "cy": 447.5216,
+      "composition": "dome"
     },
     {
       "w": 430,
       "h": 932,
       "scale": 150.5,
       "cx": 215,
-      "cy": 391.44
+      "cy": 391.44,
+      "composition": "full"
     },
     {
       "w": 520,
       "h": 640,
       "scale": 182,
       "cx": 260,
-      "cy": 268.8
+      "cy": 268.8,
+      "composition": "full"
     },
     {
       "w": 1200,
       "h": 800,
-      "scale": 420,
+      "scale": 564,
       "cx": 600,
-      "cy": 400
+      "cy": 822.56,
+      "composition": "dome"
+    },
+    {
+      "w": 560,
+      "h": 320,
+      "scale": 263.2,
+      "cx": 280,
+      "cy": 330.528,
+      "composition": "dome"
     }
   ],
   "expressionTestVectors": [

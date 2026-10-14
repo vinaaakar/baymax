@@ -186,7 +186,14 @@ async def main() -> int:
                 root.warp_pointer(x, y)
                 d.sync()
                 await asyncio.sleep(1.2)
-                faces[name] = await face_state(s, ROOT / "docs/images/companion-2d-electron.png" if name == "right" else None)
+                for attempt in range(3):  # DevTools can be slow to answer while the renderer is busy; retry, never guess
+                    try:
+                        faces[name] = await face_state(s, ROOT / "docs/images/companion-2d-electron.png" if name == "right" else None)
+                        if any(f["w"] < 600 for f in faces[name]):
+                            break
+                    except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+                        print(f"  devtools read {attempt + 1} failed: {exc!r}")
+                        faces[name] = []
             comp = [(fl, fr) for fl in faces["left"] for fr in faces["right"] if fl["url"] == fr["url"] and fl["w"] < 600]
             face_ok = bool(comp)
             for fl, fr in comp:

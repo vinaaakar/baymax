@@ -16,7 +16,8 @@ final class FaceAnimator {
 
     /// Advances to `now` (seconds) and returns this frame's face. Gaze comes only from real Mac cursor samples
     /// and verified screen targets (GazeSource); with no samples the face rests.
-    func step(now: Double, state: CharacterState, level: Double, gaze: GazeSource, taskKind: String?, reducedMotion: Bool) -> FaceGeometry {
+    func step(now: Double, state: CharacterState, level: Double, gaze: GazeSource, taskKind: String?, reducedMotion: Bool,
+              composition: FaceComposition = .full) -> FaceGeometry {
         if start == nil { start = now; last = now }
         let dt = now - last
         last = now
@@ -27,7 +28,7 @@ final class FaceAnimator {
         // Follow the cursor quickly (low lag) but keep everything else soft.
         pose = CharacterRig.blend(pose, target, dt: dt, rate: reducedMotion ? 14 : (g.live || g.point != nil ? 12 : 5))
         expression = FaceExpression.from(state, cursorLive: g.live, pointing: g.point != nil, taskKind: taskKind)
-        geometry = Face2D.geometry(pose, expression: expression, point: g.point)
+        geometry = Face2D.geometry(pose, expression: expression, point: g.point, composition: composition)
         gaze.recordFace(expression: expression, pupil: geometry.pupil)
         return geometry
     }

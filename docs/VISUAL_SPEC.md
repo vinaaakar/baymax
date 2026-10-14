@@ -38,14 +38,18 @@ draws SwiftUI `Canvas` paths (`ios/BaymaxCompanion/Character/CharacterView.swift
 - **Depth without 3D:** for gaze, the eye group slides across the face (up to 0.30 sideways, 0.20 up/down). The eye nearest the edge
   narrows by up to 28 % and the eyes move slightly closer together. The head shifts a little (parallax) and rolls with the pose.
   The eyes always stay inside the head; this is tested for cursor positions on and beyond the screen edges.
-- **Landscape face mode (default on both):** like the reference desk device, the head fills about 87 % of the screen height,
-  centred. The only control on screen is a small keyboard button at the bottom-left, which opens a text field.
-  - Mac: everything else (Conversation, Workspace, Sleep/Wake, Emergency Stop, Hide) is in the right-click menu and the menu-bar
-    tray. Emergency Stop is also the global shortcut ⌘⇧. (Cmd+Shift+period).
-  - iPhone: long-press the face for Conversation, Current task, Sleep/Wake, Settings & pairing and Emergency Stop.
-  - Alerts (Emergency Stop engaged, approvals, errors, connection problems) appear only while they need you.
-    BAYMAX's latest reply shows briefly as a caption on the Mac.
-- **Fit:** in portrait the head fills 70 % of the width or 56 % of the height, whichever is smaller. It is never cropped.
+- **Landscape face mode (default on both):** like the reference desk device, the head is a dome rising from the bottom edge of
+  the screen. Its centre sits just below the bottom, so only the upper part shows; it spans about 94 % of the width and the eyes sit
+  in it. The eyes' travel follows the dome's curve, so they never leave it (tested for every gaze direction).
+  - Only two small icons are shown, in the top-right corner: settings, then keyboard. The keyboard opens a text field under them.
+  - Mac: settings opens the menu (Conversation, Workspace, Sleep/Wake, Emergency Stop, Hide); right-click on the face and the
+    menu-bar tray offer the same. Emergency Stop is also the global shortcut ⌘⇧. (Cmd+Shift+period).
+  - iPhone: settings opens Settings & pairing. Long-press the face for Conversation, Current task, Sleep/Wake, Settings and
+    Emergency Stop.
+  - Alerts (Emergency Stop engaged, approvals, errors, connection problems) appear under the icons only while they need you.
+- **Indicators in landscape:** thinking dots and the link-off glyph sit above the dome, the "z" at its upper right, and the
+  research magnifier moves along its top.
+- **Fit:** in portrait the whole head is shown, filling 70 % of the width or 56 % of the height (whichever is smaller); it is never cropped.
   With the conversation open in landscape, the face moves to a narrower region beside it.
 - **Evidence:**
   - `docs/images/face-2d-states.png`: the Mac renderer in Chromium for IDLE, TRACKING left-up and right-down, POINTING, RESEARCHING,
