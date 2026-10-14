@@ -56,10 +56,23 @@ class UIElement:
         return {"role": self.role, "name": self.name, "description": self.description}
 
 
-def validate_app_name(name: str) -> str:
-    name = name.strip()
+_PLACEHOLDER_APPS = {"none", "null", "nil", "undefined", "n/a", "na", "unknown", "app", "application", "current", "frontmost",
+                     "front", "active", "this", "that", "it", "window", "screen", "the app", "current app", "current window"}
+
+
+class AppNameError(ValueError):
+    pass
+
+
+def validate_app_name(name: Any) -> str:
+    """A real application name, or AppNameError. Never lets None / "None" / placeholders reach AppleScript."""
+    if not isinstance(name, str):
+        raise AppNameError("no application was specified")
+    name = name.strip().strip("\"'“”")
+    if not name or name.lower() in _PLACEHOLDER_APPS:
+        raise AppNameError("no application was specified")
     if not _APP_NAME.match(name):
-        raise ValueError("invalid application name")
+        raise AppNameError(f"“{name[:40]}” is not a valid application name")
     return name
 
 
@@ -220,6 +233,16 @@ _AS_DOCUMENT = """on run argv
   end tell
 end run"""
 
+_AS_PROCESS = """on run argv
+  set appName to item 1 of argv
+  set alt to item 2 of argv
+  tell application "System Events"
+    set ps to (every process whose name is appName or name is alt or displayed name is appName)
+    if (count of ps) = 0 then return ""
+    return name of item 1 of ps
+  end tell
+end run"""
+
 PROCESS_ALIASES = {"Visual Studio Code": "Code", "Google Chrome": "Google Chrome", "IntelliJ IDEA": "idea"}
 
 _AS_PRESS = """on run argv
@@ -293,6 +316,9 @@ class MacDesktop(DesktopBackend):
         err = res.stderr
         if any(code in err for code in ("-1719", "-25211", "not allowed assistive", "-1743")):
             raise DesktopPermissionError(ACCESSIBILITY_HELP)
+        if "-1728" in err and "process" in err:
+            m = re.search(r'process "([^"]*)"', err)
+            raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
         if "1404" in err or "element not found" in err:
             raise DesktopUnavailable("the requested interface element was not found (the app may not expose accessibility info)")
         raise DesktopUnavailable(f"AppleScript failed: {err.strip()[-300:]}")
@@ -372,9 +398,17 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         await self._osascript(_AS_PRESS, app, role[:40], name[:120], timeout=30)
 
-    async def read_window_text(self, app: str, limit: int = 4000) -> str:
+    async def process_name(self, app: str) -> str:
+        """System Events process name for an app name ("Visual Studio Code" -> "Code"); DesktopUnavailable if not running."""
         app = validate_app_name(app)
-        return (await self._osascript(_AS_TEXT, app, timeout=30))[:limit]
+        out = (await self._osascript(_AS_PROCESS, app, PROCESS_ALIASES.get(app, app), timeout=10)).strip()
+        if not out:
+            raise DesktopUnavailable(f"{app} isn't running")
+        return out
+
+    async def read_window_text(self, app: str, limit: int = 4000) -> str:
+        proc = await self.process_name(app)
+        return (await self._osascript(_AS_TEXT, proc, timeout=30))[:limit]
 
     async def open_path_in_app(self, app: str, path: Path) -> None:
         app = validate_app_name(app)
@@ -415,7 +449,10 @@ class MacDesktop(DesktopBackend):
                 owner = str(w.get("kCGWindowOwnerName") or "")
                 if int(w.get("kCGWindowLayer", 1)) == 0 and owner and owner not in _SELF_APPS:
                     return owner
-        return await self.frontmost_app()
+        front = (await self.frontmost_app()).strip()
+        if not front or front in _SELF_APPS:
+            raise DesktopUnavailable("I couldn't tell which app you mean (BAYMAX itself is in front). Click the window first, or name the app.")
+        return front
 
     async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]:
         app = validate_app_name(app)

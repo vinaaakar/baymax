@@ -81,6 +81,7 @@ class BaymaxServer:
         self.s = services
         self.assistant = Assistant(services)
         self.hub = DeviceHub(services, self.assistant)
+        services.extras["hub"] = self.hub  # lets the assistant report real phone connection state
         self.token = load_or_create_local_token(services.settings.data_dir)
         self.local_runner: web.AppRunner | None = None
         self.lan_runner: web.AppRunner | None = None

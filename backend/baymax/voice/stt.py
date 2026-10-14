@@ -29,7 +29,14 @@ class Transcript:
     engine: str
 
 
-_NOISE = re.compile(r"\[(?:BLANK_AUDIO|MUSIC|NOISE|SILENCE|inaudible)[^\]]*\]|\((?:silence|music|noise)\)", re.I)
+# whisper.cpp annotates non-speech sounds: [BLANK_AUDIO], [GUNSHOT], [explosion], (music), *laughs*, ♪ ... ♪.
+# None of these are words the user said, so they never reach the assistant.
+_NOISE = re.compile(r"\[[^\]]{0,60}\]|\([^)]{0,40}\)|\*[^*]{0,40}\*|[♪♫]+[^♪♫]{0,80}[♪♫]*", re.I)
+
+
+def clean_transcript(raw: str) -> str:
+    text = " ".join(_NOISE.sub(" ", raw).split())
+    return text if re.search(r"[^\W\d_]", text) else ""  # nothing but punctuation/digits left -> no speech
 
 
 class WhisperCppRecognizer:
@@ -78,8 +85,7 @@ class WhisperCppRecognizer:
             res = await self.processes.run(argv, timeout=self.config.stt_timeout_s)
         if not res.ok:
             raise STTUnavailable(f"whisper.cpp failed (exit {res.returncode}): {res.stderr[-300:]}")
-        text = _NOISE.sub("", res.stdout).strip()
-        text = " ".join(text.split())
+        text = clean_transcript(res.stdout)
         return Transcript(text, pcm.duration, bool(text), "whisper.cpp")
 
 

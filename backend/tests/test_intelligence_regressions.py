@@ -1,0 +1,172 @@
+"""Regressions for the failures seen in the BAYMAX chat (Oct 14):
+
+* whisper sound tags ("[GUNSHOT]", "[explosion]") were sent as user messages;
+* "Hi, BIMEX!" made the model call files.read with an invented path;
+* "Hey Bimax, can you hear me?" / "what are the walks you can do" called desktop.read_window with app "None",
+  producing AppleScript "Can't get process \\"None\\"" and "missing argument 'app'".
+
+The fake Ollama server below misbehaves exactly like that on purpose.
+"""
+
+from __future__ import annotations
+
+import pytest
+from aiohttp import web
+
+from baymax.assistant import Assistant
+from baymax.config import load_settings
+from baymax.hostos.desktop import AppNameError, validate_app_name
+from baymax.intent.relevance import tool_is_relevant
+from baymax.security.secrets import SecretStore
+from baymax.tasks.models import TaskStatus
+from baymax.voice.stt import clean_transcript
+from conftest import FakeDesktop
+
+
+@pytest.fixture
+async def bad_ollama():
+    """Always tries to call a tool, with the same bad arguments seen in the screenshots."""
+    calls: list[dict] = []
+    state = {"mode": "read_window_none"}
+
+    async def tags(_r):
+        return web.json_response({"models": [{"name": "llama3.2:3b"}]})
+
+    async def chat(request):
+        body = await request.json()
+        calls.append(body)
+        if "tools" not in body:  # plain conversation
+            return web.json_response({"message": {"role": "assistant", "content": "I'm a local assistant. How can I help?"}, "done": True})
+        mode = state["mode"]
+        fn = {"read_window_none": ("desktop__read_window", {"app": "None"}),
+              "read_window_missing": ("desktop__read_window", {}),
+              "files_read": ("files__read", {"path": "/Users/username/Desktop/explosion.txt"})}[mode]
+        return web.json_response({"message": {"role": "assistant", "content": "",
+                                              "tool_calls": [{"function": {"name": fn[0], "arguments": fn[1]}}]}, "done": True})
+
+    app = web.Application()
+    app.router.add_get("/api/tags", tags)
+    app.router.add_post("/api/chat", chat)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    yield f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}", calls, state
+    await runner.cleanup()
+
+
+@pytest.fixture
+async def env(tmp_path, bad_ollama):
+    url, calls, state = bad_ollama
+    settings = load_settings(tmp_path / "data", {
+        "workspace_dir": str(tmp_path / "ws"), "network": {"local_port": 0},
+        "llm": {"base_url": url, "connect_timeout_s": 1, "request_timeout_s": 5},
+        "voice": {"tts_engine": "none", "whisper_binary": "definitely-not-installed"}, "research": {"local_only": True},
+    })
+    settings.ensure_dirs()
+    from baymax.services import build_services
+
+    desk = FakeDesktop()
+    s = build_services(settings, desktop=desk, secrets=SecretStore(settings.data_dir, use_keychain=False))
+    a = Assistant(s)
+    a.start()
+    yield {"s": s, "a": a, "desk": desk, "calls": calls, "state": state}
+    await a.stop()
+    await s.close()
+
+
+def _text(r):
+    return r["message"]["text"] if isinstance(r.get("message"), dict) else ""
+
+
+@pytest.mark.parametrize("utterance", ["What can you do?", "What are the walks you can do tell me?",
+                                       "Baymax, what are the walks you can do, tell me?", "What are the work you can do?",
+                                       "Tell me what other walks you can do."])
+async def test_capabilities_come_from_the_registry_without_tools(env, utterance):
+    r = await env["a"].handle_text(utterance, source="voice")
+    text = _text(r)
+    assert "taskId" not in r and env["desk"].calls == []
+    assert "Here's what I can do right now" in text and "Open apps and websites" in text
+    assert "Not available at the moment" in text and "Generate images" in text  # honest: no image generator configured
+    assert not env["calls"]  # the model was not asked
+
+
+@pytest.mark.parametrize("utterance", ["Hey Bimax, can you hear me?", "Hi, BIMEX!", "Hey Baymax, can you hear me?", "Baymax!"])
+async def test_greetings_never_touch_tools(env, utterance):
+    r = await env["a"].handle_text(utterance, source="voice")
+    assert "taskId" not in r and env["desk"].calls == []
+    assert "can hear you" in _text(r)
+
+
+async def test_model_picking_an_unrelated_tool_is_ignored(env):
+    env["state"]["mode"] = "files_read"
+    r = await env["a"].handle_text("tell me a joke about robots")
+    assert "taskId" not in r
+    assert "explosion.txt" not in _text(r) and "How can I help" in _text(r)
+    assert any("tools" not in b for b in env["calls"])  # fell back to a plain, tool-less answer
+
+
+async def test_read_the_current_window_resolves_the_front_app(env):
+    env["desk"].front = "Terminal"
+    r = await env["a"].handle_text("read the current window")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED and t.verified
+    assert ("read_window", "Terminal") in env["desk"].calls
+
+
+async def test_read_window_with_no_identifiable_app_asks_instead_of_calling_applescript(env):
+    env["desk"].front = None
+    r = await env["a"].handle_text("read the current window")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.FAILED and "Click the window first" in (t.error or "")
+    assert not any(c[0] == "read_window" for c in env["desk"].calls)
+
+
+async def test_model_passing_app_none_is_resolved_not_sent_to_applescript(env):
+    env["state"]["mode"] = "read_window_none"
+    env["desk"].front = "Notes"
+    r = await env["a"].handle_text("could you check what my notes window says")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED, t.error
+    assert ("read_window", "Notes") in env["desk"].calls and ("read_window", "None") not in env["desk"].calls
+
+
+async def test_model_omitting_app_no_longer_fails_validation(env):
+    env["state"]["mode"] = "read_window_missing"
+    env["desk"].front = "Safari"
+    r = await env["a"].handle_text("what does this window show")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED, t.error
+
+
+async def test_invalid_and_unavailable_apps_get_helpful_answers(env):
+    r = await env["a"].handle_text("read the Spotify window")  # not running
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.FAILED and "isn't running" in t.result["summary"]
+    assert t.error_kind == "not_found"
+
+
+def test_app_name_validation_rejects_placeholders():
+    for bad in (None, "", "None", "null", "undefined", "current", "  ", "rm -rf /;"):
+        with pytest.raises(AppNameError):
+            validate_app_name(bad)
+    assert validate_app_name("Visual Studio Code") == "Visual Studio Code"
+
+
+def test_whisper_sound_tags_are_not_speech():
+    for raw in ("[GUNSHOT]", "[explosion]", " (music) ", "[BLANK_AUDIO]", "♪ la la ♪", "*laughs*"):
+        assert clean_transcript(raw) == ""
+    assert clean_transcript("*laughs* open Safari") == "open Safari"
+
+
+def test_relevance_rules():
+    assert not tool_is_relevant("files.read", "Hi, BIMEX!")
+    assert not tool_is_relevant("desktop.read_window", "what are the walks you can do")
+    assert tool_is_relevant("desktop.read_window", "read the current window")
+    assert tool_is_relevant("apps.open", "open VS Code")
+    assert not tool_is_relevant("made.up", "anything")
+
+
+async def test_phone_status_question_answers_from_real_state(env):
+    r = await env["a"].handle_text("Tell me whether my phone is connected")
+    assert "taskId" not in r and ("iPhone" in _text(r))

@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from ..coding.files import EditError, FileOps
-from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
+from ..hostos.desktop import _PLACEHOLDER_APPS, AppNameError, DesktopPermissionError, DesktopUnavailable, validate_app_name
 from ..security.commands import CommandRejected, validate_command
 from ..security.policy import Risk
 from ..security.workspace import WorkspaceViolation
@@ -150,13 +150,37 @@ class PressElementTool(Tool):
 
 class ReadWindowTool(Tool):
     name = "desktop.read_window"
-    description = "Read visible text of an app's front window through Accessibility."
+    description = ("Read the visible text of an application's front window through Accessibility. "
+                   "Leave 'app' empty to read the window the user is looking at.")
     risk = Risk.LOW
-    args = {"app": Arg("str", max_len=80)}
+    args = {"app": Arg("str", False, default="", description="application name, e.g. Terminal; empty = the app in front", max_len=80)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-        text = await _desktop(ctx.services.desktop.read_window_text(args["app"]))
-        return ToolResult(True, f"Read {len(text)} characters from {args['app']}.", {"text": text}, verified=True,
+        d = ctx.services.desktop
+        requested = (args.get("app") or "").strip()
+        try:
+            app = validate_app_name(requested)
+        except AppNameError:
+            if requested and requested.lower() not in _PLACEHOLDER_APPS:
+                q = f"“{requested[:40]}” isn't an application name I can use. Which app's window should I read?"
+                return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
+            try:  # "read the current window": the app the user is looking at, never BAYMAX itself
+                app = await d.target_app()
+            except DesktopPermissionError as exc:
+                raise ToolUnavailable(str(exc)) from None
+            except DesktopUnavailable as exc:
+                q = str(exc)
+                return ToolResult(False, q, {"errorKind": "not_found"}, needs_clarification=q)
+        try:
+            text = await d.read_window_text(app)
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I couldn't read {app}'s window: {exc}.", {"app": app, "errorKind": "not_found"})
+        if not text.strip():
+            return ToolResult(True, f"{app}'s front window has no readable text (it may not expose accessibility text).", {"app": app, "text": ""},
+                              verified=True, verification="accessibility tree queried")
+        return ToolResult(True, f"Read {len(text)} characters from {app}:\n{text[:1500]}", {"app": app, "text": text}, verified=True,
                           verification="accessibility values read", untrusted=True)
 
 

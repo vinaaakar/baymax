@@ -91,6 +91,9 @@ class FakeDesktop(DesktopBackend):
 
     async def read_window_text(self, app, limit=4000):
         self._need_ax()
+        if app not in self.running and app != self.front:
+            raise DesktopUnavailable(f"{app} isn't running")
+        self.calls.append(("read_window", app))
         return "Hello from the window"
 
     async def screenshot(self, path):
@@ -116,6 +119,8 @@ class FakeDesktop(DesktopBackend):
         return self.document
 
     async def target_app(self):
+        if not self.front:
+            raise DesktopUnavailable("I couldn't tell which app you mean (BAYMAX itself is in front). Click the window first, or name the app.")
         return self.front
 
     async def accessibility_elements(self, app, limit=400):

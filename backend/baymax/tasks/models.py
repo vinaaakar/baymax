@@ -69,6 +69,8 @@ class Task:
     approval: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+    # success | invalid_arguments | permission_denied | not_found | timeout | execution_failed | confirmation_required | unsupported | cancelled
+    error_kind: str = ""
     verified: bool = False
     cancel_requested: bool = False
     created_at: float = field(default_factory=time.time)

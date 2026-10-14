@@ -47,9 +47,30 @@ class IntentRouter:
         ctx = ctx or RouteContext()
         raw = _clean(text)
         t = raw.lower().rstrip(".!?")
-        t = re.sub(r"^(hey |ok |okay )?baymax[, ]*", "", t)
+        # Speech recognition often mishears the name ("Bimex", "Bimax", "Bay Max"): accept close variants.
+        greeted = bool(re.match(r"^(hey|hi|hello|ok|okay|yo)\b", t))
+        t = re.sub(r"^((hey|hi|hello|ok|okay|yo)[ ,!]*)?" + WAKE + r"[ ,!.?]*", "", t)
+        t = re.sub(r"^(hey|hi|hello)[ ,!]+(?=\w)", "", t)
+        conversational = t
         t = re.sub(r"^(please |could you |can you |would you )+", "", t).strip()
         words = t.split()
+
+        # ---- conversation that needs no tool (never routed to desktop automation)
+        bare = conversational.strip(" !.?,")
+        if not bare and (greeted or raw.strip()):
+            return Intent("greeting", text=raw)
+        if re.fullmatch(r"(hi|hello|hey|yo|good (morning|afternoon|evening)|how are you( doing)?|are you (there|awake|listening|ok|okay)|"
+                        r"(can|do) you hear me( now)?|can you listen( to me)?|you there|testing( testing)?|test|mic test|"
+                        r"thank you|thanks|nice to meet you)( baymax)?", bare):
+            return Intent("greeting", text=raw)
+        if re.search(r"\bwhat (else )?(work|works|walks|things|stuff|tasks|jobs|features|kind of (things|tasks|work))?\s*(can|could|do) you (do|perform|help( me)? with)\b"
+                     r"|\bwhat are (you|your) (able to do|capable of|capabilities|abilities|features|skills)\b"
+                     r"|\bwhat can you do\b|\bhow can you help\b|\bwhat do you do\b|^(help|capabilities|features)$"
+                     r"|\bwhat\b.{0,40}\b(you can|can you|could you|you could|you are able to|are you able to)\s+(do|perform|handle|help)\b", bare):
+            return Intent("help", text=raw)
+        if re.search(r"\b(is|are) (my )?(i?phone|mobile|device)s? (connected|paired|online|linked)\b|\b(phone|iphone) (connection|status)\b"
+                     r"|\bconnection status\b|\b(i?phone|mobile)\b.{0,20}\b(connected|paired|online|linked)\b", bare):
+            return Intent("status", text=raw)
 
         if re.search(r"\b(emergency stop|e-?stop|stop everything|halt everything|kill all tasks)\b", t):
             return Intent("estop", text=raw)
@@ -59,8 +80,6 @@ class IntentRouter:
             return Intent("sleep", text=raw)
         if re.match(r"^(wake up|wake|good morning)\b", t):
             return Intent("wake", text=raw)
-        if t in ("help", "what can you do", "what can you do for me"):
-            return Intent("help", text=raw)
         if re.match(r"^(status|what are you doing|what's running|what is running)\b", t):
             return Intent("status", text=raw)
 
@@ -191,7 +210,10 @@ class IntentRouter:
                 return Intent("tool", "screen.click_element", args, f"Press {target}"[:120], raw)
         m = re.match(r"^(?:read|what does|what's on|what is on)(?: the)? (?:window|screen)?(?: of| in)? ?(?:the )?(.+?)(?: app)?(?: say| window)?$", t)
         if m and re.search(r"\b(read|window|screen)\b", t) and not re.search(r"\bscreenshot\b", t):
-            return Intent("tool", "desktop.read_window", {"app": _title(m.group(1))}, f"Read {m.group(1)}", raw)
+            name = re.sub(r"\b(current|this|active|front|frontmost|my|the|open)\b", "", m.group(1)).strip()
+            name = re.sub(r"\b(window|screen|app|say|says|show|shows|display|displays|contain|contains|mean|means|have|has)\b", "", name).strip()
+            args = {"app": _title(name)} if name else {}
+            return Intent("tool", "desktop.read_window", args, f"Read {name or 'current window'}", raw)
         if re.search(r"\b(take a |capture (a |the )?)?screenshot\b|\bcapture the screen\b", t):
             return Intent("tool", "desktop.screenshot", {}, "Screenshot", raw)
         m = re.match(r"^(?:list|show) (?:the )?(?:buttons|elements|controls|ui elements)(?: in| of) (?:the )?(.+?)(?: app)?$", t)
@@ -229,6 +251,9 @@ class IntentRouter:
         if re.search(r"\b(more|less) detail(ed)?\b|\bbigger\b|\bsmaller\b|\btaller\b|\bwider\b", t) and len(t.split()) <= 10:
             return True
         return False
+
+
+WAKE = r"(baymax|bay ?max|bay-max|bimax|bimex|beymax|baymex|beemax|bymax|bay mac|bae max|baemax|maymax)"
 
 
 def _strip_original(raw: str, lowered: str) -> str:

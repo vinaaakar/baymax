@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from .character.state_machine import CharacterEvent, CharacterState
+from .capabilities import capability_report, capability_text
+from .intent.relevance import tool_is_relevant
 from .intent.router import Intent, IntentRouter, RouteContext, parse_model_proposal
 from .llm.ollama import LLMError, LLMUnavailable
 from .llm.ollama import ToolsUnsupported, tool_spec
@@ -25,10 +27,6 @@ from .tasks.models import PlanStep
 from .voice.tts import TTSUnavailable
 
 log = logging.getLogger(__name__)
-
-CAPABILITIES = ("open apps and websites, control the mouse and keyboard (with macOS permissions), create and edit 3D models "
-                "(cars, houses, bottles, chairs, drones, robotic arms, gears and more), research the web with citations, "
-                "run simulations, write documents and diagrams, run and fix code tests, and remember preferences you approve")
 
 
 @dataclass
@@ -176,14 +174,25 @@ class Assistant:
         if k == "wake":
             self.set_sleep(False, origin.source)
             return {"ok": True, "message": self._reply("I'm awake. How can I help?", origin)}
+        if k == "greeting":
+            s.character.dispatch(CharacterEvent.RESET)
+            if origin.source == "voice":
+                text = f"Yes, I can hear you. I understood: “{intent.text}”. What would you like me to do?"
+            else:
+                text = "Hello, I'm here. What would you like me to do? (Ask “what can you do?” for ideas.)"
+            return {"ok": True, "message": self._reply(text, origin)}
         if k == "help":
             s.character.dispatch(CharacterEvent.RESET)
-            return {"ok": True, "message": self._reply(f"I can {CAPABILITIES}. Risky actions always ask for your approval first.", origin)}
+            return {"ok": True, "message": self._reply(capability_text(await capability_report(s)), origin)}
         if k == "status":
             active = s.tasks.active()
             s.character.dispatch(CharacterEvent.RESET if not active else CharacterEvent.TASK_STARTED)
-            text = ("Nothing is running." if not active else "Running: " + "; ".join(f"{t.title} ({t.status.value.lower()})" for t in active))
-            return {"ok": True, "message": self._reply(text, origin)}
+            hub = s.extras.get("hub")
+            phones = hub.connected() if hub is not None else []
+            phone = (f"Your iPhone is connected ({', '.join(d.get('name') or d.get('deviceId', 'device') for d in phones)})."
+                     if phones else "No iPhone is connected right now." if hub is not None else "The iPhone link isn't running.")
+            work = "Nothing is running." if not active else "Running: " + "; ".join(f"{t.title} ({t.status.value.lower()})" for t in active)
+            return {"ok": True, "message": self._reply(f"{phone} {work}", origin)}
         if k == "memory_add":
             try:
                 mem = s.memory.add(intent.args["content"])
@@ -251,6 +260,9 @@ class Assistant:
                 s.character.dispatch(CharacterEvent.TASK_FAILED, reason=str(exc))
                 return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
             else:
+                if native.tool_calls and not tool_is_relevant(native.tool_calls[0].name, intent.text):
+                    log.info("model picked %s for an unrelated request; answering without tools", native.tool_calls[0].name)
+                    return await self._plain_chat(memories, history, origin)
                 if native.tool_calls:
                     call = native.tool_calls[0]
                     if call.name not in tools:
@@ -278,6 +290,21 @@ class Assistant:
             return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
         return await self._proposal_reply(reply, tools, intent, origin)
 
+    async def _plain_chat(self, memories: list[str], history: list[dict[str, str]], origin: Origin) -> dict[str, Any]:
+        """Conversational answer with no tools offered (the model cannot trigger actions here)."""
+        try:
+            text = await self.s.llm.chat([{"role": "system", "content": system_prompt(memories)}] + history, max_tokens=400)
+        except LLMUnavailable as exc:
+            return self._llm_unavailable(exc, origin)
+        except LLMError as exc:
+            self.s.character.dispatch(CharacterEvent.TASK_FAILED, reason=str(exc))
+            return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
+        text = text.strip()
+        if claims_unperformed_action(text):
+            text += "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+        self.s.character.dispatch(CharacterEvent.RESET)
+        return {"ok": True, "message": self._reply(text or "Could you say that another way?", origin)}
+
     def _llm_unavailable(self, exc: Exception, origin: Origin) -> dict[str, Any]:
         self.s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="local model unavailable")
         return {"ok": False, "message": self._reply(
@@ -296,6 +323,9 @@ class Assistant:
     async def _proposal_reply(self, reply: str, tools: dict[str, Any], intent: Intent, origin: Origin) -> dict[str, Any]:
         s = self.s
         proposal = parse_model_proposal(reply, tools)
+        if proposal.kind == "tool" and not tool_is_relevant(proposal.tool or "", intent.text):
+            log.info("model proposed %s for an unrelated request; answering without tools", proposal.tool)
+            return await self._plain_chat(s.memory.contents(), s.conversation.model_messages(12), origin)
         if proposal.kind == "tool":
             proposal.text = intent.text
             self._reply(f"I'll use {proposal.tool} for that.", Origin(origin.source, False), role="assistant")

@@ -155,6 +155,7 @@ class TaskManager:
                     results.append(result)
                     if not result.ok:
                         step.status = "failed"
+                        task.error_kind = str(result.data.get("errorKind") or ("invalid_arguments" if result.needs_clarification else "execution_failed"))
                         if result.needs_clarification:
                             self._finish(task, TaskStatus.FAILED, result, error=result.needs_clarification,
                                          char=CharacterEvent.CLARIFICATION_NEEDED)
@@ -177,6 +178,7 @@ class TaskManager:
         except EmergencyStopEngaged as exc:
             self._finish(task, TaskStatus.CANCELLED, None, error=str(exc))
         except (ToolError, ArgumentError, PermissionError) as exc:
+            task.error_kind = classify_error(exc)
             self._finish(task, TaskStatus.FAILED, None, error=str(exc))
         except Exception as exc:  # pragma: no cover - defensive
             log.exception("task %s crashed", task.id)
@@ -277,8 +279,13 @@ class TaskManager:
         self._event(task, "finished", {"status": status.value, "verified": task.verified, "error": task.error})
         summary = (result.summary if result else "") or (task.error or status.value.lower())
         artifacts = (result.artifacts if result else []) or []
+        if status is TaskStatus.COMPLETED:
+            task.error_kind = "success"
+        elif status is TaskStatus.CANCELLED and not task.error_kind:
+            task.error_kind = "cancelled"
         self.s.bus.publish("task.result", {"taskId": task.id, "status": status.value, "summary": summary,
-                                           "verified": task.verified, "artifacts": artifacts, "title": task.title})
+                                           "verified": task.verified, "artifacts": artifacts, "title": task.title,
+                                           "errorKind": task.error_kind})
         self._emit(task)
         if char is not None:
             self.character(char, reason=summary, task_id=task.id)
@@ -359,3 +366,21 @@ def _merge(results: list[ToolResult]) -> ToolResult:
 
 def _short(args: dict[str, Any]) -> dict[str, Any]:
     return {k: (v[:200] if isinstance(v, str) else v) for k, v in args.items()}
+
+
+def classify_error(exc: BaseException) -> str:
+    """Typed failure reason for a tool exception (shown to the user and to the model)."""
+    from ..tools.base import ToolUnavailable
+
+    msg = str(exc).lower()
+    if isinstance(exc, ArgumentError):
+        return "invalid_arguments"
+    if isinstance(exc, asyncio.TimeoutError) or "timed out" in msg or "timeout" in msg:
+        return "timeout"
+    if isinstance(exc, PermissionError) or "permission" in msg or "not permitted" in msg:
+        return "permission_denied"
+    if isinstance(exc, ToolUnavailable):
+        return "unsupported"
+    if any(k in msg for k in ("not found", "isn't running", "no such", "does not exist", "couldn't find", "unknown tool")):
+        return "not_found"
+    return "execution_failed"
