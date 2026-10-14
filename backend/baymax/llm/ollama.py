@@ -92,6 +92,41 @@ class OllamaClient:
             chunks.append(piece)
         return "".join(chunks)
 
+    async def chat_tools(self, messages: list[dict[str, str]], tools: list[dict[str, Any]], *,
+                         max_tokens: int | None = None) -> ToolChatReply:
+        """One non-streaming request with Ollama's native tool calling. The caller validates and executes calls."""
+        body: dict[str, Any] = {
+            "model": self.config.model, "messages": _bound_messages(messages, self.config.num_ctx), "stream": False,
+            "keep_alive": self.config.keep_alive, "tools": tools,
+            "options": {"num_ctx": self.config.num_ctx, "num_predict": max_tokens or self.config.max_output_tokens,
+                        "temperature": 0.1},
+        }
+        async with self._lock:
+            try:
+                http = await self._http()
+                async with http.post(f"{self.config.base_url}/api/chat", json=body, timeout=self._timeout()) as resp:
+                    text = await resp.text()
+                    if resp.status == 404:
+                        raise LLMUnavailable(f"model '{self.config.model}' not found in Ollama; run: ollama pull {self.config.model}")
+                    if resp.status == 400 and "does not support tools" in text:
+                        raise ToolsUnsupported(f"model '{self.config.model}' does not support tool calling")
+                    if resp.status != 200:
+                        raise LLMError(f"Ollama HTTP {resp.status}: {text[:300]}")
+                    try:
+                        data = json.loads(text)
+                    except ValueError:
+                        raise LLMError("Ollama returned a malformed response") from None
+                    if "error" in data:
+                        raise LLMError(str(data["error"])[:300])
+                self.failures = 0
+                return parse_tool_reply(data)
+            except (aiohttp.ClientConnectorError, ConnectionRefusedError, OSError) as exc:
+                self.failures += 1
+                raise LLMUnavailable(f"Ollama is not reachable at {self.config.base_url}: {exc.__class__.__name__}") from None
+            except asyncio.TimeoutError:
+                self.failures += 1
+                raise LLMError(f"the local model did not answer within {self.config.request_timeout_s:.0f}s") from None
+
     async def stream_chat(self, messages: list[dict[str, str]], *, json_mode: bool = False, max_tokens: int | None = None,
                           temperature: float | None = None) -> AsyncIterator[str]:
         body: dict[str, Any] = {
@@ -138,6 +173,67 @@ class OllamaClient:
             except asyncio.TimeoutError:
                 self.failures += 1
                 raise LLMError(f"the local model did not answer within {self.config.request_timeout_s:.0f}s") from None
+
+
+class ToolsUnsupported(LLMError):
+    """The configured model does not support Ollama's native tool calling."""
+
+
+@dataclass
+class ToolCall:
+    name: str  # registry name (dots restored)
+    arguments: dict[str, Any]
+
+
+@dataclass
+class ToolChatReply:
+    content: str
+    tool_calls: list[ToolCall]
+
+
+def wire_name(name: str) -> str:
+    """Registry names use dots (apps.open); function names on the wire must match [A-Za-z0-9_-]+."""
+    return name.replace(".", "__")
+
+
+def registry_name(name: str) -> str:
+    return name.replace("__", ".")
+
+
+_JSON_TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean", "list": "array", "dict": "object"}
+
+
+def tool_spec(schema: dict[str, Any]) -> dict[str, Any]:
+    """Convert a registry tool schema (Tool.schema()) to an Ollama/OpenAI function definition."""
+    props: dict[str, Any] = {}
+    required: list[str] = []
+    for arg, a in schema["args"].items():
+        prop: dict[str, Any] = {"type": _JSON_TYPES.get(a["type"], "string")}
+        if a.get("description"):
+            prop["description"] = a["description"]
+        if a.get("choices"):
+            prop["enum"] = a["choices"]
+        props[arg] = prop
+        if a.get("required"):
+            required.append(arg)
+    return {"type": "function", "function": {"name": wire_name(schema["name"]), "description": schema["description"],
+                                             "parameters": {"type": "object", "properties": props, "required": required}}}
+
+
+def parse_tool_reply(data: dict[str, Any]) -> ToolChatReply:
+    msg = data.get("message") or {}
+    calls: list[ToolCall] = []
+    for c in msg.get("tool_calls") or []:
+        fn = (c or {}).get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):  # some models return a JSON string
+            try:
+                args = json.loads(args)
+            except ValueError:
+                args = {}
+        if isinstance(fn.get("name"), str):
+            calls.append(ToolCall(registry_name(fn["name"]), args if isinstance(args, dict) else {}))
+    return ToolChatReply(str(msg.get("content") or ""), calls)
 
 
 def _model_installed(model: str, names: list[str]) -> bool:

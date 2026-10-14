@@ -39,6 +39,26 @@ def tool_proposal_prompt(tools: list[dict[str, Any]]) -> str:
     )
 
 
+NATIVE_TOOLS_HINT = (
+    "When the user asks you to do something on the computer (open an app or project, search code or the web, "
+    "create files, models or diagrams, look at something on screen), call exactly one of the provided tools. "
+    "Answer in plain text only for questions and conversation. Never say an action happened; the system reports results."
+)
+
+_CLAIM = None
+
+
+def claims_unperformed_action(text: str) -> bool:
+    """True if a plain-text reply claims to have done something (no tool ran, so the claim would be false)."""
+    import re
+
+    global _CLAIM
+    if _CLAIM is None:
+        _CLAIM = re.compile(r"\bI(?:'ve| have|'ll go ahead and| just)?\s+(?:opened|launched|started|created|saved|written|wrote|deleted|"
+                            r"sent|clicked|searched|downloaded|installed|ran|executed|moved|renamed|closed)\b", re.I)
+    return bool(_CLAIM.search(text))
+
+
 def untrusted(text: str, limit: int = 6000) -> str:
     clean = text.replace("<untrusted>", "").replace("</untrusted>", "")[:limit]
     return f"<untrusted>\n{clean}\n</untrusted>"

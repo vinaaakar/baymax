@@ -36,6 +36,8 @@ class LLMConfig:
     request_timeout_s: float = 120.0
     connect_timeout_s: float = 3.0
     keep_alive: str = "10m"
+    # Use Ollama's native tool calling (llama3.2 supports it); falls back to JSON proposals automatically.
+    native_tools: bool = True
 
 
 @dataclass

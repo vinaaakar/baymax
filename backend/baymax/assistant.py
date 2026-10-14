@@ -16,7 +16,8 @@ from typing import Any
 from .character.state_machine import CharacterEvent, CharacterState
 from .intent.router import Intent, IntentRouter, RouteContext, parse_model_proposal
 from .llm.ollama import LLMError, LLMUnavailable
-from .llm.prompts import system_prompt, tool_proposal_prompt
+from .llm.ollama import ToolsUnsupported, tool_spec
+from .llm.prompts import NATIVE_TOOLS_HINT, claims_unperformed_action, system_prompt, tool_proposal_prompt
 from .memory.store import MemoryRejected
 from .services import Services
 from .tasks.manager import TaskRejected
@@ -39,6 +40,7 @@ class Origin:
 class Assistant:
     def __init__(self, services: Services) -> None:
         self.s = services
+        self._native_tools_unsupported = False
         self.router = IntentRouter(services.classifier)
         self.active_model: str | None = None
         self.sleeping = False
@@ -237,18 +239,62 @@ class Assistant:
         history = s.conversation.model_messages(12)
         memories = s.memory.contents()
         tools = {t.name: t for t in s.tools.model_tools()}
+        if s.settings.llm.native_tools and not self._native_tools_unsupported:
+            try:
+                native = await s.llm.chat_tools([{"role": "system", "content": system_prompt(memories) + "\n" + NATIVE_TOOLS_HINT}] + history,
+                                                [tool_spec(t.schema()) for t in tools.values()])
+            except ToolsUnsupported:
+                self._native_tools_unsupported = True  # e.g. a model without tool support: use JSON proposals instead
+            except LLMUnavailable as exc:
+                return self._llm_unavailable(exc, origin)
+            except LLMError as exc:
+                s.character.dispatch(CharacterEvent.TASK_FAILED, reason=str(exc))
+                return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
+            else:
+                if native.tool_calls:
+                    call = native.tool_calls[0]
+                    if call.name not in tools:
+                        s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="unknown tool requested")
+                        return {"ok": True, "message": self._reply(
+                            f"The model asked for a tool I don't have ({call.name[:60]}), so nothing was done. Could you rephrase?", origin)}
+                    try:
+                        tools[call.name].validate(call.arguments)
+                    except Exception as exc:
+                        s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="incomplete tool arguments")
+                        return {"ok": True, "message": self._reply(
+                            f"I wanted to use {call.name} but the details were incomplete ({exc}). Could you say it another way?", origin)}
+                    proposal = Intent("tool", call.name, call.arguments, call.name, source="model", text=intent.text)
+                    self._reply(f"I'll use {call.name} for that.", Origin(origin.source, False), role="assistant")
+                    return await self._start_tool(proposal, origin)
+                return await self._model_text_reply(native.content, tools, intent, origin)
         messages = [{"role": "system", "content": system_prompt(memories) + "\n" + tool_proposal_prompt([t.schema() for t in tools.values()])}]
         messages += history
         try:
             reply = await s.llm.chat(messages, json_mode=True)
         except LLMUnavailable as exc:
-            s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="local model unavailable")
-            return {"ok": False, "message": self._reply(
-                f"I can't reach my local language model right now ({exc}). Commands still work — for example 'open Safari', "
-                "'make a red car', 'simulate a pendulum'. I won't use a cloud service instead.", origin)}
+            return self._llm_unavailable(exc, origin)
         except LLMError as exc:
             s.character.dispatch(CharacterEvent.TASK_FAILED, reason=str(exc))
             return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
+        return await self._proposal_reply(reply, tools, intent, origin)
+
+    def _llm_unavailable(self, exc: Exception, origin: Origin) -> dict[str, Any]:
+        self.s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="local model unavailable")
+        return {"ok": False, "message": self._reply(
+            f"I can't reach my local language model right now ({exc}). Commands still work — for example 'open Safari', "
+            "'make a red car', 'simulate a pendulum'. I won't use a cloud service instead.", origin)}
+
+    async def _model_text_reply(self, content: str, tools: dict[str, Any], intent: Intent, origin: Origin) -> dict[str, Any]:
+        text = content.strip()
+        if text.startswith("{"):  # some small models answer with a JSON proposal even in native mode
+            return await self._proposal_reply(text, tools, intent, origin)
+        if claims_unperformed_action(text):
+            text += "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+        self.s.character.dispatch(CharacterEvent.RESET)
+        return {"ok": True, "message": self._reply(text or "I'm not sure how to help with that. Could you say it another way?", origin)}
+
+    async def _proposal_reply(self, reply: str, tools: dict[str, Any], intent: Intent, origin: Origin) -> dict[str, Any]:
+        s = self.s
         proposal = parse_model_proposal(reply, tools)
         if proposal.kind == "tool":
             proposal.text = intent.text
@@ -258,7 +304,10 @@ class Assistant:
             s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="clarification needed")
         else:
             s.character.dispatch(CharacterEvent.RESET)
-        return {"ok": True, "message": self._reply(proposal.reply, origin)}
+        text = proposal.reply
+        if proposal.kind == "chat" and claims_unperformed_action(text):
+            text += "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+        return {"ok": True, "message": self._reply(text, origin)}
 
     # ---------------------------------------------------------- task results
     async def _watch_results(self) -> None:

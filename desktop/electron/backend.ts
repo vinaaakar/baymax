@@ -7,6 +7,13 @@ import path from "path";
 
 export interface BackendHandle { apiBase: string; token: string; child: ChildProcess | null; stop: () => void }
 
+/** GUI-launched apps get launchd's minimal PATH; add Homebrew so whisper-cli/ollama/git are found. */
+export function withHomebrewPath(current: string | undefined): string {
+  const parts = (current ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(":").filter(Boolean);
+  for (const d of ["/opt/homebrew/bin", "/usr/local/bin"]) if (!parts.includes(d)) parts.push(d);
+  return parts.join(":");
+}
+
 const PORT = Number(process.env.BAYMAX_LOCAL_PORT ?? 8765);
 const DATA_DIR = process.env.BAYMAX_DATA_DIR ?? path.join(os.homedir(), ".baymax");
 
@@ -59,7 +66,7 @@ export async function startBackend(resourcesPath: string, appPath: string, log: 
     if (!dir) throw new Error("BAYMAX backend sources not found. Run the backend manually: cd backend && python3 -m baymax serve");
     const py = pythonFor(dir);
     log(`starting backend: ${py} -m baymax serve (cwd ${dir})`);
-    child = spawn(py, ["-m", "baymax", "serve"], { cwd: dir, env: { ...process.env, PYTHONUNBUFFERED: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    child = spawn(py, ["-m", "baymax", "serve"], { cwd: dir, env: { ...process.env, PATH: withHomebrewPath(process.env.PATH), PYTHONUNBUFFERED: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout?.on("data", (d) => log(String(d).trim()));
     child.stderr?.on("data", (d) => log(String(d).trim()));
     child.on("exit", (code) => log(`backend exited with code ${code}`));

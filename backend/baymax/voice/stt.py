@@ -7,13 +7,13 @@ recognizer reports itself unavailable with installation instructions.
 from __future__ import annotations
 
 import re
-import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import VoiceConfig
 from ..hostos.process import ProcessManager
+from ..hostos.tools import find_tool, find_whisper_model
 from .audio import PCM, AudioError, detect_speech, read_wav, resample, trim, write_wav
 
 
@@ -38,27 +38,29 @@ class WhisperCppRecognizer:
         self.processes = processes
 
     def binary(self) -> str | None:
-        for name in (self.config.whisper_binary, "whisper-cli", "whisper-cpp"):
-            found = shutil.which(name) if name else None
-            if found:
-                return found
-        return None
+        # Homebrew's whisper-cpp installs `whisper-cli` (older formulae: `whisper-cpp`); /opt/homebrew/bin is searched
+        # explicitly because GUI-launched processes do not have it on PATH.
+        return find_tool(self.config.whisper_binary, "whisper-cli", "whisper-cpp")
 
     def model_path(self) -> Path:
-        return Path(self.config.whisper_model).expanduser()
+        found, _ = find_whisper_model(self.config.whisper_model)
+        return found or Path(self.config.whisper_model).expanduser()
 
     def status(self) -> dict:
         if self.config.stt_engine == "none":
             return {"available": False, "engine": "none", "message": "speech recognition disabled in settings"}
         binary = self.binary()
-        model = self.model_path()
+        model, notes = find_whisper_model(self.config.whisper_model)
         if not binary:
-            return {"available": False, "engine": "whisper.cpp",
-                    "message": "whisper.cpp not found. Install with: brew install whisper-cpp"}
-        if not model.exists():
-            return {"available": False, "engine": "whisper.cpp",
-                    "message": f"whisper model missing at {model}. See docs/SETUP.md (download ggml-base.en.bin)."}
-        return {"available": True, "engine": "whisper.cpp", "binary": binary, "model": str(model), "message": "ready"}
+            return {"available": False, "engine": "whisper.cpp", "binary": None, "model": str(model) if model else None,
+                    "message": "whisper-cli not found (searched PATH, /opt/homebrew/bin, /usr/local/bin). Install with: brew install whisper-cpp"}
+        if model is None:
+            return {"available": False, "engine": "whisper.cpp", "binary": binary, "model": None, "notes": notes,
+                    "message": "whisper-cli is installed but no speech model was found — Homebrew does not download one. "
+                               "Run: mkdir -p ~/.baymax/models && curl -L --fail -o ~/.baymax/models/ggml-base.en.bin "
+                               "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+                               + (f" ({notes[0]})" if notes else "")}
+        return {"available": True, "engine": "whisper.cpp", "binary": binary, "model": str(model), "notes": notes, "message": "ready"}
 
     async def transcribe(self, wav_bytes: bytes) -> Transcript:
         st = self.status()

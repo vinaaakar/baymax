@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import platform
-import shutil
 import sys
 from typing import Any
 
@@ -11,6 +10,7 @@ from . import __version__
 from .config import Settings
 from .hostos.desktop import make_desktop
 from .hostos.process import ProcessManager
+from .hostos.tools import find_tool
 from .images.providers import ImageService
 from .llm.ollama import OllamaClient
 from .voice.stt import WhisperCppRecognizer
@@ -33,7 +33,7 @@ async def run_doctor(settings: Settings) -> dict[str, Any]:
         "tts": Speaker(settings.voice).status(),
         "images": await ImageService(settings.images).status(),
         "desktop": make_desktop(pm).capabilities(),
-        "tools": {name: bool(shutil.which(name)) for name in ("ollama", "whisper-cli", "say", "osascript", "ffmpeg", "git", "node", "npm", "xcodebuild", "xcodegen")},
+        "tools": {name: bool(find_tool(name)) for name in ("ollama", "whisper-cli", "say", "osascript", "ffmpeg", "git", "node", "npm", "xcodebuild", "xcodegen")},
         "research": {"localOnly": settings.research.local_only, "provider": settings.research.search_provider},
         "dataDir": str(settings.data_dir),
         "workspace": str(settings.workspace_dir),
