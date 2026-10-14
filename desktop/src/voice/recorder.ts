@@ -57,6 +57,14 @@ export class PushToTalkRecorder {
     return new Promise((res) => (this.resolve = res));
   }
 
+  /** Sleep / emergency stop: release the microphone and discard the audio (nothing is transcribed). */
+  cancel(): void {
+    if (!this.active) return;
+    this.chunks = [];
+    this.vad = new Vad(); // heardSpeech=false -> the caller treats it as "no speech"
+    this.stop();
+  }
+
   stop(): void {
     if (!this.active) return;
     this.active = false;

@@ -195,6 +195,12 @@ final class AppModel: ObservableObject {
         case "sleep.state":
             sleeping = env.bool("sleeping") ?? false
             gaze.reset() // asleep: no gaze following; on wake start fresh
+            if sleeping {
+                // Sleep may come from the Mac: stop listening and speaking here too. Wake does not restart the mic;
+                // listening only ever starts from an explicit push-to-talk.
+                speechIn.cancel()
+                speechOut.stop()
+            }
         case "cursor.update":
             // Real Mac cursor (normalised to the primary display) -> gaze direction.
             guard !sleeping else { return }
@@ -215,6 +221,7 @@ final class AppModel: ObservableObject {
             lastResearch = (env.string("query") ?? "", sources.map { (title: $0.0, url: $0.1) })
         case "estop.state":
             estopEngaged = env.bool("engaged") ?? false
+            if estopEngaged { speechIn.cancel(); speechOut.stop() }
         case "connection.status":
             llmReady = env.string("llm") == "ready"
         case "assistant.message":

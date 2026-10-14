@@ -47,6 +47,12 @@ export function useVoice() {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rec = useRef<PushToTalkRecorder | null>(null);
+  const sleeping = useStore((s) => s.sleeping);
+  const estop = useStore((s) => s.estop.engaged);
+  // Sleep and Emergency Stop end any capture in progress: the mic is released and the audio discarded.
+  useEffect(() => {
+    if ((sleeping || estop) && rec.current?.active) rec.current.cancel();
+  }, [sleeping, estop]);
 
   const toggle = async () => {
     const client = currentClient();
