@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import hmac
 import json
 import logging
@@ -57,23 +58,35 @@ def load_or_create_local_token(data_dir: Path) -> str:
     return token
 
 
+def _usable_lan_ip(ip: str) -> bool:
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return a.version == 4 and not (a.is_loopback or a.is_link_local or a.is_unspecified or a.is_multicast)
+
+
 def lan_addresses() -> list[str]:
-    addrs: set[str] = set()
+    """Addresses the iPhone can reach, best first: the interface that carries the default route (normally
+    Wi-Fi) comes first, because the phone connects to `host` (the first entry)."""
+    ordered: list[str] = []
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("192.0.2.1", 9))  # TEST-NET address; no packets are sent for UDP connect
-        addrs.add(s.getsockname()[0])
+        primary = s.getsockname()[0]
         s.close()
+        if _usable_lan_ip(primary):
+            ordered.append(primary)
     except OSError:
         pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = info[4][0]
-            if not ip.startswith("127."):
-                addrs.add(ip)
+            if _usable_lan_ip(ip) and ip not in ordered:
+                ordered.append(ip)
     except OSError:
         pass
-    return sorted(addrs)
+    return ordered
 
 
 class BaymaxServer:
@@ -177,7 +190,9 @@ class BaymaxServer:
         await self.local_runner.setup()
         await web.TCPSite(self.local_runner, net.local_host, net.local_port).start()
         log.info("local API listening on http://%s:%d", net.local_host, net.local_port)
-        if lan if lan is not None else net.lan_enabled:
+        has_paired = any(not d.revoked for d in self.s.devices.list())
+        if lan if lan is not None else (net.lan_enabled or has_paired):
+            # A paired iPhone must be able to reconnect after the Mac app restarts, without pairing again.
             await self.start_lan()
         self._status_task = asyncio.create_task(self._poll_status(), name="status-poll")
 
