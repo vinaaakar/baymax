@@ -141,6 +141,34 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Hold-to-talk on the face: listening starts when the hold begins and the words are sent on release.
+    private var holdReleased = false
+
+    func beginHoldToTalk() {
+        guard !sleeping, display.connected, !speechIn.isListening else { return }
+        holdReleased = false
+        speechOut.stop()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task { [weak self] in
+            guard let self else { return }
+            self.display.localListening = true
+            self.connection.send("voice.state", ["state": "listening"])
+            self.announce()
+            await self.speechIn.start(holdToTalk: true) { [weak self] text in
+                self?.send(text: text, fromVoice: true)
+            }
+            if self.holdReleased { self.speechIn.stop() }  // released while permissions/audio were starting
+            if !self.speechIn.isListening { self.micEnded() }
+        }
+    }
+
+    func endHoldToTalk() {
+        holdReleased = true
+        guard speechIn.isListening else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        speechIn.stop()
+    }
+
     /// Called when listening ends (silence, stop, or failure).
     func micEnded() {
         display.localListening = false

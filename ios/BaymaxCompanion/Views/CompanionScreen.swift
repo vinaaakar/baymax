@@ -3,8 +3,8 @@ import SwiftUI
 
 /// The main iPhone screen — a desk companion, landscape first.
 /// Landscape (default): the face is a dome rising from the bottom edge, like a desk device, with only settings and keyboard
-/// icons (top-right); long-press the
-/// face for conversation, sleep, settings and Emergency Stop. Portrait (top to bottom): compact status +
+/// icons (top-right). Hold the face to talk, release to send; ⚙︎ opens conversation, sleep, settings and Emergency Stop.
+/// Portrait (top to bottom): compact status +
 /// settings, the face (its own region), short status messages, and one compact row of controls. In landscape with the conversation open, the face
 /// shrinks to the left and the conversation panel sits beside it. Rules live in BaymaxKit.CompanionLayout.
 struct CompanionScreen: View {
@@ -15,6 +15,8 @@ struct CompanionScreen: View {
     @State private var typing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @GestureState private var holdingFace = false
+    private var holdingToTalk: Bool { holdingFace && model.speechIn.isListening }
     @AppStorage("baymax.debugCursor") private var debugCursor = false
 
     var body: some View {
@@ -62,15 +64,16 @@ struct CompanionScreen: View {
 
     /// Landscape face mode, like the reference desk device: the face as a dome rising from the bottom edge, and two
     /// small icons top-right (settings, keyboard).
-    /// Conversation, sleep, settings/pairing and Emergency Stop are in the long-press menu on the face; alerts
+    /// Hold the face to talk (release to send). Conversation, sleep, settings/pairing and Emergency Stop are in the ⚙︎ menu; alerts
     /// (E-stop, approvals, errors, connection problems) appear only while they need you.
     private func immersiveFace(_ layout: CompanionLayout) -> some View {
         ZStack(alignment: .topTrailing) {
             face.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
-                .contextMenu { faceMenu }
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 8) {
-                    iconButton("gearshape", label: "Settings and pairing") { showSettings = true }
+                    Menu { faceMenu } label: { iconLabel("gearshape") }
+                        .foregroundStyle(Theme.white.opacity(0.6))
+                        .accessibilityLabel("Settings, conversation, sleep and emergency stop")
                     iconButton("keyboard", label: typing ? "Close keyboard input" : "Type a message") {
                         typing.toggle()
                         focused = typing
@@ -106,13 +109,15 @@ struct CompanionScreen: View {
 
     /// Small, quiet icon in the top-right corner (like the reference device).
     private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15)).frame(width: 40, height: 34)
-                .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.10)))
-        }
-        .foregroundStyle(Theme.white.opacity(0.6))
-        .accessibilityLabel(label)
+        Button(action: action) { iconLabel(symbol) }
+            .foregroundStyle(Theme.white.opacity(0.6))
+            .accessibilityLabel(label)
+    }
+
+    private func iconLabel(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 15)).frame(width: 40, height: 34)
+            .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.10)))
     }
 
     private func sendDraft() {
@@ -156,11 +161,26 @@ struct CompanionScreen: View {
                       taskKind: model.activeTask?.kind, progress: model.activeTask?.progress)
             .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
             .saturation(model.state == .disconnected ? 0.5 : 1)
+            // While you hold to talk, BAYMAX grows a little and glows red with your voice (see CharacterView).
+            .scaleEffect(holdingToTalk ? 1.06 + model.speechIn.level * 0.04 : 1, anchor: .bottom)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: holdingToTalk)
+            .animation(.easeOut(duration: 0.12), value: model.speechIn.level)
             .contentShape(Rectangle())
             .onTapGesture { if model.sleeping { model.setSleeping(false) } }
+            // Hold the face to talk; release to send. A short hold (0.2 s) so a quick tap still wakes BAYMAX.
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.2)
+                    .sequenced(before: DragGesture(minimumDistance: 0))
+                    .updating($holdingFace) { value, holding, _ in
+                        if case .second(true, _) = value { holding = true }
+                    }
+            )
+            .onChange(of: holdingFace) { _, holding in
+                if holding { model.beginHoldToTalk() } else { model.endHoldToTalk() }
+            }
             .accessibilityElement()
             .accessibilityLabel("BAYMAX, \(model.state.accessibilityDescription)")
-            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "Long-press for conversation, sleep, settings and emergency stop")
+            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "Double-tap and hold to talk; release to send")
             .accessibilityAddTraits(.isImage)
     }
 

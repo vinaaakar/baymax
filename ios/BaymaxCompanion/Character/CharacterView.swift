@@ -83,6 +83,12 @@ private struct FacePainter {
 
         switch expression {
         case .listening:
+            // Hold-to-talk: a soft red halo that breathes and swells with the real microphone level.
+            let pulse = 0.5 + 0.5 * sin(t * 4)
+            ctx.drawLayer { layer in
+                layer.addFilter(.blur(radius: 16 + level * 24))
+                layer.fill(ring(1.03 + level * 0.08 + pulse * 0.02), with: .color(Theme.glow.opacity(0.5 + level * 0.45)))
+            }
             ctx.stroke(ring(1.06 + level * 0.06), with: .color(Theme.glow.opacity(0.35 + level * 0.6)), lineWidth: 2 + level * 4)
         case .error:
             ctx.stroke(ring(1.06), with: .color(Color(hex: 0xFF5D6C).opacity(0.4 + 0.4 * abs(sin(t * 3)))), lineWidth: 3)
@@ -104,6 +110,14 @@ private struct FacePainter {
                 Gradient(stops: [.init(color: .white, location: 0), .init(color: hex(FaceSpec.skin), location: 0.45),
                                  .init(color: hex(FaceSpec.skinShade), location: 0.85), .init(color: hex(FaceSpec.rimShade), location: 1)]),
                 center: hl, startRadius: 0, endRadius: 0.85 * max(headRect.width, headRect.height)))
+        }
+
+        if expression == .listening {
+            // The face itself blushes red toward its edge while listening, stronger as you speak.
+            let r = max(headRect.width, headRect.height) / 2
+            head.fill(Path(ellipseIn: headRect), with: .radialGradient(
+                Gradient(colors: [Theme.glow.opacity(0), Theme.glow.opacity(0.18 + level * 0.4)]),
+                center: .zero, startRadius: r * 0.45, endRadius: r))
         }
 
         // Eyes joined by a thin line (head-local coordinates, so they roll with the head).

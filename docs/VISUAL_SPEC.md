@@ -43,8 +43,11 @@ draws SwiftUI `Canvas` paths (`ios/BaymaxCompanion/Character/CharacterView.swift
   At the bottom: mic, text field and Send, then Sleep, Conversation and STOP. Right-click and the menu-bar tray offer the
   same actions; Emergency Stop is also the global shortcut ⌘⇧. (Cmd+Shift+period).
 - **iPhone, landscape (desk mode):** like the reference device, the head is a dome rising from the bottom edge. The eyes sit in
-  the dome and their travel follows its curve. Only ⚙︎ (Settings & pairing) and ⌨︎ are shown, top-right. Long-press the face
-  for Conversation, Current task, Sleep/Wake, Settings and Emergency Stop.
+  the dome and their travel follows its curve. Only ⚙︎ and ⌨︎ are shown, top-right. ⚙︎ opens a menu: Conversation, Current task,
+  Sleep/Wake, Settings & pairing, Emergency Stop.
+  - **Hold to talk (iPhone only):** press and hold the face (0.2 s) to start the microphone; release to send what you said.
+    While you hold, the dome grows slightly and glows red, with a halo that swells with the real microphone level.
+    A light haptic marks start and release; silence doesn't end a hold, but recording stops after 60 s.
 - **Alerts on both:** Emergency Stop engaged, approvals and errors appear only while they need you.
 - **Fit:** in portrait the whole head is shown, filling 70 % of the width or 56 % of the height (whichever is smaller); it is never cropped.
   With the conversation open in landscape, the face moves to a narrower region beside it.

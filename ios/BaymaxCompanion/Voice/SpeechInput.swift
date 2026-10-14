@@ -20,6 +20,9 @@ final class SpeechInput: ObservableObject {
     private var silenceTimer: Timer?
     private var lastVoice = Date()
     private var heardVoice = false
+    /// Hold-to-talk: the user's finger decides when to stop (release), so silence doesn't end it; a 60 s cap still applies.
+    private var holdToTalk = false
+    private var startedAt = Date()
     /// Deactivating the audio session can block for a moment, so it runs off the main thread (Xcode's "hang risk").
     nonisolated private static let sessionQueue = DispatchQueue(label: "baymax.audio-session")
 
@@ -36,7 +39,8 @@ final class SpeechInput: ObservableObject {
         return nil
     }
 
-    func start(onFinal: @escaping (String) -> Void) async {
+    func start(holdToTalk hold: Bool = false, onFinal: @escaping (String) -> Void) async {
+        holdToTalk = hold
         if let problem = await requestPermissions() {
             state = .unavailable(problem)
             return
@@ -80,6 +84,7 @@ final class SpeechInput: ObservableObject {
             }
             state = .listening
             lastVoice = Date()
+            startedAt = Date()
             silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.checkSilence() }
             }
@@ -113,6 +118,10 @@ final class SpeechInput: ObservableObject {
 
     private func checkSilence() {
         guard state == .listening else { return }
+        if holdToTalk {
+            if Date().timeIntervalSince(startedAt) > 60 { stop() }
+            return
+        }
         let quiet = Date().timeIntervalSince(lastVoice)
         if (heardVoice && quiet > 1.3) || (!heardVoice && quiet > 7) { stop() }
     }
