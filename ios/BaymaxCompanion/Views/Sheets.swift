@@ -89,6 +89,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
     @State private var error: String?
+    @AppStorage("baymax.debugCursor") private var debugCursor = false
     @State private var host = ""
     @State private var port = "8766"
     @State private var fingerprint = ""
@@ -126,6 +127,9 @@ struct SettingsView: View {
                         Text("Right of the screen").tag(Placement.right)
                     }
                     Text("BAYMAX turns its head and eyes toward the real Mac cursor from this position.").font(.footnote).foregroundStyle(Theme.muted)
+                    Toggle("Cursor debug overlay", isOn: $debugCursor)
+                    Text("Shows the raw coordinates received from the Mac, the normalised values, the gaze target and when the last event arrived.")
+                        .font(.footnote).foregroundStyle(Theme.muted)
                 }
                 Section("Voice") {
                     Toggle("Speak replies to voice requests", isOn: $model.speakReplies)

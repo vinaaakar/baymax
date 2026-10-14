@@ -15,7 +15,7 @@ enum Theme {
         ZStack {
             LinearGradient(colors: [Color(hex: 0x1F060C), background, shadow], startPoint: .top, endPoint: .bottom)
             RadialGradient(colors: [Color(hex: 0x3A0A14), Color(hex: 0x24070D).opacity(0.6), .clear], center: .top, startRadius: 0, endRadius: 520)
-            RadialGradient(colors: [glow.opacity(0.22), crimson.opacity(0.10), .clear], center: UnitPoint(x: 0.5, y: 0.62), startRadius: 10, endRadius: 330)
+            RadialGradient(colors: [glow.opacity(0.22), crimson.opacity(0.10), .clear], center: UnitPoint(x: 0.5, y: 0.36), startRadius: 10, endRadius: 330)
         }
         .ignoresSafeArea()
     }

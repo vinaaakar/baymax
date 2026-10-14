@@ -52,12 +52,12 @@ struct CharacterView: UIViewRepresentable {
         override init() {
             super.init()
             scene.background.contents = UIColor.clear
+            // Bust framing (head + shoulders only), identical to the Mac: BaymaxKit.BustFraming.
             let cam = SCNCamera()
-            cam.fieldOfView = 30
+            cam.projectionDirection = .vertical
             cam.wantsHDR = false
             camera.camera = cam
-            camera.position = SCNVector3(0, 1.25, 6.8)
-            camera.look(at: SCNVector3(0, 1.08, 0))
+            frame(aspect: 0.46)
             scene.rootNode.addChildNode(camera)
 
             let ambient = SCNNode()
@@ -87,16 +87,24 @@ struct CharacterView: UIViewRepresentable {
             rim.position = SCNVector3(0, 2.3, -1.6)
             scene.rootNode.addChildNode(rim)
 
-            let floor = SCNNode(geometry: SCNPlane(width: 4.4, height: 4.4))
-            floor.eulerAngles.x = -.pi / 2
-            let fm = SCNMaterial()
-            fm.lightingModel = .shadowOnly
-            floor.geometry!.materials = [fm]
-            scene.rootNode.addChildNode(floor)
             scene.rootNode.addChildNode(baymax)
         }
 
+        private var framedAspect = 0.0
+
+        /// Re-frames only when the view's shape changes (rotation, split view, first layout).
+        func frame(aspect: Double) {
+            guard abs(aspect - framedAspect) > 0.001 else { return }
+            framedAspect = aspect
+            let f = BustFraming.camera(aspect: aspect)
+            camera.camera?.fieldOfView = CGFloat(f.fovDeg)
+            camera.simdPosition = SIMD3<Float>(0, Float(f.centerY), Float(f.distance))
+            camera.simdOrientation = simd_quatf(angle: 0, axis: [0, 1, 0]) // looks straight ahead (-Z)
+        }
+
         func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+            let vp = renderer.currentViewport // render-thread safe (unlike UIView.bounds)
+            if vp.width > 0, vp.height > 0 { frame(aspect: Double(vp.width / vp.height)) }
             if start == nil { start = time; last = time }
             let dt = time - last
             last = time

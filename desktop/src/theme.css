@@ -28,7 +28,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .stage {
   position: relative; height: 100%; overflow: hidden;
   background:
-    radial-gradient(60% 45% at 50% 62%, rgba(255, 51, 79, 0.22) 0%, rgba(181, 18, 42, 0.10) 40%, transparent 70%),
+    radial-gradient(60% 45% at 50% 36%, rgba(255, 51, 79, 0.22) 0%, rgba(181, 18, 42, 0.10) 40%, transparent 70%),
     radial-gradient(120% 90% at 50% 0%, #3a0a14 0%, #24070d 38%, var(--bg) 70%),
     linear-gradient(180deg, #1f060c 0%, var(--bg) 60%, var(--shadow) 100%);
 }

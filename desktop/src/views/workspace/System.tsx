@@ -129,7 +129,40 @@ export function Devices() {
           {!devices.data?.paired.length && <p className="muted">No devices paired yet.</p>}
         </div>
       </div>
+      <CursorPresenceDebug />
     </>
+  );
+}
+
+/** Live view of the real cursor relay (backend /api/status → cursor): what the paired iPhone is being sent. */
+function CursorPresenceDebug() {
+  const [st, setSt] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    const c = currentClient();
+    if (!c) return;
+    let alive = true;
+    const tick = () => c.get<any>("/api/status").then((d) => alive && (setSt(d.cursor), setErr(null))).catch((e) => alive && setErr(e.message));
+    tick();
+    const t = setInterval(tick, 500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  const last = st?.last;
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <h2 style={{ marginTop: 0 }}>Cursor presence (debug)</h2>
+      {err && <div className="banner" role="alert">{err}</div>}
+      {!st ? <p className="muted">Waiting for status…</p> : (
+        <p className="mono" style={{ lineHeight: 1.7 }}>
+          relay: {st.sleeping ? "paused (sleeping)" : "active"} · received {st.received} · sent to iPhone {st.published} · rejected {st.rejected}<br />
+          last sample: {last ? `display #${last.displayId} ${last.displayWidth}×${last.displayHeight} @${last.scale}x · x ${last.x} y ${last.y} · vx ${last.vx} vy ${last.vy} · seq ${last.seq}` : "none yet (streams only while an iPhone is connected and BAYMAX is awake)"}<br />
+          last event: {st.lastAgeSeconds == null ? "—" : `${st.lastAgeSeconds}s ago`}
+        </p>
+      )}
+    </div>
   );
 }
 

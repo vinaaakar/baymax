@@ -17,7 +17,7 @@ export default function Conversation() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100%" }}>
       <aside className="stage" style={{ borderRight: "1px solid var(--line)" }}>
-        <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} quality="low" framing="portrait" />
+        <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} quality="low" />
       </aside>
       <section style={{ display: "flex", flexDirection: "column", height: "100%", background: "#0d0507" }}>
         <header className="row drag" style={{ padding: "10px 14px", borderBottom: "1px solid var(--line)" }}>

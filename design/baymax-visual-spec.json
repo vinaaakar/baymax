@@ -1,0 +1,218 @@
+{
+  "name": "baymax-visual-spec",
+  "version": 1,
+  "notes": "Single source of truth for the Mac (three.js) and iPhone (SceneKit) companion. Both renderers build the same procedural bust from these numbers and frame it with the same algorithm (desktop/src/shared/framing.ts, ios/BaymaxKit/Sources/BaymaxKit/Framing.swift). Original procedural character inspired by a soft healthcare robot; no third-party assets.",
+  "colors": {
+    "background": "#180509",
+    "accent": "#B5122A",
+    "highlight": "#FF334F",
+    "surface": "#080305",
+    "text": "#F5F5F2",
+    "skin": "#F5F5F2",
+    "face": "#121214",
+    "panel": "#14090C",
+    "muted": "#C9A9AE",
+    "stageTop": "#1F060C",
+    "stageHalo": "#3A0A14",
+    "stageMid": "#24070D",
+    "ok": "#4CC38A",
+    "warn": "#F2B84B",
+    "error": "#FF5D6C"
+  },
+  "stage": {
+    "description": "Deep crimson room: vertical gradient stageTop -> background -> surface, a dark halo from the top, and a soft red glow behind the head.",
+    "glowCenter": {
+      "x": 0.5,
+      "y": 0.36
+    },
+    "glowOpacity": 0.22,
+    "accentOpacity": 0.1
+  },
+  "typography": {
+    "family": "SF Pro (system): -apple-system on the Mac, .system on iOS",
+    "sizes": {
+      "caption": 12,
+      "body": 14,
+      "status": 13,
+      "title": 17
+    },
+    "weights": {
+      "body": 400,
+      "status": 500,
+      "title": 600
+    }
+  },
+  "spacing": {
+    "unit": 4,
+    "gutter": 16,
+    "radius": 14,
+    "controlHeight": 44
+  },
+  "avatar": {
+    "composition": "bust",
+    "rule": "Only the head, neck transition and upper chest/shoulders are modelled and shown. No abdomen, legs, feet or floor exist in the scene.",
+    "units": "1 unit ~ 1 m; +Y up, character faces +Z",
+    "head": {
+      "pivot": [
+        0,
+        1.71,
+        0.03
+      ],
+      "center": [
+        0,
+        0.135,
+        0.04
+      ],
+      "radii": [
+        0.26,
+        0.185,
+        0.22
+      ]
+    },
+    "eyes": {
+      "x": 0.085,
+      "yOffset": 0.012,
+      "radius": 0.03,
+      "lineRadius": 0.0045
+    },
+    "torsoProfile": [
+      [
+        0.0,
+        1.0
+      ],
+      [
+        0.26,
+        1.005
+      ],
+      [
+        0.44,
+        1.03
+      ],
+      [
+        0.56,
+        1.09
+      ],
+      [
+        0.6,
+        1.18
+      ],
+      [
+        0.58,
+        1.3
+      ],
+      [
+        0.5,
+        1.44
+      ],
+      [
+        0.38,
+        1.58
+      ],
+      [
+        0.24,
+        1.69
+      ],
+      [
+        0.12,
+        1.75
+      ],
+      [
+        0.0,
+        1.78
+      ]
+    ],
+    "torsoDepthScale": 0.82,
+    "armPivot": [
+      0.5,
+      1.36,
+      0.0
+    ],
+    "armProfile": [
+      [
+        0.0,
+        -0.36
+      ],
+      [
+        0.1,
+        -0.345
+      ],
+      [
+        0.135,
+        -0.29
+      ],
+      [
+        0.15,
+        -0.18
+      ],
+      [
+        0.155,
+        -0.06
+      ],
+      [
+        0.12,
+        0.03
+      ],
+      [
+        0.0,
+        0.06
+      ]
+    ],
+    "armDepthScale": 0.92
+  },
+  "framing": {
+    "description": "Vertical field of view is fixed. halfV = max(minHalfHeight, minHalfWidth / aspect). The bust centre sits at anchorFromTop of the frame, but the frame top never cuts the head (headTop + topMargin; the margin leaves room for the status pills). The camera looks straight ahead (no pitch).",
+    "fovDeg": 28,
+    "headTop": 2.03,
+    "bustBottom": 1.0,
+    "minHalfWidth": 0.5,
+    "minHalfHeight": 0.6,
+    "topMargin": 0.26,
+    "anchorFromTop": 0.4,
+    "maxHalfHeight": 1.0
+  },
+  "states": {
+    "IDLE": "slow breathing, occasional blink, gaze follows the Mac cursor when streamed",
+    "LISTENING": "leans in slightly, head tilts, glow pulses with the real microphone level",
+    "THINKING": "head tilts up and aside, eyes drift, slow glow",
+    "SPEAKING": "gentle head nods synced to speech activity, glow follows TTS",
+    "EXECUTING": "focused forward pose, steady glow while a task runs",
+    "SUCCESS": "small happy bounce and arm lift, then back to idle",
+    "CONFUSED": "head tilt and shrug; used when a request is ambiguous",
+    "CONCERNED": "head lowers, arms close; approvals, permissions, emergency stop",
+    "SLEEPING": "eyes closed, dimmed, very slow breathing; cursor, mic and listeners paused",
+    "ERROR": "brief recoil, red glow, then calm",
+    "DISCONNECTED": "dimmed, eyes half-closed, looking down"
+  },
+  "framingTestVectors": [
+    {
+      "aspect": 0.46,
+      "halfHeight": 1.0,
+      "centerY": 1.315,
+      "distance": 4.010781
+    },
+    {
+      "aspect": 0.68,
+      "halfHeight": 0.735294,
+      "centerY": 1.554706,
+      "distance": 2.949104
+    },
+    {
+      "aspect": 1.0,
+      "halfHeight": 0.6,
+      "centerY": 1.69,
+      "distance": 2.406469
+    },
+    {
+      "aspect": 1.6,
+      "halfHeight": 0.6,
+      "centerY": 1.69,
+      "distance": 2.406469
+    },
+    {
+      "aspect": 2.4,
+      "halfHeight": 0.6,
+      "centerY": 1.69,
+      "distance": 2.406469
+    }
+  ]
+}

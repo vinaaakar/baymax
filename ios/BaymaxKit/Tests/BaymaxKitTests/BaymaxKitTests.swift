@@ -183,3 +183,62 @@ final class GazeTests: XCTestCase {
         XCTAssertLessThan(asleep.armRFwd, 0.1)
     }
 }
+
+/// design/baymax-visual-spec.json is the single source for the bust composition on both platforms.
+final class VisualSpecParityTests: XCTestCase {
+    private func loadVisualSpec() throws -> [String: Any] {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { url.deleteLastPathComponent() }
+        let data = try Data(contentsOf: url.appendingPathComponent("design/baymax-visual-spec.json"))
+        return try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    }
+
+    private func pairs(_ value: Any?) -> [SIMD2<Float>] {
+        let rows = value as! [[Double]]
+        return rows.map { SIMD2<Float>(Float($0[0]), Float($0[1])) }
+    }
+
+    func testFramingMatchesSharedVectors() throws {
+        let spec = try loadVisualSpec()
+        let f = spec["framing"] as! [String: Any]
+        let mine = FramingSpec()
+        XCTAssertEqual(mine.fovDeg, f["fovDeg"] as! Double)
+        XCTAssertEqual(mine.headTop, f["headTop"] as! Double)
+        XCTAssertEqual(mine.bustBottom, f["bustBottom"] as! Double)
+        XCTAssertEqual(mine.minHalfWidth, f["minHalfWidth"] as! Double)
+        XCTAssertEqual(mine.minHalfHeight, f["minHalfHeight"] as! Double)
+        XCTAssertEqual(mine.topMargin, f["topMargin"] as! Double)
+        XCTAssertEqual(mine.anchorFromTop, f["anchorFromTop"] as! Double)
+        XCTAssertEqual(mine.maxHalfHeight, f["maxHalfHeight"] as! Double)
+        for v in spec["framingTestVectors"] as! [[String: Double]] {
+            let c = BustFraming.camera(aspect: v["aspect"]!)
+            XCTAssertEqual(c.halfHeight, v["halfHeight"]!, accuracy: 1e-5)
+            XCTAssertEqual(c.centerY, v["centerY"]!, accuracy: 1e-5)
+            XCTAssertEqual(c.distance, v["distance"]!, accuracy: 1e-5)
+        }
+    }
+
+    func testBustGeometryMatchesSpec() throws {
+        let av = try loadVisualSpec()["avatar"] as! [String: Any]
+        XCTAssertEqual(av["composition"] as? String, "bust")
+        XCTAssertEqual(BustSpec.torsoProfile, pairs(av["torsoProfile"]))
+        XCTAssertEqual(BustSpec.armProfile, pairs(av["armProfile"]))
+        let head = av["head"] as! [String: [Double]]
+        XCTAssertEqual(BustSpec.headPivot, SIMD3<Float>(head["pivot"]!.map(Float.init)))
+        XCTAssertEqual(BustSpec.headCenter, SIMD3<Float>(head["center"]!.map(Float.init)))
+        XCTAssertEqual(BustSpec.headRadii, SIMD3<Float>(head["radii"]!.map(Float.init)))
+        XCTAssertEqual(BustSpec.armPivot, SIMD3<Float>((av["armPivot"] as! [Double]).map(Float.init)))
+        // Nothing below the bust base: the lowest modelled point is the base of the torso.
+        XCTAssertGreaterThanOrEqual(BustSpec.torsoProfile.map(\.y).min()!, 0.9)
+        XCTAssertGreaterThanOrEqual(BustSpec.armPivot.y + BustSpec.armProfile.map(\.y).min()!, 0.9)
+    }
+
+    func testPaletteMatchesSpec() throws {
+        let colors = try loadVisualSpec()["colors"] as! [String: String]
+        XCTAssertEqual(colors["background"], "#180509")
+        XCTAssertEqual(colors["accent"], "#B5122A")
+        XCTAssertEqual(colors["highlight"], "#FF334F")
+        XCTAssertEqual(colors["surface"], "#080305")
+        XCTAssertEqual(colors["text"], "#F5F5F2")
+    }
+}

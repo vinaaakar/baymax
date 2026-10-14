@@ -10,6 +10,7 @@ struct CompanionScreen: View {
     @State private var typing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @AppStorage("baymax.debugCursor") private var debugCursor = false
 
     var body: some View {
         ZStack {
@@ -28,6 +29,9 @@ struct CompanionScreen: View {
             }
             VStack(spacing: 10) {
                 topBar
+                if debugCursor {
+                    CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping)
+                }
                 Spacer()
                 bottomControls
             }

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { CharacterState } from "../shared/protocol";
+import { bustCamera } from "../shared/framing";
 import { applyPose, buildBaymax, PALETTE } from "./baymaxModel";
 import { blend, frameRateFor, REST, targetPose, type Pose } from "./rig";
 
@@ -14,7 +15,6 @@ export interface CharacterProps {
   reducedMotion?: boolean;
   quality?: "low" | "high";
   onClick?: () => void;
-  framing?: "full" | "portrait";
 }
 
 export function prefersReducedMotion(): boolean {
@@ -47,10 +47,8 @@ export default function BaymaxCharacter(props: CharacterProps) {
     renderer.domElement.setAttribute("aria-hidden", "true");
 
     const scene = new THREE.Scene();
+    // Bust framing (head + shoulders only), identical to the iPhone: see shared/framing.ts.
     const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 50);
-    const framing = live.current.framing ?? "full";
-    camera.position.set(0, framing === "portrait" ? 1.3 : 1.2, framing === "portrait" ? 6.4 : 7.2);
-    camera.lookAt(0, framing === "portrait" ? 1.12 : 1.05, 0);
 
     // Lighting: warm key, soft fill, crimson rim from behind, hemisphere tinted by the red room.
     const hemi = new THREE.HemisphereLight("#fff4f0", PALETTE.crimson, 0.75);
@@ -70,11 +68,6 @@ export default function BaymaxCharacter(props: CharacterProps) {
     rim.position.set(0, 2.3, -1.6);
     scene.add(rim);
 
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(2.2, 48), new THREE.ShadowMaterial({ opacity: 0.38 }));
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-
     const rig = buildBaymax({ segments: high ? 64 : 32 });
     scene.add(rig.root);
 
@@ -91,15 +84,12 @@ export default function BaymaxCharacter(props: CharacterProps) {
       renderer.domElement.style.width = "100%";
       renderer.domElement.style.height = "100%";
       camera.aspect = w / h;
-      // Fit the whole character (about 2.4 x 2.2 units incl. margins) for any window shape.
-      camera.fov = 28;
-      const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-      const halfH = halfV * camera.aspect;
-      const dist = Math.max(1.35 / halfV, 1.2 / halfH);
-      const lookY = framing === "portrait" ? 1.12 : 1.05;
-      camera.position.set(0, lookY + 0.15, dist);
-      camera.lookAt(0, lookY, 0);
+      const f = bustCamera(camera.aspect);
+      camera.fov = f.fovDeg;
+      camera.position.set(0, f.centerY, f.distance);
+      camera.lookAt(0, f.centerY, 0);
       camera.updateProjectionMatrix();
+      el.dataset.framing = `bust:${f.halfHeight.toFixed(3)}`;
     };
     const ro = new ResizeObserver(resize);
     ro.observe(el);
@@ -134,8 +124,6 @@ export default function BaymaxCharacter(props: CharacterProps) {
       cancelAnimationFrame(raf);
       ro.disconnect();
       rig.dispose();
-      floor.geometry.dispose();
-      (floor.material as THREE.Material).dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };

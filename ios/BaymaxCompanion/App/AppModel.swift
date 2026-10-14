@@ -197,8 +197,8 @@ final class AppModel: ObservableObject {
             gaze.reset() // asleep: no gaze following; on wake start fresh
         case "cursor.update":
             // Real Mac cursor (normalised to the primary display) -> gaze direction.
-            guard !sleeping, let vx = env.double("vx") ?? env.double("x"), let vy = env.double("vy") ?? env.double("y") else { return }
-            gaze.cursor(vx: vx, vy: vy, seq: env.int("seq"))
+            guard !sleeping else { return }
+            gaze.cursor(env)
             if !cursorLive { cursorLive = true }
             return // high-rate: skip the VoiceOver announcement path below
         case "gaze.target":
