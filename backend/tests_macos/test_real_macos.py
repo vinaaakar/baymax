@@ -127,7 +127,9 @@ async def test_type_unicode_multiline_into_textedit_and_read_back(desk):
         pytest.skip("grant Accessibility to the terminal running pytest first")
     _, field, _ = await _fresh_textedit_document(desk)
     await _focus_or_explain(desk, field)  # raises if focus is not confirmed
-    text = "BAYMAX test ✓ Grüße 東京 👋\nsecond line — ünïcödé\nthird line."
+    # Lines start with a digit: macOS "Capitalize words automatically" (on by default) would otherwise turn a typed
+    # "second" into "Second" after the line break - the app's change, not BAYMAX's. The comparison stays exact.
+    text = "BAYMAX test ✓ Grüße 東京 👋\n2nd line — ünïcödé\n3rd line."
     await desk.type_text("TextEdit", text)
     await asyncio.sleep(0.5)
     got = await desk.element_value("TextEdit", field.role, field.x, field.y)

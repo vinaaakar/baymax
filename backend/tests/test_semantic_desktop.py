@@ -463,3 +463,29 @@ def test_applescripts_fetch_entire_contents_once_before_iterating():
 
     for name, src in _applescripts().items():
         assert not _re.search(r"repeat with \w+ in \(?\s*entire contents", src), name
+
+
+async def test_app_auto_capitalization_is_reported_not_called_verified(services, fake_desktop):
+    """Seen on the real Mac: TextEdit turned a typed "second line" into "Second line" (macOS auto-capitalization)."""
+    from baymax.tasks.models import PlanStep
+
+    fake_desktop.front = "Notes"
+    fake_desktop.ax_dump["Notes"] = ax("AXTextArea", "Body", 50, 50, 500, 300)
+    real = fake_desktop.element_value
+
+    async def autocap(app, role, x, y):
+        v = await real(app, role, x, y)
+        return "\n".join(line[:1].upper() + line[1:] for line in v.split("\n"))
+
+    fake_desktop.element_value = autocap
+    task = services.tasks.submit("desktop", "type", "fill body",
+                                 [PlanStep("type", "screen.type_into", {"field": "body", "text": "hello\nsecond line"})])
+    t = await services.tasks.wait(task.id, 5)
+    assert t.status is TaskStatus.FAILED and not t.verified
+    assert "auto-capitalization" in t.result["summary"] and "Nothing was submitted" in t.result["summary"]
+
+
+def test_enabled_state_is_read_through_the_axenabled_attribute():
+    from baymax.hostos import desktop as dk
+
+    assert 'value of attribute "AXEnabled" of e' in dk._AS_LOCATE and "if enabled of e" not in dk._AS_LOCATE

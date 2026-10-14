@@ -318,6 +318,10 @@ class TypeIntoFieldTool(Tool):
             extra = "" if got == expected else " (the field also contains other text)"
             return ToolResult(True, f"Typed into the “{field.label}” field{extra}. I haven't submitted the form.", data, verified=True,
                               verification="field value read back and matched exactly" if got == expected else "typed text found in the field")
+        if got.casefold() == expected.casefold():
+            return ToolResult(False, f"I typed into the “{field.label}” field, but {app} changed the capitalization (macOS "
+                                     f"auto-capitalization), so it reads “{got[:80]}”. Nothing was submitted.",
+                              {**data, "errorKind": "not_verified", "readBack": got[:200], "alteredBy": "auto-capitalization"})
         return ToolResult(False, f"I typed into the “{field.label}” field, but it now reads “{got[:80]}”, not what you asked for. "
                                  "Nothing was submitted.", {**data, "errorKind": "not_verified", "readBack": got[:200]})
 

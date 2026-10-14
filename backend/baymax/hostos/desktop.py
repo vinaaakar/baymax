@@ -334,10 +334,11 @@ _AS_LOCATE = """on run argv
           set en to ""
           set ident to ""
           if r is in {"AXButton", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXLink", "AXTab", "AXMenuItem"} then
-            try
-              if enabled of e then
+            try -- the AXEnabled attribute (the `enabled` property failed for every control on a real Mac)
+              set ev to value of attribute "AXEnabled" of e
+              if ev is true then
                 set en to "1"
-              else
+              else if ev is false then
                 set en to "0"
               end if
             end try
