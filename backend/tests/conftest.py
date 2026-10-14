@@ -7,6 +7,7 @@ import pytest
 
 from baymax.config import load_settings
 from baymax.hostos.desktop import ACCESSIBILITY_HELP, SCREEN_HELP, DesktopBackend, DesktopPermissionError, DesktopUnavailable, UIElement
+from baymax.hostos.apps import AppInfo
 from baymax.screen.elements import Display, ScreenElement, parse_ax_dump
 from baymax.security.secrets import SecretStore
 
@@ -32,6 +33,11 @@ class FakeDesktop(DesktopBackend):
         self.ax_after_press: dict[str, str] = {}
         self.ocr: list[ScreenElement] = []
         self.titles: dict[str, list[str]] = {}
+        # Installed apps on the fake Mac (display name, bundle id). VS Code runs under the process name "Code".
+        self.installed = [AppInfo("Safari", "", "com.apple.Safari"), AppInfo("Terminal", "", "com.apple.Terminal"),
+                          AppInfo("Visual Studio Code", "", "com.microsoft.VSCode"), AppInfo("Finder", "", "com.apple.finder"),
+                          AppInfo("Notes", "", "com.apple.Notes"), AppInfo("Xcode", "", "com.apple.dt.Xcode"),
+                          AppInfo("Spotify", "", "com.spotify.client"), AppInfo("Mail", "", "com.apple.mail")]
         self.clipboard = ""
         self.document = None
 
@@ -91,7 +97,8 @@ class FakeDesktop(DesktopBackend):
 
     async def read_window_text(self, app, limit=4000):
         self._need_ax()
-        if app not in self.running and app != self.front:
+        alive = set(self.running) | {self.front} | ({"Code"} if "Visual Studio Code" in self.running else set())
+        if app not in alive:
             raise DesktopUnavailable(f"{app} isn't running")
         self.calls.append(("read_window", app))
         return "Hello from the window"
@@ -101,6 +108,12 @@ class FakeDesktop(DesktopBackend):
 
     async def displays(self):
         return list(self.display_list)
+
+    async def list_apps(self):
+        bundles = {a.name: a.bundle_id for a in self.installed}
+        names = set(self.running) | ({self.front} if self.front else set())
+        proc = {"Visual Studio Code": "Code"}
+        return [AppInfo(proc.get(n, n), proc.get(n, n), bundles.get(n, ""), True) for n in sorted(names)], list(self.installed)
 
     async def open_path_in_app(self, app, path):
         self.calls.append(("open_path", app, str(path)))

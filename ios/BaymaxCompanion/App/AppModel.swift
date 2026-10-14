@@ -29,7 +29,10 @@ final class AppModel: ObservableObject {
     @Published var approvals: [ApprovalItem] = []
     @Published var sleeping = false
     @Published var estopEngaged = false
-    @Published var llmReady = false
+    /// The Mac's local model (Ollama). Inference always runs on the Mac; the phone only sends text to it.
+    /// nil = not reported yet (never shown as "unavailable" before the Mac says so).
+    @Published var macModelReady: Bool?
+    @Published var macModelName = ""
     @Published var lastReply: ChatLine?
     @Published var speakReplies = true
 
@@ -176,6 +179,7 @@ final class AppModel: ObservableObject {
             connectionProblem = nil
         case .connecting, .authenticating:
             display.connected = false
+            macModelReady = nil
             cursorLive = false
             connectionText = "Connecting…"
         case .idle:
@@ -224,7 +228,9 @@ final class AppModel: ObservableObject {
             estopEngaged = env.bool("engaged") ?? false
             if estopEngaged { speechIn.cancel(); speechOut.stop() }
         case "connection.status":
-            llmReady = env.string("llm") == "ready"
+            // Only messages that carry model status change it (device-count updates don't).
+            if let llm = env.string("llm") { macModelReady = (llm == "ready") }
+            if let name = env.string("model"), !name.isEmpty { macModelName = name }
         case "assistant.message":
             let line = ChatLine(id: env.string("messageId") ?? UUID().uuidString, role: env.string("role") ?? "assistant", text: env.string("text") ?? "")
             if !messages.contains(where: { $0.id == line.id }) { messages.append(line) }

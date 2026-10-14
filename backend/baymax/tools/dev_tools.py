@@ -23,6 +23,8 @@ from ..research.report import key_sentences
 from ..security.policy import Risk
 from .base import Arg, Tool, ToolContext, ToolError, ToolResult, ToolUnavailable
 
+BAYMAX_REPO = Path(__file__).resolve().parents[3]  # backend/baymax/tools/dev_tools.py -> repository root
+
 EDITORS = {"vs code": "Visual Studio Code", "vscode": "Visual Studio Code", "code": "Visual Studio Code", "visual studio code": "Visual Studio Code",
            "xcode": "Xcode", "intellij": "IntelliJ IDEA", "intellij idea": "IntelliJ IDEA", "cursor": "Cursor", "sublime": "Sublime Text",
            "finder": "Finder", "terminal": "Terminal", "pycharm": "PyCharm", "android studio": "Android Studio"}
@@ -116,14 +118,21 @@ class FindCodeTool(Tool):
     args = {"query": Arg("str", max_len=300), "project": Arg("str", False, default="", max_len=300)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        import asyncio
+
         try:
-            root = resolve_project(ctx, args.get("project") or "") if args.get("project") or ctx.services.state.get("current_project") \
-                else ctx.services.workspace.root
+            if args.get("project") or ctx.services.state.get("current_project"):
+                roots = [resolve_project(ctx, args.get("project") or "")]
+            else:  # no project named or opened: the workspace, then BAYMAX's own repository
+                roots = [ctx.services.workspace.root] + ([BAYMAX_REPO] if (BAYMAX_REPO / ".git").exists() else [])
         except ToolError as exc:
             return ToolResult(False, str(exc), {})
-        ctx.progress(0.3, f"searching {root.name}")
-        import asyncio
-        hits = await asyncio.get_running_loop().run_in_executor(None, search_definitions, root, args["query"])
+        hits, root = [], roots[0]
+        for root in roots:
+            ctx.progress(0.3, f"searching {root.name}")
+            hits = await asyncio.get_running_loop().run_in_executor(None, search_definitions, root, args["query"])
+            if hits:
+                break
         if not hits:
             return ToolResult(False, f"I found no function or class in {root} matching “{args['query']}”.", {"root": str(root)})
         lines = [f"{h.path.relative_to(root)}:{h.line} — {h.name}" for h in hits[:5]]
@@ -134,16 +143,35 @@ class FindCodeTool(Tool):
                           verified=True, verification="definitions read from the files on disk")
 
 
+class _NeedApp(Exception):
+    def __init__(self, result: ToolResult) -> None:
+        self.result = result
+
+
 class ExplainErrorTool(Tool):
     name = "coding.explain_error"
     description = "Explain a compiler or runtime error (from the given text, the clipboard, or the front terminal window)."
     risk = Risk.LOW
-    args = {"text": Arg("str", False, default="", max_len=20000)}
+    args = {"text": Arg("str", False, default="", max_len=20000),
+            "app": Arg("str", False, default="", description="app showing the error, e.g. Terminal", max_len=80)}
 
-    async def _gather(self, ctx: ToolContext, text: str) -> tuple[str, str]:
+    async def _gather(self, ctx: ToolContext, text: str, app_hint: str = "") -> tuple[str, str]:
         if text.strip():
             return text, "your message"
         d = ctx.services.desktop
+        if app_hint:  # "the error displayed in the terminal": read that window first
+            from .system_tools import resolve_app_arg
+
+            app, problem = await resolve_app_arg(ctx, app_hint, must_run=True)
+            if problem:
+                raise _NeedApp(problem)
+            if app is not None:
+                try:
+                    win = await d.read_window_text(app.process or app.name, limit=20000)
+                    if win and looks_like_error(win):
+                        return win[-12000:], f"the {app.name} window"
+                except DesktopUnavailable:
+                    pass
         try:
             clip = await d.clipboard_text()
         except DesktopUnavailable:
@@ -160,7 +188,10 @@ class ExplainErrorTool(Tool):
         return "", ""
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-        text, source = await self._gather(ctx, args.get("text", ""))
+        try:
+            text, source = await self._gather(ctx, args.get("text", ""), args.get("app", ""))
+        except _NeedApp as need:
+            return need.result
         if not text:
             q = "I don't see an error to explain. Copy the error text (⌘C) or paste it here, then ask again."
             return ToolResult(False, q, {}, needs_clarification=q)

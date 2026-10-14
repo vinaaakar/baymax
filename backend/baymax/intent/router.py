@@ -66,7 +66,7 @@ class IntentRouter:
         if re.search(r"\bwhat (else )?(work|works|walks|things|stuff|tasks|jobs|features|kind of (things|tasks|work))?\s*(can|could|do) you (do|perform|help( me)? with)\b"
                      r"|\bwhat are (you|your) (able to do|capable of|capabilities|abilities|features|skills)\b"
                      r"|\bwhat can you do\b|\bhow can you help\b|\bwhat do you do\b|^(help|capabilities|features)$"
-                     r"|\bwhat\b.{0,40}\b(you can|can you|could you|you could|you are able to|are you able to)\s+(do|perform|handle|help)\b", bare):
+                     r"|\bwhat\b.{0,40}\b(you can|can you|could you|you could|you are able to|are you able to)\s+(do|perform|handle|help|work on|assist)\b", bare):
             return Intent("help", text=raw)
         if re.search(r"\b(is|are) (my )?(i?phone|mobile|device)s? (connected|paired|online|linked)\b|\b(phone|iphone) (connection|status)\b"
                      r"|\bconnection status\b|\b(i?phone|mobile)\b.{0,20}\b(connected|paired|online|linked)\b", bare):
@@ -101,11 +101,14 @@ class IntentRouter:
             return Intent("tool", "apps.open_project", {"project": _strip_original(raw, m.group(1)), "app": m.group(2)}, f"Open {m.group(1)}", raw)
         m = re.match(r"^(?:find|where is|where's|show me|locate|which)\s+(?:is\s+)?(?:the\s+)?(?:function|method|class|code|file)\b\s*(.*)$", t)
         if m and m.group(1):
-            return Intent("tool", "coding.find", {"query": m.group(1)}, f"Find code: {m.group(1)}"[:120], raw)
+            q = _strip_original(raw, m.group(1)).rstrip(" .?!")  # keep identifiers' original case (startCursorTracking)
+            return Intent("tool", "coding.find", {"query": q}, f"Find code: {q}"[:120], raw)
         m = re.match(r"^(?:explain|what does|what's|why)\b.*\b(error|exception|traceback|stack ?trace|compiler|build fail\w*|crash)\b(.*)$", t)
         if m:
             pasted = raw.split(":", 1)[1].strip() if ":" in raw and len(raw.split(":", 1)[1].strip()) > 10 else ""
-            return Intent("tool", "coding.explain_error", {"text": pasted}, "Explain error", raw)
+            where = re.search(r"\b(terminal|iterm2?|console|xcode|vs ?code|visual studio code)\b", t)
+            args = {"text": pasted, **({"app": _title(where.group(1))} if where and not pasted else {})}
+            return Intent("tool", "coding.explain_error", args, "Explain error", raw)
         if re.search(r"\b(create|make|write|generate)\b.*\bjava class\b", t):
             nm = re.search(r"\b(?:called|named)\s+([A-Za-z_]\w*)", raw)
             desc = re.split(r"\b(?:that|which|to)\b", raw, maxsplit=1)

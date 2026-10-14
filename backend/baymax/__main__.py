@@ -38,10 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(settings.log_level, settings.data_dir / "logs" if args.cmd == "serve" else None)
 
     if args.cmd == "serve":
+        from .buildinfo import running_build
         from .server.app import run_server
         from .services import build_services
 
         services = build_services(settings)
+        running_build()  # fingerprint the code loaded now (before any later edits on disk)
         asyncio.run(run_server(services, lan=True if args.lan else None))
         return 0
     if args.cmd == "doctor":

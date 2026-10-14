@@ -8,11 +8,34 @@ import time
 from typing import Any
 
 from ..coding.files import EditError, FileOps
-from ..hostos.desktop import _PLACEHOLDER_APPS, AppNameError, DesktopPermissionError, DesktopUnavailable, validate_app_name
+from ..hostos.apps import AppInfo, resolve_app
+from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
 from ..security.commands import CommandRejected, validate_command
 from ..security.policy import Risk
 from ..security.workspace import WorkspaceViolation
 from .base import Arg, Tool, ToolContext, ToolError, ToolResult, ToolUnavailable
+
+
+async def resolve_app_arg(ctx: ToolContext, heard: str | None, *, must_run: bool) -> tuple[AppInfo | None, ToolResult | None]:
+    """Turn what the user/model called an app into a real installed/running app, or a clarifying ToolResult.
+    Unverified names never reach AppleScript."""
+    try:
+        running, installed = await ctx.services.desktop.list_apps()
+    except DesktopPermissionError as exc:
+        raise ToolUnavailable(str(exc)) from None
+    except DesktopUnavailable as exc:
+        raise ToolUnavailable(str(exc)) from None
+    r = resolve_app(heard, running, installed)
+    if r.status == "resolved" and r.app is not None:
+        if must_run and not r.app.running:
+            msg = f"{r.app.name} isn't running. Say “open {r.app.name}” first, then ask again."
+            return None, ToolResult(False, msg, {"app": r.app.name, "errorKind": "not_found"}, needs_clarification=msg)
+        return r.app, None
+    if r.status == "none":
+        return None, None
+    q = r.question(str(heard))
+    kind = "not_found" if r.status == "unknown" else "invalid_arguments"
+    return None, ToolResult(False, q, {"heard": heard, "suggestions": r.suggestions, "errorKind": kind}, needs_clarification=q)
 
 
 async def _desktop(call):
@@ -34,17 +57,24 @@ class OpenAppTool(Tool):
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
-        await _desktop(d.open_app(args["app"]))
+        app, problem = await resolve_app_arg(ctx, args["app"], must_run=False)
+        if problem:
+            return problem
+        if app is None:
+            q = "Which app should I open?"
+            return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
+        name = app.name
+        await _desktop(d.open_app(name))
         for _ in range(20):  # verify for up to ~5 s
             ctx.checkpoint()
             try:
-                if await d.is_app_running(args["app"]):
-                    return ToolResult(True, f"{args['app']} is open.", {"app": args["app"]}, verified=True,
+                if await d.is_app_running(name):
+                    return ToolResult(True, f"{name} is open.", {"app": name}, verified=True,
                                       verification="macOS reports the application is running")
             except DesktopUnavailable:
                 break
             await asyncio.sleep(0.25)
-        return ToolResult(True, f"Asked macOS to open {args['app']}, but I couldn't confirm it is running.", {"app": args["app"]},
+        return ToolResult(True, f"Asked macOS to open {name}, but I couldn't confirm it is running.", {"app": name},
                           verified=False, verification="application not detected as running")
 
 
@@ -110,13 +140,18 @@ class TypeTextTool(Tool):
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
+        app, problem = await resolve_app_arg(ctx, args["app"], must_run=True)
+        if problem or app is None:
+            return problem or ToolResult(False, "Which app should I type into?", {"errorKind": "invalid_arguments"},
+                                         needs_clarification="Which app should I type into?")
+        args = {**args, "app": app.process or app.name}
         await _desktop(d.type_text(args["app"], args["text"]))
         front = ""
         try:
             front = await d.frontmost_app()
         except DesktopUnavailable:
             pass
-        ok = front.lower() == args["app"].lower()
+        ok = front.lower() in (args["app"].lower(), app.name.lower())
         return ToolResult(True, f"Typed into {args['app']}.", {"app": args["app"], "frontmost": front}, verified=ok,
                           verification=f"{front or 'unknown app'} was frontmost after typing" + ("" if ok else " (not the requested app)"))
 
@@ -128,6 +163,11 @@ class ListElementsTool(Tool):
     args = {"app": Arg("str", max_len=80), "limit": Arg("int", False, default=60)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        app, problem = await resolve_app_arg(ctx, args["app"], must_run=True)
+        if problem or app is None:
+            return problem or ToolResult(False, "Which app should I inspect?", {"errorKind": "invalid_arguments"},
+                                         needs_clarification="Which app should I inspect?")
+        args = {**args, "app": app.process or app.name}
         els = await _desktop(ctx.services.desktop.list_elements(args["app"], args.get("limit", 60)))
         if not els:
             return ToolResult(True, f"{args['app']} exposes no accessible elements in its front window (or has no window).",
@@ -143,6 +183,11 @@ class PressElementTool(Tool):
     args = {"app": Arg("str", max_len=80), "role": Arg("str", False, default="AXButton", max_len=40), "name": Arg("str", max_len=120)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        app, problem = await resolve_app_arg(ctx, args["app"], must_run=True)
+        if problem or app is None:
+            return problem or ToolResult(False, "Which app is the button in?", {"errorKind": "invalid_arguments"},
+                                         needs_clarification="Which app is the button in?")
+        args = {**args, "app": app.process or app.name}
         await _desktop(ctx.services.desktop.press_element(args["app"], args.get("role", "AXButton"), args["name"]))
         return ToolResult(True, f"Pressed '{args['name']}' in {args['app']}.", dict(args), verified=True,
                           verification="Accessibility AXPress action returned without error")
@@ -158,29 +203,30 @@ class ReadWindowTool(Tool):
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
         requested = (args.get("app") or "").strip()
-        try:
-            app = validate_app_name(requested)
-        except AppNameError:
-            if requested and requested.lower() not in _PLACEHOLDER_APPS:
-                q = f"“{requested[:40]}” isn't an application name I can use. Which app's window should I read?"
-                return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
-            try:  # "read the current window": the app the user is looking at, never BAYMAX itself
+        resolved, problem = await resolve_app_arg(ctx, requested, must_run=True)
+        if problem:
+            return problem
+        if resolved is not None:
+            app, label = resolved.process or resolved.name, resolved.name
+        else:  # "read the current window": the app the user is looking at, never BAYMAX itself
+            try:
                 app = await d.target_app()
             except DesktopPermissionError as exc:
                 raise ToolUnavailable(str(exc)) from None
             except DesktopUnavailable as exc:
                 q = str(exc)
                 return ToolResult(False, q, {"errorKind": "not_found"}, needs_clarification=q)
+            label = app
         try:
             text = await d.read_window_text(app)
         except DesktopPermissionError as exc:
             raise ToolUnavailable(str(exc)) from None
         except DesktopUnavailable as exc:
-            return ToolResult(False, f"I couldn't read {app}'s window: {exc}.", {"app": app, "errorKind": "not_found"})
+            return ToolResult(False, f"I couldn't read {label}'s window: {exc}.", {"app": label, "errorKind": "not_found"})
         if not text.strip():
-            return ToolResult(True, f"{app}'s front window has no readable text (it may not expose accessibility text).", {"app": app, "text": ""},
-                              verified=True, verification="accessibility tree queried")
-        return ToolResult(True, f"Read {len(text)} characters from {app}:\n{text[:1500]}", {"app": app, "text": text}, verified=True,
+            return ToolResult(True, f"{label}'s front window has no readable text (it may not expose accessibility text).",
+                              {"app": label, "text": ""}, verified=True, verification="accessibility tree queried")
+        return ToolResult(True, f"Read {len(text)} characters from {label}:\n{text[:1500]}", {"app": label, "text": text}, verified=True,
                           verification="accessibility values read", untrusted=True)
 
 

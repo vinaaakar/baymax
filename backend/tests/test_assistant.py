@@ -49,7 +49,7 @@ async def test_missing_permission_is_explained(services, assistant, fake_desktop
 async def test_unknown_app_fails_honestly(services, assistant):
     r = await assistant.handle_text("open Nonexistent")
     task = await services.tasks.wait(r["taskId"], 5)
-    assert task.status is TaskStatus.FAILED and "not found" in task.error
+    assert task.status is TaskStatus.FAILED and "can't find an app called" in task.error
 
 
 async def test_create_and_modify_3d_model(services, assistant):

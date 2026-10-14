@@ -86,7 +86,9 @@ class CodeHit:
 def search_definitions(root: Path, query: str, limit: int = 8, max_files: int = 4000) -> list[CodeHit]:
     stop = {"the", "a", "an", "for", "of", "to", "that", "which", "is", "responsible", "function", "method", "class", "code", "handles",
             "handling", "does", "where", "find", "me", "show", "in", "my", "this", "repo", "repository", "project"}
-    q = [_stem(w) for w in re.findall(r"[a-z0-9]+", query.lower()) if w not in stop]
+    raw_tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*|\d+", query)
+    identifiers = {tok.lower() for tok in raw_tokens if re.search(r"[a-z][A-Z]|_", tok)}  # camelCase / snake_case only
+    q = [_stem(w) for tok in raw_tokens for w in _words(tok) if w not in stop]
     if not q:
         return []
     hits: list[CodeHit] = []
@@ -119,6 +121,8 @@ def search_definitions(root: Path, query: str, limit: int = 8, max_files: int = 
             for w in q:
                 s += 1.0 if w in name_words else 0.45 if w in path_words else 0.25 if w in near_words else 0.0
             s /= len(q)
+            if name.lower() in identifiers:  # the user named the symbol exactly (e.g. startCursorTracking)
+                s += 2.0
             if s >= 0.5:
                 hits.append(CodeHit(path, i + 1, name, line.strip()[:160], round(s, 3), lines[max(0, i - 2):i + 6]))
     hits.sort(key=lambda h: (-h.score, len(str(h.path)), h.line))

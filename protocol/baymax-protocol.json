@@ -473,7 +473,8 @@
         },
         "optional": {
           "devices": "int",
-          "llm": "str"
+          "llm": "str",
+          "model": "str"
         }
       },
       "voice.state": {

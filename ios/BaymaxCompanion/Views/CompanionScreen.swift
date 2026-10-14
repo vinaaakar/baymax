@@ -60,8 +60,13 @@ struct CompanionScreen: View {
                 Label("Following cursor", systemImage: "cursorarrow.motionlines").labelStyle(.titleAndIcon).pill()
                     .accessibilityLabel("Following the Mac cursor")
             }
-            if model.display.connected && !model.llmReady {
-                Text("No local model").pill().foregroundStyle(.yellow)
+            if model.display.connected, let ready = model.macModelReady {
+                // The AI runs on the Mac (Ollama); this reports that model, not anything on the phone.
+                Text(ready ? "Mac AI · \(model.macModelName.isEmpty ? "ready" : model.macModelName)" : "Mac AI unavailable")
+                    .lineLimit(1)
+                    .pill()
+                    .foregroundStyle(ready ? Theme.white : .yellow)
+                    .accessibilityLabel(ready ? "The Mac's local AI model is ready" : "The Mac's local AI model is not available")
             }
             Spacer()
             Button { showSettings = true } label: { Image(systemName: "gearshape").padding(8) }

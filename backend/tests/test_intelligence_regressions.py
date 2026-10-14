@@ -170,3 +170,102 @@ def test_relevance_rules():
 async def test_phone_status_question_answers_from_real_state(env):
     r = await env["a"].handle_text("Tell me whether my phone is connected")
     assert "taskId" not in r and ("iPhone" in _text(r))
+
+
+# ---------------------------------------------------------------- application resolution (the "EB Max" failure)
+from baymax.hostos.apps import AppInfo, resolve_app  # noqa: E402
+
+RUNNING = [AppInfo("Code", "Code", "com.microsoft.VSCode", True), AppInfo("Terminal", "Terminal", "com.apple.Terminal", True)]
+INSTALLED = [AppInfo("Visual Studio Code", "", "com.microsoft.VSCode"), AppInfo("Terminal", "", "com.apple.Terminal"),
+             AppInfo("Safari", "", "com.apple.Safari"), AppInfo("Notes", "", "com.apple.Notes")]
+
+
+@pytest.mark.parametrize("heard,status,name,running", [
+    ("EB Max", "self", None, None), ("Bimax", "self", None, None), ("B Max", "self", None, None),
+    ("None", "none", None, None), ("", "none", None, None), (None, "none", None, None),
+    ("VS Code", "resolved", "Visual Studio Code", True), ("Visual Studio Code", "resolved", "Visual Studio Code", True),
+    ("vscode", "resolved", "Visual Studio Code", True), ("terminal", "resolved", "Terminal", True),
+    ("Safari", "resolved", "Safari", False), ("Photoshop", "unknown", None, None), ("Safary", "unknown", None, None),
+])
+def test_app_resolver(heard, status, name, running):
+    r = resolve_app(heard, RUNNING, INSTALLED)
+    assert r.status == status
+    if name:
+        assert r.app.name == name and r.app.running is running
+    if heard == "VS Code":
+        assert r.app.process == "Code"  # AppleScript gets the real process name
+    if heard == "Safary":
+        assert r.suggestions == ["Safari"]
+
+
+@pytest.mark.parametrize("utterance,expect", [
+    ("read the EB Max window", "sounds like my own name"),
+    ("read the Photoshop window", "can't find an app called"),
+    ("read the Notes window", "Notes isn't running"),  # installed but closed
+])
+async def test_read_window_never_sends_unverified_names_to_applescript(env, utterance, expect):
+    env["desk"].front = "Terminal"
+    r = await env["a"].handle_text(utterance)
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.FAILED and expect in (t.error or t.result["summary"])
+    assert not any(c[0] == "read_window" for c in env["desk"].calls)
+
+
+async def test_read_window_with_an_alias_reads_the_real_process(env):
+    env["desk"].running.add("Visual Studio Code")
+    r = await env["a"].handle_text("read the VS Code window")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED, t.error
+    assert ("read_window", "Code") in env["desk"].calls
+
+
+async def test_open_eb_max_asks_instead_of_launching(env):
+    r = await env["a"].handle_text("open EB Max")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.FAILED and "my own name" in (t.error or "")
+    assert not any(c[0] == "open_app" for c in env["desk"].calls)
+
+
+async def test_open_visual_studio_code_by_alias(env):
+    r = await env["a"].handle_text("Open Visual Studio Code")
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED and t.verified
+    assert ("open_app", "Visual Studio Code") in env["desk"].calls
+
+
+# ---------------------------------------------------------------- the user's exact acceptance messages
+async def test_users_exact_messages(env):
+    a, s, desk = env["a"], env["s"], env["desk"]
+    desk.front = "Terminal"
+    desk.running.add("Terminal")
+    s.state["current_project"] = str(__import__("pathlib").Path(__file__).resolve().parents[2])
+
+    async def say(text):
+        desk.calls.clear()
+        return await a.handle_text(text)
+
+    for greet in ("Hi, Baymax.", "Can you hear me?"):
+        r = await say(greet)
+        assert "taskId" not in r and desk.calls == []
+    for cap in ("What can you do?", "What can you work on?"):
+        r = await say(cap)
+        assert "taskId" not in r and "Here's what I can do right now" in _text(r) and desk.calls == []
+    r = await say("Read the current window.")
+    assert (await s.tasks.wait(r["taskId"], 5)).verified and ("read_window", "Terminal") in desk.calls
+    r = await say("Open Visual Studio Code.")
+    assert (await s.tasks.wait(r["taskId"], 5)).verified and ("open_app", "Visual Studio Code") in desk.calls
+    r = await say("Find the function startCursorTracking in my repository.")
+    t = await s.tasks.wait(r["taskId"], 10)
+    assert t.status is TaskStatus.COMPLETED and t.result["data"]["hits"][0]["name"] == "startCursorTracking"
+    r = await say("Explain the error currently displayed in the terminal.")
+    t = await s.tasks.wait(r["taskId"], 5)
+    assert ("read_window", "Terminal") in desk.calls  # looked at the Terminal window, not a guessed app
+    assert t.status is TaskStatus.FAILED and "Copy the error text" in (t.error or "")  # fake Terminal shows no error
+    r = await say("Is my iPhone connected?")
+    assert "taskId" not in r and "iPhone" in _text(r)
+    await say("Go to sleep.")
+    assert a.sleeping
+    r = await say("Open Visual Studio Code.")
+    assert r.get("sleeping") and desk.calls == []  # asleep: no new work
+    await say("Wake up.")
+    assert not a.sleeping

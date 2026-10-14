@@ -1,5 +1,24 @@
 # End-to-end checklist (MacBook Air + physical iPhone)
 
+## Quick check (10 minutes)
+
+1. **Mac:** quit BAYMAX, then run `cd ~/Developer/BAYMAX/desktop && npm start`. If an older backend is still running, the app now
+   replaces it automatically ("stopping stale backend" in the log).
+   - **Pass:** only Baymax's head on a small rounded neck, on dark red, with no torso and no arms. Resize the window: the head stays
+     whole and centred.
+2. **Mac chat:** type each message and check the reply.
+   - **"Hi, Baymax."** → a greeting; no tool runs.
+   - **"What can you do?"** → a list built from what is actually available, including what isn't and why.
+   - **"Read the current window."** (Terminal clicked first) → Terminal's text, or a clear Accessibility message.
+   - **"read the EB Max window"** → "sounds like my own name … Which app do you mean?". No AppleScript error.
+   - **"Open Visual Studio Code."** → "Visual Studio Code is open."
+3. **iPhone:** in Xcode press ▶︎.
+   - **Pass:** the same head-only Baymax on the same red, before pairing.
+   - After pairing, the top pill shows **"Mac AI · llama3.2:3b"** (or **"Mac AI unavailable"** if Ollama is stopped), not "No local model".
+4. **iPhone → Mac:** type "why is the sky blue" on the phone. **Pass:** the answer from the Mac's model appears on the phone and the Mac.
+5. **Cursor:** turn on Settings → Cursor debug overlay on the phone, then move the Mac mouse. **Pass:** the eyes follow, and "last event"
+   stays under ~100 ms.
+
 These checks can only be done on your hardware. Each has an observable pass condition. Run them in order. Write down any step that
 fails, with the exact message shown.
 

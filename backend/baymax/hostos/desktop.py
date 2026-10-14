@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .apps import AppInfo
 from ..screen.elements import Display, ScreenElement, parse_ax_dump, vision_box_to_global
 from .process import ProcessManager
 
@@ -95,6 +96,7 @@ class DesktopBackend:
     async def press_element(self, app: str, role: str, name: str) -> None: raise DesktopUnavailable(self._why())
     async def read_window_text(self, app: str, limit: int = 4000) -> str: raise DesktopUnavailable(self._why())
     async def screenshot(self, path: Path) -> Path: raise DesktopUnavailable(self._why())
+    async def list_apps(self) -> tuple[list[AppInfo], list[AppInfo]]: raise DesktopUnavailable(self._why())
     async def open_path_in_app(self, app: str, path: Path) -> None: raise DesktopUnavailable(self._why())
     async def window_titles(self, app: str) -> list[str]: raise DesktopUnavailable(self._why())
     async def clipboard_text(self) -> str: raise DesktopUnavailable(self._why())
@@ -410,6 +412,23 @@ class MacDesktop(DesktopBackend):
         proc = await self.process_name(app)
         return (await self._osascript(_AS_TEXT, proc, timeout=30))[:limit]
 
+    async def list_apps(self) -> tuple[list[AppInfo], list[AppInfo]]:
+        """(running regular apps, installed apps). Running apps come from NSWorkspace (no permission needed)."""
+        running: list[AppInfo] = []
+        try:
+            from AppKit import NSWorkspace  # type: ignore  # pyobjc-framework-Cocoa (installed with Quartz)
+
+            for a in NSWorkspace.sharedWorkspace().runningApplications():
+                if int(a.activationPolicy()) == 0 and a.localizedName():  # NSApplicationActivationPolicyRegular
+                    name = str(a.localizedName())
+                    running.append(AppInfo(name, name, str(a.bundleIdentifier() or ""), True))
+        except Exception:
+            out = await self._osascript('tell application "System Events" to get name of every process whose background only is false',
+                                        timeout=10)
+            running = [AppInfo(n.strip(), n.strip(), "", True) for n in out.split(",") if n.strip()]
+        installed = await asyncio.get_running_loop().run_in_executor(None, scan_installed_apps)
+        return [r for r in running if r.name not in _SELF_APPS], installed
+
     async def open_path_in_app(self, app: str, path: Path) -> None:
         app = validate_app_name(app)
         res = await self.p.run(["open", "-a", app, str(path)], timeout=20)
@@ -490,6 +509,37 @@ class MacDesktop(DesktopBackend):
 
 
 _SELF_APPS = {"BAYMAX", "Electron", "baymax"}
+APP_DIRS = ("/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
+            str(Path.home() / "Applications"))
+_installed_cache: tuple[float, list[AppInfo]] = (0.0, [])
+
+
+def scan_installed_apps(dirs: tuple[str, ...] = APP_DIRS) -> list[AppInfo]:
+    """Installed .app bundles (name + bundle identifier from Info.plist). Cached for a minute."""
+    import plistlib
+
+    global _installed_cache
+    if time.time() - _installed_cache[0] < 60 and dirs == APP_DIRS:
+        return _installed_cache[1]
+    out: list[AppInfo] = []
+    for d in dirs:
+        try:
+            entries = list(Path(d).iterdir())
+        except OSError:
+            continue
+        for e in entries:
+            if e.suffix != ".app":
+                continue
+            bundle = ""
+            try:
+                with (e / "Contents" / "Info.plist").open("rb") as f:
+                    bundle = str(plistlib.load(f).get("CFBundleIdentifier", ""))
+            except Exception:
+                pass
+            out.append(AppInfo(e.stem, "", bundle, False))
+    if dirs == APP_DIRS:
+        _installed_cache = (time.time(), out)
+    return out
 
 
 def _quartz_displays(Q: Any) -> list[Display]:

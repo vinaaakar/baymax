@@ -78,6 +78,13 @@ class DeviceHub:
         for sess in list(self.sessions):
             await sess.ws.close(code=1001, message=b"server shutting down")
 
+    @staticmethod
+    def _llm_fields(st: Any) -> dict[str, Any]:
+        """The Mac's local model status. Omitted when unknown, so a phone never shows a stale/false 'unavailable'."""
+        if st is None:
+            return {}
+        return {"llm": "ready" if st.available else "unavailable", "model": st.model[:80]}
+
     def connected(self) -> list[dict[str, Any]]:
         return [{"deviceId": s.device_id, "remote": s.remote} for s in self.sessions if s.authenticated]
 
@@ -126,7 +133,12 @@ class DeviceHub:
             if etype == "sleep.state":
                 return proto.make("sleep.state", {"sleeping": p["sleeping"]})
             if etype == "devices.changed":
-                return proto.make("connection.status", {"status": "connected", "devices": int(p.get("count", 0))})
+                return proto.make("connection.status", {"status": "connected", "devices": int(p.get("count", 0)),
+                                                        **self._llm_fields(self.s.llm.last_status)})
+            if etype == "llm.status":  # Ollama came up or went away on the Mac
+                return proto.make("connection.status", {"status": "connected", "devices": len(self.connected()),
+                                                        "llm": "ready" if p.get("available") else "unavailable",
+                                                        "model": str(p.get("model", ""))[:80]})
             if sess.protocol < 2:
                 return None  # v2-only events below are never sent to v1 clients
             if etype == "cursor":
@@ -265,9 +277,9 @@ class DeviceHub:
         await self._send(sess, proto.make("character.state", {"state": s.character.state.value, "reason": "sync"}))
         await self._send(sess, proto.make("sleep.state", {"sleeping": self.assistant.sleeping}))
         await self._send(sess, proto.make("estop.state", {"engaged": s.estop.engaged, "reason": s.estop.reason}))
-        st = s.llm.last_status
+        st = await s.llm.status()  # fresh check: the cached value may not exist yet right after start-up
         await self._send(sess, proto.make("connection.status", {"status": "connected", "devices": len(self.connected()) + 1,
-                                                                "llm": "ready" if st and st.available else "unavailable"}))
+                                                                **self._llm_fields(st)}))
         for t in s.tasks.active():
             await self._send(sess, proto.make("task.update", {"taskId": t.id, "status": t.status.value, "title": t.title}))
         for a in s.tasks.pending_approvals():
