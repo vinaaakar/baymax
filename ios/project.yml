@@ -1,0 +1,51 @@
+# Generate the Xcode project with: brew install xcodegen && xcodegen generate
+name: BaymaxCompanion
+options:
+  bundleIdPrefix: com.baymax
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  BaymaxKit:
+    path: BaymaxKit
+targets:
+  BaymaxCompanion:
+    type: application
+    platform: iOS
+    sources:
+      - path: BaymaxCompanion
+        excludes: ["Resources/Info.plist"]
+    info:
+      path: BaymaxCompanion/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: BAYMAX
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        NSMicrophoneUsageDescription: "BAYMAX listens only while you press the microphone button, and recognises speech on this iPhone."
+        NSSpeechRecognitionUsageDescription: "Your speech is transcribed on this iPhone (on-device only) so BAYMAX can understand requests."
+        NSCameraUsageDescription: "The camera is used only to scan the pairing QR code shown on your Mac."
+        NSLocalNetworkUsageDescription: "BAYMAX connects to your Mac on the local network to sync the companion and send requests."
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.baymax.companion
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_PREVIEWS: YES
+        CODE_SIGN_STYLE: Automatic
+        # Set DEVELOPMENT_TEAM to your Apple Developer Team ID to install on a physical iPhone.
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - package: BaymaxKit
+schemes:
+  BaymaxCompanion:
+    build:
+      targets:
+        BaymaxCompanion: all
+    test:
+      targets: []

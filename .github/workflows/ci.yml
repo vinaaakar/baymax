@@ -1,0 +1,42 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e "backend[dev]"
+      - run: cd backend && python -m pytest -q
+
+  desktop:
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: cd desktop && npm ci --no-audit --no-fund
+      - run: cd desktop && npm run typecheck && npx vitest run && npm run build
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: BaymaxKit unit tests
+        run: cd ios/BaymaxKit && swift test
+      - name: Generate Xcode project
+        run: brew install xcodegen && cd ios && xcodegen generate
+      - name: Build app for the iOS Simulator (unsigned)
+        run: |
+          cd ios
+          xcodebuild -project BaymaxCompanion.xcodeproj -scheme BaymaxCompanion \
+            -destination "generic/platform=iOS Simulator" -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build | tail -40
+          test ${PIPESTATUS[0]} -eq 0
