@@ -105,7 +105,9 @@
       "heightFrac": 0.56,
       "centerY": 0.42,
       "parallaxRoom": 0.08,
-      "description": "Portrait / narrow views (width/height < 1.2): the whole head, centred at centerY. Landscape views use the dome composition."
+      "description": "Whole head. Portrait/narrow: centred at centerY. Landscape without the dome (Mac companion): head ~87% of the height, centred. The iPhone uses the dome composition in landscape.",
+      "landscapeHeightFrac": 0.94,
+      "landscapeCenterY": 0.5
     },
     "shading": {
       "description": "Head: radial gradient from skin (upper-left highlight) to skinShade at the rim, plus a soft drop shadow. Eyes: flat face color with a tiny highlight. Stage: radial burgundy glow behind the head.",

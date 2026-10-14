@@ -71,7 +71,7 @@ export default function BaymaxCharacter(props: CharacterProps) {
   }, []);
 
   const expression = expressionFor(props.state, { cursorLive: !!props.cursorLive, pointing: !!props.point, taskKind: props.taskKind });
-  const fit = fitFace(frame.w, frame.h);
+  const fit = fitFace(frame.w, frame.h, false); // Mac: the whole head (the dome is the iPhone's landscape layout)
   const g = faceGeometry(frame.pose, expression, props.point ?? null, fit.composition);
   useEffect(() => props.onFrame?.({ expression, geometry: g }));
 

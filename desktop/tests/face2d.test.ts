@@ -66,7 +66,17 @@ describe("2D face geometry (design/baymax-visual-spec.json face2d)", () => {
     }
   });
 
-  it("landscape is a dome rising from the bottom edge, with the eyes always visible inside it", () => {
+  it("the Mac companion keeps the whole head, centred, never cropped", () => {
+    for (const [w, h] of [[560, 320], [1440, 900], [2000, 1250]]) {
+      const f = fitFace(w, h, false);
+      expect(f.composition).toBe("full");
+      expect(f.cx + f.scale * FACE.head.rx).toBeLessThanOrEqual(w);
+      expect(f.cy - f.scale * FACE.head.ry).toBeGreaterThanOrEqual(0);
+      expect(f.cy + f.scale * FACE.head.ry).toBeLessThanOrEqual(h);
+    }
+  });
+
+  it("iPhone landscape is a dome rising from the bottom edge, with the eyes always visible inside it", () => {
     for (const [w, h] of [[844, 390], [560, 320], [932, 430], [1600, 500]]) {
       const f = fitFace(w, h);
       expect(f.composition).toBe("dome");

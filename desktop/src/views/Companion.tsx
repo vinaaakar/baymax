@@ -81,7 +81,7 @@ export default function Companion() {
   const task = active[0];
   const [typing, setTyping] = useState(false);
   return (
-    // Desk-companion face mode: the face as a dome plus two small icons (settings, keyboard) top-right. Everything else is in the menu
+    // Desk-companion face mode: only the face and a small keyboard button. Everything else is in the right-click menu
     // and the menu-bar tray. Alerts (E-stop, approvals, errors) appear only while they need you.
     <div className={`stage companion-layout face-mode ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""}`}
       onContextMenu={(e) => { e.preventDefault(); window.baymax?.showCompanionMenu?.(); }}>
@@ -92,32 +92,23 @@ export default function Companion() {
       </div>
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
       <div className="face-overlay">
-        <div className="face-icons">
-          <button className="icon-btn no-drag" onClick={() => window.baymax?.showCompanionMenu?.()} title="Settings and more"
-            aria-label="Settings and more">
-            <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
-              <circle cx="12" cy="12" r="3.2" />
-              <path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7" strokeLinecap="round" />
-              <circle cx="12" cy="12" r="7" />
-            </svg>
-          </button>
-          <button className="icon-btn no-drag" onClick={() => setTyping((v) => !v)} title="Type to BAYMAX" aria-label="Type a message"
-            aria-pressed={typing}>
+        {showCaption && lastAssistant && state !== "SLEEPING" && (
+          <div className="speech-caption" aria-hidden="true" title={lastAssistant.text}>{lastAssistant.text}</div>
+        )}
+        {estop.engaged && <div className="banner estop" role="alert">Emergency Stop is engaged — controlled actions are blocked.</div>}
+        <ApprovalBanners />
+        {voice.error && <div className="banner" role="alert">{voice.error}</div>}
+        {typing ? (
+          <ChatInput autoFocus onDone={() => setTyping(false)} placeholder={sleeping ? "Asleep — wake me first" : "Ask BAYMAX…"}
+            disabled={sleeping || state === "DISCONNECTED"} />
+        ) : (
+          <button className="keyboard-btn no-drag" onClick={() => setTyping(true)} title="Type to BAYMAX (right-click for more)"
+            aria-label="Type a message">
             <svg width="20" height="14" viewBox="0 0 20 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
               <rect x="0.7" y="0.7" width="18.6" height="12.6" rx="2.2" />
               <path d="M4 4.5h1M7 4.5h1M10 4.5h1M13 4.5h1M16 4.5h0M4 7.2h1M7 7.2h1M10 7.2h1M13 7.2h1M5.5 10h9" strokeLinecap="round" />
             </svg>
           </button>
-        </div>
-        {typing && (
-          <ChatInput autoFocus onDone={() => setTyping(false)} placeholder={sleeping ? "Asleep — wake me first" : "Ask BAYMAX…"}
-            disabled={sleeping || state === "DISCONNECTED"} />
-        )}
-        {estop.engaged && <div className="banner estop" role="alert">Emergency Stop is engaged — controlled actions are blocked.</div>}
-        <ApprovalBanners />
-        {voice.error && <div className="banner" role="alert">{voice.error}</div>}
-        {showCaption && lastAssistant && state !== "SLEEPING" && (
-          <div className="speech-caption" aria-hidden="true" title={lastAssistant.text}>{lastAssistant.text}</div>
         )}
       </div>
     </div>

@@ -110,17 +110,19 @@ export function faceGeometry(pose: Pose, expression: Expression, point: { x: num
 export interface FaceFit { scale: number; cx: number; cy: number; composition: Composition }
 
 /** Pixels per face unit and the head's resting centre for a view of w x h.
- *  Landscape: dome composition (head centre just below the bottom edge, like the reference desk device).
- *  Portrait/narrow: the whole head. Never cropped except the dome's lower half, which is below the screen by design. */
-export function fitFace(w: number, h: number): FaceFit {
+ *  `dome` (iPhone, landscape): head centre just below the bottom edge, like the reference desk device.
+ *  Otherwise (Mac companion, portrait): the whole head, never cropped. */
+export function fitFace(w: number, h: number, dome = true): FaceFit {
   const W = w > 0 && Number.isFinite(w) ? w : 1;
   const H = h > 0 && Number.isFinite(h) ? h : 1;
   const f = FACE.fit;
   const D = FACE.dome;
-  if (W / H >= 1.2) {
+  const landscape = W / H >= 1.2;
+  if (landscape && dome) {
     const scale = Math.min((W * D.halfWidthFrac) / FACE.head.rx, (H * D.heightFrac) / (FACE.head.ry * (1 + f.parallaxRoom)));
     return { scale: r6(scale), cx: r6(W / 2), cy: r6(H + D.sink * scale), composition: "dome" };
   }
-  const scale = Math.min((W * f.widthFrac) / (2 * FACE.head.rx), (H * f.heightFrac) / (2 * FACE.head.ry * (1 + f.parallaxRoom)));
-  return { scale: r6(scale), cx: r6(W / 2), cy: r6(H * f.centerY), composition: "full" };
+  const heightFrac = landscape ? f.landscapeHeightFrac : f.heightFrac;
+  const scale = Math.min((W * f.widthFrac) / (2 * FACE.head.rx), (H * heightFrac) / (2 * FACE.head.ry * (1 + f.parallaxRoom)));
+  return { scale: r6(scale), cx: r6(W / 2), cy: r6(H * (landscape ? f.landscapeCenterY : f.centerY)), composition: "full" };
 }
