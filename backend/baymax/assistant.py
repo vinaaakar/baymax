@@ -17,6 +17,7 @@ from typing import Any
 from .character.state_machine import CharacterEvent, CharacterState
 from .capabilities import capability_report, capability_text
 from .intent import trace as rtrace
+from .hostos.sites import browser_named_in, ground_destination
 from .intent.relevance import request_mode, tool_is_relevant
 from .intent.router import LAST_DRAFT, Intent, IntentRouter, RouteContext, parse_model_proposal, split_compound
 from .llm.ollama import LLMError, LLMUnavailable
@@ -387,6 +388,14 @@ class Assistant:
             rtrace.stage("argument_validation", "rejected", str(exc))
             s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="incomplete request")
             return {"ok": True, "message": self._reply(friendly_argument_error(tool, exc), origin)}
+        if intent.source == "model" and tool.name == "apps.open_url":
+            # A model-proposed address must come from the user's words (a 3B model invented "chatgpt.ai").
+            grounded = ground_destination(intent.text, str(clean.get("url", "")))
+            if grounded is None:
+                rtrace.stage("argument_validation", "rejected", f"website not in the request: {str(clean.get('url'))[:80]}")
+                s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="unclear website")
+                return {"ok": True, "message": self._reply("Which website should I open? Say its name or address.", origin)}
+            clean = {**clean, "url": grounded, "browser": clean.get("browser") or browser_named_in(intent.text) or ""}
         rtrace.stage("argument_validation", "ok")
         if t is not None:
             t.tool, t.args = tool.name, clean
@@ -408,7 +417,7 @@ class Assistant:
         self._recent_starts[fp] = now
         try:
             task = s.tasks.submit(intent.tool.split(".")[0], intent.title or tool.description[:60], intent.text or intent.title,
-                                  [PlanStep(intent.title or tool.name, tool.name, intent.args)], source=origin.source)
+                                  [PlanStep(intent.title or tool.name, tool.name, clean)], source=origin.source)  # the checked arguments
         except TaskRejected as exc:
             rtrace.stage("permissions", "rejected", str(exc))
             return {"ok": False, "message": self._reply(str(exc), origin)}

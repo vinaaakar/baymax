@@ -107,14 +107,21 @@ class IntentRouter:
         if re.match(r"^(?:test|try|check)\s+(?:a\s+|the\s+)?(?:multiple|multi)[- ]?lines?\s+text", t):
             return Intent("chat", reply="Do you want me to type three separate lines into a text document? Say “type three lines "
                                         "into TextEdit” (or “create a new TextEdit document” first).", text=raw)
-        m = re.match(r"^(?:open|use|go to|launch)\s+(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?\s*,?\s+(?:and\s+)?(?:then\s+)?"
+        m = re.match(r"^(?:open|use|go to|launch)\s+(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?"
+                     r"(?:\s+(?:in|on|using|with|through)\s+(?:the\s+)?(safari|google chrome|chrome|firefox|arc|brave|edge|browser))?"
+                     r"\s*,?\s+(?:and\s+)?(?:then\s+)?"
                      r"(?:do|perform|run|make)\s+(?:some\s+|a\s+|the\s+)?research\s+(?:based\s+)?(?:on|about|into|regarding|of)\s+(.+)$", t)
         if m:
             svc = m.group(1).replace(" ", "")
             label = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "perplexity": "Perplexity"}[svc]
-            topic = _exact_tail(raw, m.group(2)).strip()
-            return Intent("tool", "ai.delegate", {"service": svc, "prompt": f"Research this and summarize it with sources: {topic}",
-                                                  "submit": True}, f"Ask {label} to research"[:120], raw)
+            topic = _exact_tail(raw, m.group(3)).strip()
+            args = {"service": svc, "prompt": f"Research this and summarize it with sources: {topic}", "submit": True}
+            if m.group(2):  # "in Safari": the website in that browser, not the native app
+                args["via"] = "browser"
+                if m.group(2) != "browser":
+                    args["browser"] = {"chrome": "Google Chrome", "google chrome": "Google Chrome", "brave": "Brave Browser",
+                                       "edge": "Microsoft Edge"}.get(m.group(2), m.group(2).title())
+            return Intent("tool", "ai.delegate", args, f"Ask {label} to research"[:120], raw)
 
         # ---- questions about apps and the front window (answered from macOS, not guessed)
         if re.search(r"\b(what|which)\s+(?:apps|applications|programs)\s+(?:are|do i have)\s+(?:currently\s+)?(?:open|running)\b"

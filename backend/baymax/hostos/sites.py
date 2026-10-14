@@ -60,3 +60,37 @@ def same_site(actual_url: str, dest: Destination) -> bool:
         return False
     base = ".".join(want.split(".")[-2:])
     return host == want or host.endswith("." + base) or host == base
+
+
+_BROWSER_WORDS = {"safari": "Safari", "chrome": "Google Chrome", "google chrome": "Google Chrome", "firefox": "Firefox", "arc": "Arc",
+                  "brave": "Brave Browser", "edge": "Microsoft Edge", "opera": "Opera", "vivaldi": "Vivaldi"}
+
+
+def browser_named_in(text: str) -> str | None:
+    """'open chatgpt on the safari' -> 'Safari' (the browser the user actually said, if any)."""
+    t = text.lower()
+    for word in sorted(_BROWSER_WORDS, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(word)}\b", t):
+            return _BROWSER_WORDS[word]
+    return None
+
+
+def ground_destination(user_text: str, proposed: str) -> str | None:
+    """Check a website the *model* proposed against what the user said. Returns what to open, or None when the
+    proposal isn't grounded in the request (seen: "open ChatGPT on the Safari" -> the model invented chatgpt.ai).
+
+    - the proposed domain/name appears in the user's words: keep it;
+    - the user named a well-known site: open that site (its canonical address), whatever the model wrote;
+    - otherwise: None (ask instead of opening a made-up address)."""
+    t = " ".join(user_text.lower().split())
+    dest = resolve_destination(proposed)
+    if dest is None:
+        return None
+    named = [k for k in sorted(KNOWN_SITES, key=len, reverse=True) if len(k) > 1 and re.search(rf"\b{re.escape(k)}\b", t)]
+    if dest.kind == "url" and (dest.host and dest.host in t or dest.label.lower() in t):
+        return proposed
+    if named:
+        return named[0]  # resolve_destination(name) -> the real site
+    if dest.kind != "url" and dest.label.lower() in t:
+        return proposed
+    return None

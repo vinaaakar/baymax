@@ -369,3 +369,41 @@ async def test_when_baymax_is_in_front_the_window_behind_it_is_used_and_strips_a
                                _cgw("Safari", "Apple", 100, 100, 1200, 800)])
     w = await d.active_window()
     assert (w.app, w.title) == ("Safari", "Apple") and await d.target_app() == "Safari"
+
+
+# ------------------------------------------------------------------ "Open ChatGPT on the Safari and do some research…"
+def test_research_in_a_named_browser_uses_that_browsers_website():
+    i = R.route("Open ChatGPT on the Safari and do some research on how AI works")
+    assert i.tool == "ai.delegate" and i.args == {"service": "chatgpt", "via": "browser", "browser": "Safari", "submit": True,
+                                                  "prompt": "Research this and summarize it with sources: how AI works"}
+
+
+@pytest.mark.parametrize("said,proposed,expect", [
+    ("Open ChatGPT on the Safari and do some research", "chatgpt.ai", "chatgpt"),  # seen: invented domain -> real site
+    ("open github.com", "github.com", "github.com"),
+    ("open my bank", "mybank-login.com", None),  # never open an address the user didn't give
+    ("open youtube", "https://youtube.example.net", "youtube"),
+])
+def test_model_proposed_websites_must_come_from_the_request(said, proposed, expect):
+    from baymax.hostos.sites import ground_destination, resolve_destination
+
+    got = ground_destination(said, proposed)
+    assert got == expect
+    if got == "chatgpt":
+        assert resolve_destination(got).host == "chatgpt.com"
+
+
+async def test_model_invented_url_is_corrected_and_the_named_browser_used(env):
+    from baymax.intent.router import Intent
+
+    proposal = Intent("tool", "apps.open_url", {"url": "chatgpt.ai"}, "open", source="model", text="open chatgpt on the safari please")
+    r = await env["a"]._start_tool(proposal, __import__("baymax.assistant", fromlist=["Origin"]).Origin("local", False))
+    t = await env["s"].tasks.wait(r["taskId"], 5)
+    assert ("open_url", "https://chatgpt.com", "Safari") in env["desk"].calls, env["desk"].calls
+    assert t.status is TaskStatus.COMPLETED
+
+
+def test_locate_asks_electron_apps_to_expose_their_interface():
+    from baymax.hostos import desktop as dk
+
+    assert 'set value of attribute "AXManualAccessibility" to true' in dk._AS_LOCATE

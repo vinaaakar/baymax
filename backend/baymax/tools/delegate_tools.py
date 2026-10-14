@@ -181,8 +181,9 @@ class DelegateToAITool(Tool):
             why = ("its window has more interface elements than I can read in time" if win.get("truncated")
                    else "no window of it is visible on this desktop" if win.get("windows") == 0
                    else "its interface may have changed or still be loading")
+            shown = f" in its window “{win['name']}”" if win.get("name") else ""
             return ToolResult(False, f"I opened {svc.label} but couldn't find its message box within {FIELD_SEARCH_S:.0f} seconds "
-                                     f"(checked {len(els)} interface elements; {why}). Nothing was typed or sent.",
+                                     f"(checked {len(els)} interface elements{shown}; {why}). Nothing was typed or sent.",
                               {**data, "errorKind": "not_found"})
         # 6-7: type the prompt into that field and read it back.
         ctx.checkpoint()

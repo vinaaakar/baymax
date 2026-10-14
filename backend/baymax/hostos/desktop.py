@@ -300,6 +300,9 @@ _AS_LOCATE = """on run argv
   set t0 to current date
   tell application "System Events"
     tell process appName
+      try -- Chromium/Electron apps expose their web content only once an assistive client asks (as screen readers do)
+        set value of attribute "AXManualAccessibility" to true
+      end try
       set chosenWin to my pickWindow(appName)
       set w to item 1 of chosenWin
       set wName to ""
