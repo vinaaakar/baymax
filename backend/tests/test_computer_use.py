@@ -277,3 +277,16 @@ async def test_permission_instructions_are_not_repeated_every_message(services, 
         texts.append([m["text"] for m in services.conversation.recent(5) if m["role"] == "assistant"][-1])
     assert "Open System Settings" in texts[0]
     assert "Open System Settings" not in texts[1] and "still missing" in texts[1]
+
+
+def test_applescripts_never_filter_entire_contents_with_whose():
+    """Found on the real Mac: `every UI element of (entire contents …) whose …` fails with -1700. Scripts must iterate."""
+    import re
+
+    import baymax.hostos.desktop as dsk
+
+    for name in dir(dsk):
+        if name.startswith("_AS_"):
+            src = getattr(dsk, name)
+            code = "\n".join(line.split("--", 1)[0] for line in src.splitlines())  # ignore AppleScript comments
+            assert not re.search(r"entire contents of [^\n]*\)\s*whose", code), name

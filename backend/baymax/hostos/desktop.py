@@ -305,17 +305,21 @@ _AS_FOCUS = """on run argv
   tell application "System Events"
     tell process appName
       set frontmost to true
-      set els to (every UI element of (entire contents of window 1) whose role is roleName)
-      repeat with e in els
-        set p to position of e
-        if (((item 1 of p) - tx) ^ 2 + ((item 2 of p) - ty) ^ 2) < 36 then
-          try
-            set focused of e to true
-          on error
-            perform action "AXPress" of e
-          end try
-          return "ok"
-        end if
+      -- "entire contents" is a plain list: it can't be filtered with "whose" (error -1700), so check each element.
+      repeat with e in (entire contents of window 1)
+        try
+          if role of e is roleName then
+            set p to position of e
+            if (((item 1 of p) - tx) ^ 2 + ((item 2 of p) - ty) ^ 2) < 36 then
+              try
+                set focused of e to true
+              on error
+                perform action "AXPress" of e
+              end try
+              return "ok"
+            end if
+          end if
+        end try
       end repeat
     end tell
   end tell
@@ -399,9 +403,30 @@ _AS_PRESS = """on run argv
   tell application "System Events"
     tell process appName
       set frontmost to true
-      set els to (every UI element of (entire contents of window 1) whose role is roleName and name is elName)
-      if (count of els) = 0 then error "element not found" number 1404
-      perform action "AXPress" of item 1 of els
+      -- iterate: "whose" can't filter the "entire contents" list (error -1700)
+      repeat with e in (entire contents of window 1)
+        try
+          if role of e is roleName then
+            set nm to ""
+            try
+              set nm to name of e
+            end try
+            set ds to ""
+            try
+              set ds to description of e
+            end try
+            set vl to ""
+            try
+              set vl to value of e as text
+            end try
+            if nm is elName or ds is elName or vl is elName then
+              perform action "AXPress" of e
+              return "ok"
+            end if
+          end if
+        end try
+      end repeat
+      error "element not found" number 1404
     end tell
   end tell
 end run"""
