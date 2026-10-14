@@ -46,7 +46,8 @@ public enum BaymaxProtocol {
         "cursor.update": (["x": .float, "y": .float, "displayId": .int, "displayWidth": .int, "displayHeight": .int],
                           ["vx": .float, "vy": .float, "scale": .float, "seq": .int]),
         "gaze.target": (["kind": .str, "x": .float, "y": .float],
-                        ["vx": .float, "vy": .float, "displayId": .int, "label": .str, "confidence": .float, "durationMs": .int]),
+                        ["vx": .float, "vy": .float, "displayId": .int, "label": .str, "confidence": .float, "durationMs": .int,
+                         "pointId": .str, "seq": .int]),
         "research.result": (["taskId": .str, "query": .str, "summary": .str, "sources": .list], ["summaryKind": .str]),
     ]
 

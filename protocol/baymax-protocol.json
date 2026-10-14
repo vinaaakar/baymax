@@ -585,7 +585,9 @@
           "displayId": "int",
           "label": "str",
           "confidence": "float",
-          "durationMs": "int"
+          "durationMs": "int",
+          "pointId": "str",
+          "seq": "int"
         },
         "since": 2
       },

@@ -149,3 +149,18 @@ Then type these into BAYMAX and check the result:
 | `Open Safari and then open Terminal` | both open, in order |
 | Press ⌘⇧. during a multi-step request | it stops; later steps don't run |
 | Open `http://127.0.0.1:8765/api/requests` (with the token) or check the BAYMAX log | each request's stages |
+| (ChatGPT or any chat app in front) `Point to the Send button` | the real mouse pointer moves onto Send; the Mac face and the iPhone face point at it; nothing is clicked |
+| `Move the mouse to the search field` | the pointer moves onto the search field; nothing is typed or clicked |
+| (a web form in Safari) `Fill the email field with test@example.com` | that field (found by its label) gets the text; the reply says it was read back; the form is NOT submitted |
+| `Switch to TextEdit and read it` | TextEdit comes to the front and BAYMAX reads its text |
+| `Go to the Python documentation and find information about dictionaries` | a research result with a summary and the docs.python.org sources it read |
+| Ask BAYMAX to type a long text into TextEdit, then press ⌘⇧. (or STOP) while it types | typing stops mid-text; no key stays held; the iPhone pointer indicator disappears |
+
+### iPhone pointing sync (needs the phone paired and on the same Wi-Fi)
+
+| Do | Expect |
+|---|---|
+| `Point to the Send button` with the phone app open | within about a second the phone face looks/points the same way as the Mac face, then returns to following the cursor after ~5 s |
+| Ask twice quickly for two different buttons | the phone shows the second one (older events arriving late are dropped) |
+| Turn Wi-Fi off on the phone, ask BAYMAX to point, then turn Wi-Fi back on after 10 s | the phone does NOT replay the old point after reconnecting |
+| Press STOP while pointing | the indicator clears on both screens |

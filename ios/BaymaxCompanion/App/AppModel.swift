@@ -245,9 +245,10 @@ final class AppModel: ObservableObject {
             return // high-rate: skip the VoiceOver announcement path below
         case "gaze.target":
             guard !sleeping else { return }
-            if env.string("kind") == "clear" { gaze.clearPoint(); return }
+            if env.string("kind") == "clear" { gaze.clearPoint(pointId: env.string("pointId")); return }
             if let vx = env.double("vx") ?? env.double("x"), let vy = env.double("vy") ?? env.double("y") {
-                gaze.point(vx: vx, vy: vy, label: env.string("label") ?? "", durationMs: Double(env.int("durationMs") ?? 4000))
+                gaze.point(vx: vx, vy: vy, label: env.string("label") ?? "", durationMs: Double(env.int("durationMs") ?? 4000),
+                           pointId: env.string("pointId"), seq: env.int("seq"), sentMs: env.ts)
             }
         case "research.result":
             let sources = (env.payload["sources"] as? [[String: Any]] ?? []).compactMap { s -> (String, String)? in

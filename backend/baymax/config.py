@@ -93,6 +93,8 @@ class SecurityConfig:
     approval_timeout_s: int = 300
     allow_desktop_control: bool = True
     hardware_control_enabled: bool = False
+    # Pause between typed chunks of up to 10 characters (typing cadence). 0 = as fast as macOS accepts.
+    typing_interval_ms: int = 12
 
 
 @dataclass

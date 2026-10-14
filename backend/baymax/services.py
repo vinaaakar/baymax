@@ -113,10 +113,16 @@ def build_services(settings: Settings, *, desktop: DesktopBackend | None = None,
     s.cursor = CursorRelay(lambda payload: bus.publish("cursor", payload, record=False))
     s.tasks = TaskManager(s, character=s.character.dispatch)
 
+    s.desktop.typing_interval_s = max(0, min(int(settings.security.typing_interval_ms), 500)) / 1000
+
     def on_estop(reason: str) -> None:
+        # Deterministic stop path (no model involved): halt typing/clicks at the next event, cancel queued and
+        # running tasks (and their retries), kill child processes, and withdraw any pointing indication.
+        s.desktop.cancel_input()
         cancelled = s.tasks.cancel_all(f"Emergency Stop: {reason}")
         killed = processes.kill_all()
         s.tts.stop()
+        s.bus.publish("gaze.target", {"kind": "clear", "x": 0.0, "y": 0.0})
         s.audit.record("estop", "estop.engage", "high", "engaged", {"reason": reason, "cancelled": cancelled, "killed": killed})
 
     def on_estop_change(engaged: bool, reason: str) -> None:

@@ -25,6 +25,9 @@ final class GazeSource: @unchecked Sendable {
     private var tracker = GazeTracker()
     private var debug = DebugSnapshot()
     private(set) var samples = 0
+    // Pointing events from the Mac: newest seq wins; a clear names the point it withdraws.
+    private var lastPointSeq: Int?
+    private var activePointId: String?
 
     private static func nowMs() -> Double { ProcessInfo.processInfo.systemUptime * 1000 }
 
@@ -74,19 +77,38 @@ final class GazeSource: @unchecked Sendable {
         return d
     }
 
-    func point(vx: Double, vy: Double, label: String, durationMs: Double) {
+    /// Shows a pointing event unless it is older than a point already shown (seq) or already expired when it arrived
+    /// (sentMs = the Mac's envelope timestamp). The two clocks are only NTP-close, so 3 s of skew is tolerated: a point is
+    /// dropped as stale only when it arrives more than durationMs + 3 s after the Mac sent it.
+    /// Returns false when the event was dropped.
+    @discardableResult
+    func point(vx: Double, vy: Double, label: String, durationMs: Double, pointId: String? = nil, seq: Int? = nil,
+               sentMs: Int? = nil) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        if let seq, let last = lastPointSeq, seq <= last { return false }
+        if let sentMs, sentMs > 0 {
+            let age = Date().timeIntervalSince1970 * 1000 - Double(sentMs)
+            if age > durationMs + 3000 { return false }
+        }
+        if let seq { lastPointSeq = seq }
+        activePointId = pointId
         tracker.pointAt(vx: vx, vy: vy, label: label, durationMs: durationMs, now: Self.nowMs())
+        return true
     }
 
-    func clearPoint() {
+    /// Withdraws the current point; with an id, only if that point is still the one shown.
+    func clearPoint(pointId: String? = nil) {
         lock.lock(); defer { lock.unlock() }
+        if let pointId, let active = activePointId, pointId != active { return }
+        activePointId = nil
         tracker.clearPoint()
     }
 
     /// Called on reconnect, wake and sleep: stale samples must not drive the gaze.
     func reset() {
         lock.lock(); defer { lock.unlock() }
+        lastPointSeq = nil  // the Mac may have restarted: its sequence starts again
+        activePointId = nil
         tracker.reset()
     }
 

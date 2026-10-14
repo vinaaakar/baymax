@@ -12,7 +12,9 @@ enough; otherwise the caller gets "ambiguous" (with candidates) or "not found".
 from __future__ import annotations
 
 import difflib
+import itertools
 import re
+import uuid
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -49,6 +51,8 @@ class ScreenElement:
     description: str = ""
     captured_at: float = field(default_factory=time.time)
     value: str = ""  # current text of fields/static text (used to verify typed text)
+    enabled: bool | None = None  # AXEnabled (None = not reported)
+    identifier: str = ""  # AXIdentifier, when the app sets one (stable across label changes)
 
     @property
     def center(self) -> tuple[float, float]:
@@ -58,7 +62,9 @@ class ScreenElement:
         cx, cy = self.center
         return {"role": self.role, "label": self.label, "x": round(self.x, 1), "y": round(self.y, 1), "width": round(self.width, 1),
                 "height": round(self.height, 1), "centerX": round(cx, 1), "centerY": round(cy, 1), "source": self.source,
-                "confidence": round(self.confidence, 3), "app": self.app, "capturedAt": self.captured_at}
+                "confidence": round(self.confidence, 3), "app": self.app, "capturedAt": self.captured_at,
+                **({"enabled": self.enabled} if self.enabled is not None else {}),
+                **({"identifier": self.identifier} if self.identifier else {})}
 
 
 TEXT_INPUT_ROLES = ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField")
@@ -66,7 +72,8 @@ TEXT_INPUT_ROLES = ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField")
 
 # ----------------------------------------------------------------- parsing
 def parse_ax_dump(text: str, app: str = "", now: float | None = None) -> list[ScreenElement]:
-    """Parse lines `role<TAB>name<TAB>description<TAB>value<TAB>x<TAB>y<TAB>w<TAB>h` from the AppleScript/AX dumper."""
+    """Parse lines `role<TAB>name<TAB>description<TAB>value<TAB>x<TAB>y<TAB>w<TAB>h[<TAB>enabled<TAB>identifier]` from the
+    AppleScript/AX dumper (enabled is "1"/"0"/"" — the last two columns are optional)."""
     out: list[ScreenElement] = []
     now = time.time() if now is None else now
     for line in text.splitlines():
@@ -85,8 +92,12 @@ def parse_ax_dump(text: str, app: str = "", now: float | None = None) -> list[Sc
             label = "text input"  # an unlabelled field is still a field (e.g. a chat prompt box with no placeholder)
         if not label or label == "missing value":
             continue
+        en = parts[8].strip() if len(parts) > 8 else ""
+        ident = parts[9].strip() if len(parts) > 9 else ""
         out.append(ScreenElement(role, label[:200], x, y, w, h, "ax", 1.0, app, desc[:200], now,
-                                 value="" if value == "missing value" else value[:2000]))
+                                 value="" if value == "missing value" else value[:2000],
+                                 enabled=True if en == "1" else False if en == "0" else None,
+                                 identifier="" if ident == "missing value" else ident[:120]))
     return out
 
 
@@ -245,8 +256,13 @@ def region(el: ScreenElement, displays: list[Display] | None = None) -> str:
     return where + ("" if d.is_primary or len(displays or []) < 2 else f" of display {d.id}")
 
 
+_POINT_SEQ = itertools.count(1)
+
+
 def to_gaze(el: ScreenElement, displays: list[Display], label: str | None = None, duration_ms: int = 5000) -> dict[str, Any]:
-    """gaze.target payload: x,y on the element's display; vx,vy relative to the primary display; gx,gy global points."""
+    """gaze.target payload: x,y on the element's display; vx,vy relative to the primary display; gx,gy global points.
+    pointId names this pointing event (a later "clear" can withdraw exactly it); seq orders events so a receiver drops
+    one that arrives after a newer one; durationMs is its expiry."""
     gx, gy = el.center
     d = display_for(gx, gy, displays)
     primary = next((p for p in displays if p.is_primary), displays[0] if displays else None)
@@ -255,4 +271,5 @@ def to_gaze(el: ScreenElement, displays: list[Display], label: str | None = None
     return {"kind": "element", "x": round((gx - d.x) / d.width, 4), "y": round((gy - d.y) / d.height, 4),
             "vx": round((gx - primary.x) / primary.width, 4), "vy": round((gy - primary.y) / primary.height, 4),
             "gx": round(gx, 1), "gy": round(gy, 1), "displayId": d.id, "label": (label or el.label)[:120],
-            "confidence": round(el.confidence, 3), "durationMs": duration_ms}
+            "confidence": round(el.confidence, 3), "durationMs": duration_ms, "pointId": uuid.uuid4().hex[:12],
+            "seq": next(_POINT_SEQ)}

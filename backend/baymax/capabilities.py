@@ -35,7 +35,7 @@ async def capability_report(s: Any) -> list[Capability]:
         Capability("voice", "Understand your voice (push-to-talk)", "click the mic and speak", ()),
         Capability("apps", "Open apps and websites", "“open Safari”, “open github.com”", ("apps.open", "apps.open_url")),
         Capability("project", "Open a project in your editor", "“open my BAYMAX repository in VS Code”", ("apps.open_project",)),
-        Capability("screen", "Look at, point at and press things on screen", "“look at the Run button”", ("screen.find_element", "screen.click_element")),
+        Capability("screen", "Look at, point at and press things on screen", "“look at the Run button”", ("screen.find_element", "screen.point_at", "screen.click_element")),
         Capability("delegate", "Type prompts into ChatGPT, Claude or Gemini (sending only after you confirm)",
                    "“ask ChatGPT to explain recursion”", ("ai.delegate",)),
         Capability("keys", "Press safe shortcuts and list open apps", "“open a new tab in Safari”, “what apps are open?”",

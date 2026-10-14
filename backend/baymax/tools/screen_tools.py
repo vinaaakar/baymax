@@ -12,7 +12,16 @@ from typing import Any
 
 from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
 from ..hostos.sites import BROWSERS
-from ..screen.elements import Display, Resolution, ScreenElement, friendly_role, region, resolve, to_gaze
+from ..screen.elements import (
+    TEXT_INPUT_ROLES,
+    Display,
+    Resolution,
+    ScreenElement,
+    friendly_role,
+    region,
+    resolve,
+    to_gaze,
+)
 from ..security.policy import Risk
 from .base import Arg, Tool, ToolContext, ToolResult, ToolUnavailable
 
@@ -102,6 +111,50 @@ class FindElementTool(Tool):
                           verification=f"element reported by {'macOS accessibility' if el.source == 'ax' else 'Vision OCR'} in a capture taken for this request")
 
 
+class PointAtTool(Tool):
+    name = "screen.point_at"
+    description = ("Point at a UI element described in words: move the Mac's mouse pointer onto it and show the same target on "
+                   "BAYMAX's face (Mac and iPhone). Never clicks.")
+    risk = Risk.MEDIUM  # moves the real pointer (like desktop.move_cursor)
+    args = {"query": Arg("str", description="what to point at, e.g. 'the Send button'", max_len=160),
+            "app": Arg("str", False, description="application to search (default: the app in front)", max_len=80)}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        query = args["query"].strip()
+        res, displays, notes, _ = await _locate(ctx, query, args.get("app"))
+        if res.status == "ambiguous":
+            q = f"I see more than one “{query}”: {res.describe_candidates(displays)}. Which one should I point at?"
+            return ToolResult(False, q, {**notes, "candidates": [e.to_dict() for _, e in res.candidates]}, needs_clarification=q)
+        if res.status != "found" or res.element is None:
+            return _not_found(query, notes)
+        el = res.element
+        cx, cy = el.center  # global points (top-left origin, all displays): the same space CGEvent uses
+        try:
+            gaze = to_gaze(el, displays)  # also rejects a centre that is on no connected display
+        except ValueError as exc:
+            return ToolResult(False, f"I found “{el.label}” but {exc}, so I didn't move the pointer.", {**notes, "errorKind": "not_found"})
+        ctx.checkpoint()
+        try:
+            await d.move_cursor(cx, cy)
+            px, py = await d.cursor_position()
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            ctx.services.bus.publish("gaze.target", gaze)  # the face can still look at it
+            return ToolResult(False, f"I found “{el.label}” ({_where(el, displays)}) but couldn't move the pointer: {exc}. "
+                                     "I'm looking at it instead.", {**notes, "element": el.to_dict(), "gaze": gaze})
+        ctx.services.bus.publish("gaze.target", gaze)  # Mac companion + iPhone show the same target
+        on_target = abs(px - cx) < 2 and abs(py - cy) < 2
+        how = "the accessibility tree" if el.source == "ax" else f"on-screen text (confidence {el.confidence:.0%})"
+        text = (f"Pointing at “{el.label}” ({_where(el, displays)}), found via {how}. I haven't clicked it."
+                if on_target else f"I moved the pointer toward “{el.label}”, but it ended at ({px:.0f}, {py:.0f}) instead of "
+                                  f"({cx:.0f}, {cy:.0f}). I haven't clicked anything.")
+        return ToolResult(on_target, text, {**notes, "element": el.to_dict(), "gaze": gaze, "pointer": [round(px, 1), round(py, 1)],
+                                            "clicked": False}, verified=on_target,
+                          verification="pointer position read back at the element's centre" if on_target else "pointer read back off target")
+
+
 class ClickElementTool(Tool):
     name = "screen.click_element"
     description = ("Press, double-click or right-click a UI element described in words (found in the accessibility tree, never "
@@ -120,6 +173,9 @@ class ClickElementTool(Tool):
         if res.status != "found" or res.element is None:
             return _not_found(query, notes)
         el = res.element
+        if el.enabled is False:
+            return ToolResult(False, f"“{el.label}” is greyed out (disabled) right now, so I didn't press it.",
+                              {**notes, "element": el.to_dict(), "errorKind": "target_disabled"})
         if el.source != "ax":
             return ToolResult(False, f"I can see “{el.label}” on screen, but {notes.get('app', 'the app')} doesn't expose it to accessibility, "
                                      "so I won't click it blindly. I'm pointing at it instead.",
@@ -157,6 +213,113 @@ class ClickElementTool(Tool):
         verb = "Pressed" if button == "left" and count == 1 else ("Right-clicked" if button == "right" else "Double-clicked")
         return ToolResult(True, f"{verb} “{el.label}” in {app} ({detail}).", {**notes, "element": el.to_dict(), "changed": changed,
                           "frontAfter": front}, verified=changed, verification=detail)
+
+
+def _norm_text(t: str) -> str:
+    return t.replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _field_for(query: str, els: list[ScreenElement]) -> tuple[Resolution, ScreenElement | None]:
+    """The text input the user means: a field whose own name/placeholder matches, else the input next to (right of or
+    below) a matching on-screen label — real frames from the accessibility tree, never fixed coordinates."""
+    inputs = [e for e in els if e.role in TEXT_INPUT_ROLES]
+    res = resolve(query, inputs)
+    if res.status != "not_found":
+        return res, res.element
+    label_res = resolve(query, [e for e in els if e.role == "AXStaticText"])
+    if label_res.status != "found" or label_res.element is None:
+        return res, None
+    lab = label_res.element
+    lx, ly = lab.center
+
+    def gap(e: ScreenElement) -> float | None:
+        ex, ey = e.center
+        right = e.x >= lab.x + lab.width - 4 and abs(ey - ly) <= max(lab.height, e.height)
+        below = e.y >= lab.y + lab.height - 4 and abs(ex - lx) <= max(lab.width, e.width)
+        return (abs(ex - lx) + abs(ey - ly)) if (right or below) else None
+
+    near = sorted((g, e) for e in inputs if (g := gap(e)) is not None and g <= 400)
+    if not near:
+        return res, None
+    return Resolution("found", near[0][1], 1.0), near[0][1]
+
+
+class TypeIntoFieldTool(Tool):
+    name = "screen.type_into"
+    description = ("Type text into a form field described in words (e.g. 'the Email field') in the front app or a named app. "
+                   "Focuses that exact field, types, and reads the text back. Never presses Submit/Send.")
+    risk = Risk.MEDIUM
+    args = {"field": Arg("str", description="the field, e.g. 'Name field'", max_len=120), "text": Arg("str", max_len=2000),
+            "app": Arg("str", False, max_len=80),
+            "replace": Arg("bool", False, default=False, description="clear the field first (only when the user asked)")}
+
+    def describe(self, args: dict[str, Any]) -> str:
+        return f"type {len(args['text'])} characters into the {args['field']}"
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        query, text = args["field"].strip(), args["text"]
+        try:
+            app = args.get("app") or await d.target_app()
+            displays = await d.displays()
+            ctx.progress(0.2, f"finding the {query} in {app}")
+            els = await d.accessibility_elements(app)
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I couldn't read {args.get('app') or 'the front app'}'s fields: {exc}.", {"errorKind": "not_found"})
+        notes: dict[str, Any] = {"query": query, "app": app, "axElements": len(els), "problems": []}
+        res, field = _field_for(query, els)
+        if res.status == "ambiguous":
+            q = f"Several fields match “{query}”: {res.describe_candidates(displays)}. Which one?"
+            return ToolResult(False, q, notes, needs_clarification=q)
+        if field is None:
+            return ToolResult(False, f"I couldn't find a text field matching “{query}” in {app} (checked {len(els)} accessibility "
+                                     "elements), so I didn't type anything.", {**notes, "errorKind": "not_found"})
+        if field.enabled is False:
+            return ToolResult(False, f"The “{field.label}” field is disabled, so I didn't type into it.", {**notes, "errorKind": "target_disabled"})
+        if displays and not any(dp.contains(*field.center) for dp in displays):
+            return ToolResult(False, f"The “{field.label}” field isn't on a connected display, so I didn't type.", {**notes, "errorKind": "not_found"})
+        try:
+            ctx.services.bus.publish("gaze.target", to_gaze(field, displays, duration_ms=3000))
+        except ValueError:
+            pass
+        ctx.checkpoint()
+        try:
+            await d.focus_element(app, field.role, field.x, field.y)  # raises unless macOS confirms keyboard focus there
+            before = ""
+            try:
+                before = _norm_text(await d.element_value(app, field.role, field.x, field.y))
+            except DesktopUnavailable:
+                pass
+            if args.get("replace") and before:
+                await d.press_keys(app, "a", ("command",))  # select the field's text; typing replaces it
+            ctx.checkpoint()
+            await d.type_text(app, text)
+            got = None
+            for _ in range(5):
+                await asyncio.sleep(0.25)
+                try:
+                    got = _norm_text(await d.element_value(app, field.role, field.x, field.y))
+                    break
+                except DesktopUnavailable:
+                    continue
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I found the “{field.label}” field but couldn't type into it: {exc}.", {**notes, "errorKind": "unsupported"})
+        want = _norm_text(text)
+        expected = want if args.get("replace") or not before else before + want
+        data = {**notes, "element": field.to_dict(), "replaced": bool(args.get("replace") and before)}
+        if got is None:
+            return ToolResult(True, f"I typed into the “{field.label}” field, but couldn't read it back to confirm. Nothing was submitted.",
+                              data, verified=False, verification="field value unreadable")
+        if got == expected or (want and want in got):
+            extra = "" if got == expected else " (the field also contains other text)"
+            return ToolResult(True, f"Typed into the “{field.label}” field{extra}. I haven't submitted the form.", data, verified=True,
+                              verification="field value read back and matched exactly" if got == expected else "typed text found in the field")
+        return ToolResult(False, f"I typed into the “{field.label}” field, but it now reads “{got[:80]}”, not what you asked for. "
+                                 "Nothing was submitted.", {**data, "errorKind": "not_verified", "readBack": got[:200]})
 
 
 class ActiveWindowTool(Tool):
@@ -267,4 +430,4 @@ class InspectScreenTool(Tool):
 
 
 def all_screen_tools() -> list[Tool]:
-    return [FindElementTool(), ClickElementTool(), ActiveWindowTool(), PointWindowTool(), InspectScreenTool()]
+    return [FindElementTool(), PointAtTool(), ClickElementTool(), TypeIntoFieldTool(), ActiveWindowTool(), PointWindowTool(), InspectScreenTool()]

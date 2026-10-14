@@ -94,8 +94,23 @@ class ActiveWindow:
     title_note: str = ""
 
 
+class InputCancelled(DesktopUnavailable):
+    """Typing or pointer input was stopped part-way (Emergency Stop / task cancel). Never retried."""
+
+
 class DesktopBackend:
     platform = "unknown"
+    typing_interval_s = 0.012  # pause between typed chunks (≤10 characters each); configurable cadence
+    _input_gen = 0  # bumped by cancel_input(); in-flight typing/clicks check it between events
+
+    def cancel_input(self) -> None:
+        """Stop any typing or clicking in progress at the next event boundary (called by Emergency Stop; never
+        depends on the model). Key and button events are always posted as down/up pairs, so nothing is left held."""
+        self._input_gen += 1
+
+    def _check_input(self, gen: int) -> None:
+        if self._input_gen != gen:
+            raise InputCancelled("input was stopped before it finished")
 
     def capabilities(self) -> dict[str, Any]:
         return {"platform": self.platform, "available": False}
@@ -278,7 +293,23 @@ _AS_LOCATE = """on run argv
               set v to my oneLine(v as text)
             end try
           end if
-          set out to out & r & tab & nm & tab & d & tab & v & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z) & linefeed
+          set en to ""
+          set ident to ""
+          if r is in {"AXButton", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXLink", "AXTab", "AXMenuItem"} then
+            try
+              if enabled of e then
+                set en to "1"
+              else
+                set en to "0"
+              end if
+            end try
+            try
+              set ident to value of attribute "AXIdentifier" of e
+              if ident is missing value then set ident to ""
+              set ident to my oneLine(ident as text)
+            end try
+          end if
+          set out to out & r & tab & nm & tab & d & tab & v & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z) & tab & en & tab & ident & linefeed
           set n to n + 1
         end try
       end repeat
@@ -600,7 +631,9 @@ class MacDesktop(DesktopBackend):
             down, up, btn = Q.kCGEventRightMouseDown, Q.kCGEventRightMouseUp, Q.kCGMouseButtonRight
         else:
             down, up, btn = Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp, Q.kCGMouseButtonLeft
+        gen = self._input_gen
         for i in range(max(1, min(count, 3))):
+            self._check_input(gen)
             for kind in (down, up):
                 ev = Q.CGEventCreateMouseEvent(None, kind, (x, y), btn)
                 Q.CGEventSetIntegerValueField(ev, Q.kCGMouseEventClickState, i + 1)
@@ -617,8 +650,10 @@ class MacDesktop(DesktopBackend):
         CGEventKeyboardSetUnicodeString; line breaks are Shift+Return so chat boxes are not submitted early."""
         app = validate_app_name(app)
         text = text[:4000]
+        gen = self._input_gen  # a stop pressed from here on (even during activation) prevents/aborts the typing
         Q = self._quartz
         if Q is None or not hasattr(Q, "CGEventKeyboardSetUnicodeString"):
+            self._check_input(gen)  # (the osascript child itself is killed by Emergency Stop)
             await self._osascript(_AS_TYPE_LINES, app, *text.replace("\r\n", "\n").split("\n"), timeout=60)
             return
         await self._osascript(_AS_ACTIVATE, app, timeout=10)
@@ -626,6 +661,7 @@ class MacDesktop(DesktopBackend):
         if self.accessibility_trusted() is False:
             raise DesktopPermissionError(ACCESSIBILITY_HELP)
         for kind, chunk in keystroke_plan(text):
+            self._check_input(gen)  # Emergency Stop between chunks: stops mid-text, no key left down
             if kind == "newline":
                 for down in (True, False):
                     ev = Q.CGEventCreateKeyboardEvent(None, KEY_CODES["return"], down)
@@ -636,7 +672,7 @@ class MacDesktop(DesktopBackend):
                     ev = Q.CGEventCreateKeyboardEvent(None, 0, down)
                     Q.CGEventKeyboardSetUnicodeString(ev, len(chunk.encode("utf-16-le")) // 2, chunk)
                     Q.CGEventPost(Q.kCGHIDEventTap, ev)
-            await asyncio.sleep(0.012)
+            await asyncio.sleep(self.typing_interval_s)
 
     async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None:
         app = validate_app_name(app)

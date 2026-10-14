@@ -110,6 +110,13 @@ class IntentRouter:
             or re.match(r"^(?:find|locate|where is)\s+(?:the\s+|my\s+)?([\w .-]+\.(?:pdf|docx?|xlsx?|pptx?|txt|md|csv|zip|png|jpe?g|key|pages|numbers|swift|py|java|js|ts))$", t)
         if m:
             return Intent("tool", "files.find_by_name", {"name": _strip_original(raw, m.group(1))}, "Find file", raw)
+        m = re.match(r"^(?:go to|open|search|check|use|look in|look at)\s+(?:the\s+)?(?:official\s+)?([\w.+#-]+(?: [\w.+#-]+)?)\s+"
+                     r"(?:documentation|docs)\s*,?\s*(?:and\s+)?(?:then\s+)?(?:find|look up|search for|search|read|get|show me|tell me)"
+                     r"\s+(?:me\s+)?(?:some\s+)?(?:information|info|details|the section|what it says)?\s*(?:about|on|for|regarding)?\s+(.+)$", t)
+        if m:
+            topic = m.group(2).strip()
+            return Intent("tool", "research.web", {"query": f"{m.group(1)} official documentation {topic}"},
+                          f"Look up {topic} in the {m.group(1)} docs"[:120], raw)
         m = re.match(r"^(?:find|get|look up|show me)\s+(?:the\s+)?(?:latest\s+|current\s+|official\s+)?(?:documentation|docs|release notes)\s+(?:for|on|about)\s+(.+)$", t)
         if m:
             return Intent("tool", "research.web", {"query": f"official documentation {m.group(1)}"}, "Research documentation", raw)
@@ -279,6 +286,20 @@ class IntentRouter:
         if m:
             n = int(m.group(2) or 5)
             return Intent("tool", "desktop.scroll", {"dy": n if m.group(1) == "up" else -n}, "Scroll", raw)
+        # ---- form fields: "fill the Name field with …", "type 'x' into the Email field" (typing only, never submitting)
+        m = re.match(r"^(?:fill(?: in| out)?|complete)\s+(?:the\s+)?(.+?\b(?:field|box|input))(?:\s+in\s+(?:the\s+)?(.+?)(?:\s+app)?)?"
+                     r"\s+with\s+(.+)$", t) \
+            or re.match(r"^(?:type|enter|write|put)\s+[\"“']?(?P<v>.+?)[\"”']?\s+(?:in|into)\s+(?:the\s+)?(?P<f>.+?\b(?:field|box|input))"
+                        r"(?:\s+in\s+(?:the\s+)?(?P<a>.+?)(?:\s+app)?)?$", t)
+        if m:
+            if m.re.groupindex.get("v"):
+                fld, app_name, val = m.group("f"), m.group("a"), m.group("v")
+            else:
+                fld, app_name, val = m.group(1), m.group(2), m.group(3)
+            replace = bool(re.search(r"\b(replace|clear|overwrite)\b", t))
+            args = {"field": fld.strip(), "text": _exact_tail(raw, val.strip()).strip("\"“”'"), "replace": replace,
+                    **({"app": _title(app_name)} if app_name else {})}
+            return Intent("tool", "screen.type_into", args, f"Fill the {fld.strip()}"[:120], raw)
         m = re.match(r"^type [\"“'](.+)[\"”'] (?:in|into) (?:the )?(.+?)(?: app)?$", raw, re.I)
         if m:
             return Intent("tool", "desktop.type_text", {"app": m.group(2).strip(), "text": m.group(1)}, f"Type into {m.group(2)}", raw)
@@ -289,6 +310,14 @@ class IntentRouter:
         if re.search(r"\b(what('?s| is) on (my |the |this )?screen|what do you see|(current|this|my) screen)\b", t) \
                 and not re.search(r"\bscreenshot\b", t):
             return Intent("tool", "desktop.read_window", {}, "Read the current window", raw)
+
+        # ---- switch apps; "read it" reads the window in front
+        m = re.match(r"^(?:switch|go back|change|swap|flip)\s+(?:over\s+|back\s+)?to\s+(?:the\s+)?(.+?)(?:\s+(?:app|application|window))?$", t)
+        if m and len(m.group(1)) <= 40:
+            return Intent("tool", "apps.open", {"app": _title(m.group(1))}, f"Switch to {_title(m.group(1))}", raw)
+        if re.fullmatch(r"(?:read|show me|tell me)\s+(?:me\s+)?(?:it|this|that|what it says|what's (?:in|on) it|its (?:text|contents?)|"
+                        r"the text|what is (?:in|on) it)(?:\s+(?:to me|aloud|out loud))?", t):
+            return Intent("tool", "desktop.read_window", {}, "Read the window", raw)
 
         # ---- the window the user is working in
         if re.search(r"\b(point|look|turn|face)\b.{0,20}\b(toward|towards|at|to)\b.{0,12}\b(the |my )?(window|app)\b.{0,25}"
@@ -307,7 +336,15 @@ class IntentRouter:
             target, app = _split_app(m.group(2))
             if target:
                 args = {"query": target, **({"app": app} if app else {})}
+                if m.group(1) in ("point at", "point to"):  # pointing moves the real pointer too (never clicks)
+                    return Intent("tool", "screen.point_at", args, f"Point at {target}"[:120], raw)
                 return Intent("tool", "screen.find_element", args, f"Find {target}"[:120], raw)
+        m = re.match(r"^(?:move|put|take) (?:the |my )?(?:mouse|cursor|pointer)(?: pointer)? (?:to|over|onto|on) (.+)$", t)
+        if m and not re.match(r"^\(?\d", m.group(1)):
+            target, app = _split_app(m.group(1))
+            if target and target not in ("it", "there", "that"):
+                args = {"query": target, **({"app": app} if app else {})}
+                return Intent("tool", "screen.point_at", args, f"Point at {target}"[:120], raw)
         m = re.match(r"^(?:click|press|tap|hit)(?: on)?\s+(.+)$", t)
         if m and not re.match(r"^\(?\d", m.group(1)):
             target, app = _split_app(m.group(1))
@@ -383,6 +420,9 @@ def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" 
         return None
     intents = [router.route(p, ctx) for p in parts]
     if all(i.kind == "tool" and i.tool for i in intents):
+        for prev, cur in zip(intents, intents[1:]):  # "switch to TextEdit and read it": "it" is the app just opened
+            if cur.tool == "desktop.read_window" and not cur.args.get("app") and prev.tool == "apps.open":
+                cur.args = {**cur.args, "app": prev.args["app"]}
         return intents
     return None
 
