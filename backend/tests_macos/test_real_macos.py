@@ -38,6 +38,25 @@ _NEW_DOCUMENT = """tell application "TextEdit"
 end tell"""
 
 
+_FRONT_FULLSCREEN = """tell application "System Events"
+  set fp to first process whose frontmost is true
+  set out to name of fp
+  try
+    set out to out & " (front window full screen: " & ((value of attribute "AXFullScreen" of window 1 of fp) as text) & ")"
+  end try
+  return out
+end tell"""
+
+
+async def _front_app_state(desk) -> str:
+    """Front app and whether its window is in full screen: a full-screen Terminal is its own desktop Space, and
+    Accessibility then sees none of TextEdit's windows."""
+    try:
+        return (await desk._osascript(_FRONT_FULLSCREEN, timeout=10)).strip()
+    except Exception as exc:  # diagnostics only
+        return f"unknown ({exc})"
+
+
 async def _fresh_textedit_document(desk, timeout: float = 8.0):
     """Deterministic TextEdit setup. A new document is made through TextEdit's own scripting (a ⌘N keystroke could land
     in whichever app is in front), then we wait until macOS reports TextEdit frontmost AND the accessibility query is
@@ -54,14 +73,15 @@ async def _fresh_textedit_document(desk, timeout: float = 8.0):
         areas = [e for e in els if e.role == "AXTextArea"]
         seen = {"frontmost": front, "new document": name, "window inspected": win, "roles": sorted({e.role for e in els})}
         if front == "TextEdit" and win.get("name") == name and areas:
-            return name, areas[0]
+            return name, areas[0], els
         if time.monotonic() > deadline:
             break
         await asyncio.sleep(0.5)
-    hint = ""
+    hint = f" Front app now: {await _front_app_state(desk)}."
     if win.get("windows") == 0:
-        hint = (" System Events sees NO TextEdit windows although TextEdit has some: they are probably on another desktop"
-                " Space or in full screen. Move them to this desktop (or close them) and run again.")
+        hint += (" System Events sees NO TextEdit windows although TextEdit has some: they are on another desktop Space —"
+                 " usually because Terminal is in full screen. Exit full screen in Terminal (green button or ⌃⌘F) and run"
+                 " again.")
     pytest.fail(f"TextEdit's new document never became the inspected window with a text area: {seen}.{hint}")
 
 
@@ -73,10 +93,11 @@ async def _focus_or_explain(desk, field):
     try:
         await desk.focus_element("TextEdit", field.role, field.x, field.y)
     except DesktopUnavailable as exc:
-        front = await desk.frontmost_app()
+        front = await _front_app_state(desk)
         await desk.accessibility_elements("TextEdit")
-        pytest.fail(f"focusing the text area at ({field.x:.0f}, {field.y:.0f}) failed: {exc} | frontmost now: {front} | "
-                    f"window now visible to Accessibility: {desk.last_ax_window}")
+        pytest.fail(f"focusing the text area at ({field.x:.0f}, {field.y:.0f}) failed: {exc} | macOS said: "
+                    f"{getattr(exc, 'detail', '')!r} | front app now: {front} | window now visible to Accessibility: "
+                    f"{desk.last_ax_window}")
 
 
 def test_permissions_are_reported(desk):
@@ -104,7 +125,7 @@ async def test_frontmost_app_and_window(desk):
 async def test_type_unicode_multiline_into_textedit_and_read_back(desk):
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility to the terminal running pytest first")
-    _, field = await _fresh_textedit_document(desk)
+    _, field, _ = await _fresh_textedit_document(desk)
     await _focus_or_explain(desk, field)  # raises if focus is not confirmed
     text = "BAYMAX test ✓ Grüße 東京 👋\nsecond line — ünïcödé\nthird line."
     await desk.type_text("TextEdit", text)
@@ -147,8 +168,7 @@ async def test_ax_dump_reports_enabled_state_and_pointer_reaches_a_real_element_
     Nothing is clicked."""
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
-    await _fresh_textedit_document(desk)
-    els = await desk.accessibility_elements("TextEdit")
+    _, _, els = await _fresh_textedit_document(desk)  # the elements read while the document was verified in front
     controls = [e for e in els if e.role in ("AXButton", "AXTextArea", "AXCheckBox", "AXPopUpButton")]
     assert controls, f"no controls in TextEdit (roles: {sorted({e.role for e in els})})"
     assert any(e.enabled is not None for e in controls), "AXEnabled was not reported for any control"
@@ -170,7 +190,7 @@ async def test_typing_stops_when_input_is_cancelled(desk):
 
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
-    _, field = await _fresh_textedit_document(desk)
+    _, field, _ = await _fresh_textedit_document(desk)
     await _focus_or_explain(desk, field)
     desk.typing_interval_s = 0.03
     job = asyncio.create_task(desk.type_text("TextEdit", "stop me " * 60))

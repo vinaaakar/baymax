@@ -340,9 +340,10 @@ def _applescripts():
     from baymax.hostos import desktop as dk
 
     scripts = {n: v for n, v in vars(dk).items() if n.startswith("_AS_") and isinstance(v, str)}
-    diag = (ROOT / "backend/tests_macos/diagnose_ax.py").read_text()
-    for i, m in enumerate(_re.finditer(r'"""(on run argv.*?)"""', diag, _re.S)):
-        scripts[f"diagnose_ax#{i}"] = m.group(1)
+    for f in ("backend/tests_macos/diagnose_ax.py", "backend/tests_macos/test_real_macos.py"):
+        src = (ROOT / f).read_text()
+        for i, m in enumerate(_re.finditer(r'"""((?:on run argv|tell application).*?)"""', src, _re.S)):
+            scripts[f"{f.rsplit('/', 1)[1]}#{i}"] = m.group(1)
     return scripts
 
 
@@ -351,6 +352,7 @@ def test_applescript_variables_never_reuse_system_events_terms():
 
     scripts = _applescripts()
     assert "_AS_LOCATE" in scripts and any(k.startswith("diagnose_ax") for k in scripts)
+    assert sum(k.startswith("test_real_macos") for k in scripts) >= 2
     bad = []
     for name, src in scripts.items():
         for var in _re.findall(r"\bset\s+(\w+)\s+to\b|\brepeat with\s+(\w+)\s+(?:in|from)\b|\bon\s+\w+\((\w+)\)", src):
@@ -393,3 +395,60 @@ def test_focus_read_back_and_typing_activate_the_app_so_its_space_is_shown():
         assert "tell application id bid to activate" in script
     for script in (dk._AS_FOCUS, dk._AS_VALUE):
         assert "repeat 15 times" in script  # waits for the window after activation instead of failing at once
+
+
+class _SeqRunner:
+    """Answers successive osascript calls from a list (stdout strings)."""
+
+    def __init__(self, outs):
+        self.outs, self.calls = list(outs), []
+
+    async def run(self, argv, timeout=20):
+        self.calls.append(argv)
+        return _Res(self.outs.pop(0))
+
+
+async def test_focus_refused_falls_back_to_one_click_inside_the_verified_field_then_confirms():
+    from baymax.screen.elements import Display
+
+    d = MacDesktop.__new__(MacDesktop)
+    d._quartz = object()
+    d.p = _SeqRunner(["unfocused\t-10006 Can't set focused", "ok\n"])
+    clicks = []
+
+    async def click(x, y, button="left", count=1):
+        clicks.append((x, y, button, count))
+
+    async def displays():
+        return [Display(1, 0, 0, 1440, 900, 2.0)]
+
+    d.click, d.displays = click, displays
+    await d.focus_element("TextEdit", "AXTextArea", 327, 368)
+    assert clicks == [(331, 372, "left", 1)] and len(d.p.calls) == 2
+
+
+async def test_focus_still_refused_reports_macos_reason_and_never_claims_focus():
+    from baymax.hostos.desktop import DesktopUnavailable
+    from baymax.screen.elements import Display
+
+    d = MacDesktop.__new__(MacDesktop)
+    d._quartz = object()
+    d.p = _SeqRunner(["unfocused\t-10006 Can't set focused", "unfocused\t-10006 Can't set focused"])
+
+    async def click(*a, **k):
+        pass
+
+    async def displays():
+        return [Display(1, 0, 0, 1440, 900, 2.0)]
+
+    d.click, d.displays = click, displays
+    with pytest.raises(DesktopUnavailable) as exc:
+        await d.focus_element("TextEdit", "AXTextArea", 327, 368)
+    assert "didn't let me put the cursor" in str(exc.value) and "-10006" in exc.value.detail
+
+
+def test_focus_script_never_swallows_errors_after_the_element_is_matched():
+    from baymax.hostos import desktop as dk
+
+    assert 'perform action "AXPress"' not in dk._AS_FOCUS  # a text area has no press action: the old fallback hid the error
+    assert "on error errMsg number errNum" in dk._AS_FOCUS and "nearest" in dk._AS_FOCUS

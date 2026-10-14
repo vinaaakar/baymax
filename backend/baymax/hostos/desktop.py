@@ -36,7 +36,9 @@ log = logging.getLogger(__name__)
 
 
 class DesktopUnavailable(Exception):
-    pass
+    def __init__(self, message: str = "", detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail  # raw macOS error text (for logs and diagnostics; never shown as the chat reply)
 
 
 class DesktopPermissionError(DesktopUnavailable):
@@ -413,30 +415,46 @@ _AS_FOCUS = """on run argv
       end try
       delay 0.1
       -- "entire contents" is a plain list: it can't be filtered with "whose" (error -1700), so check each element.
+      -- 1) find the element (errors while scanning other elements are skipped; nothing after the match is swallowed)
+      set hit to missing value
+      set nearest to ""
+      set bestD to 1.0E+9
       repeat with e in (entire contents of w)
         try
           if role of e is roleName then
             set p to position of e
-            if (((item 1 of p) - tx) ^ 2 + ((item 2 of p) - ty) ^ 2) < 36 then
-              try
-                set focused of e to true
-              on error
-                perform action "AXPress" of e
-              end try
-              delay 0.1
-              set wasFocused to false
-              try
-                set wasFocused to (focused of e)
-              end try
-              if wasFocused is true then return "ok"
-              return "unfocused"
+            set dd to ((item 1 of p) - tx) ^ 2 + ((item 2 of p) - ty) ^ 2
+            if dd < bestD then
+              set bestD to dd
+              set nearest to ((item 1 of p) as text) & "," & ((item 2 of p) as text)
+            end if
+            if dd < 36 then
+              set hit to contents of e
+              exit repeat
             end if
           end if
         end try
       end repeat
+      if hit is missing value then
+        if nearest is "" then error "element not found: no " & roleName & " in the window" number 1404
+        error "element not found: nearest " & roleName & " is at " & nearest number 1404
+      end if
+      -- 2) give it keyboard focus and confirm; report macOS's own error if it refuses
+      set setErr to ""
+      try
+        set focused of hit to true
+      on error errMsg number errNum
+        set setErr to (errNum as text) & " " & errMsg
+      end try
+      delay 0.15
+      set wasFocused to false
+      try
+        set wasFocused to (focused of hit)
+      end try
+      if wasFocused is true then return "ok"
+      return "unfocused" & tab & setErr
     end tell
   end tell
-  error "element not found" number 1404
 end run
 
 -- Which window to inspect: the app's main window (its document window; panels such as the Open dialog are never
@@ -683,27 +701,32 @@ class MacDesktop(DesktopBackend):
         if getattr(res, "timed_out", False):
             raise DesktopUnavailable(f"macOS didn't respond within {timeout:.0f} seconds (the app may be busy or showing a dialog)")
         err = res.stderr
-        if "syntax error" in err.lower() or re.search(r"\(-27\d\d\)", err):  # the script itself didn't compile
-            log.error("BAYMAX AppleScript did not compile: %s", err.strip()[-500:])
-            raise DesktopUnavailable("an internal macOS script failed to compile (details are in the BAYMAX log)")
-        if re.search(r"\(1406\)", err) or "no window" in err:
-            log.info("AppleScript reported no window: %s", err.strip()[-300:])
-            who = args[0] if args else "that app"
-            raise DesktopUnavailable(f"{who} has no window I can see on this desktop (its windows may be on another desktop "
-                                     "Space or in full screen)")
-        # Diagnose the API that actually failed: -1743 is Automation (Apple Events to one app), -1719/-25211 are Accessibility.
-        if "-1743" in err or "not authorized to send apple events" in err.lower():
-            target = args[0] if args else "that app"
-            raise DesktopPermissionError(AUTOMATION_HELP.format(app=target))
-        if any(code in err for code in ("-1719", "-25211", "not allowed assistive")):
-            raise DesktopPermissionError(ACCESSIBILITY_HELP)
-        if "-1728" in err and "process" in err:
-            m = re.search(r'process "([^"]*)"', err)
-            raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
-        if re.search(r"\(1404\)", err) or "element not found" in err:
-            raise DesktopUnavailable("the requested interface element was not found (the app may not expose accessibility info)")
-        log.warning("AppleScript failed: %s", err.strip()[-500:])  # full detail for developers, not the chat
-        raise DesktopUnavailable("macOS couldn't complete that step (details are in the BAYMAX log)")
+        try:
+            if "syntax error" in err.lower() or re.search(r"\(-27\d\d\)", err):  # the script itself didn't compile
+                log.error("BAYMAX AppleScript did not compile: %s", err.strip()[-500:])
+                raise DesktopUnavailable("an internal macOS script failed to compile (details are in the BAYMAX log)")
+            if re.search(r"\(1406\)", err) or "no window" in err:
+                log.info("AppleScript reported no window: %s", err.strip()[-300:])
+                who = args[0] if args else "that app"
+                raise DesktopUnavailable(f"{who} has no window I can see on this desktop (its windows may be on another desktop "
+                                         "Space or in full screen)")
+            # Diagnose the API that actually failed: -1743 is Automation (Apple Events to one app), -1719/-25211 are Accessibility.
+            if "-1743" in err or "not authorized to send apple events" in err.lower():
+                target = args[0] if args else "that app"
+                raise DesktopPermissionError(AUTOMATION_HELP.format(app=target))
+            if any(code in err for code in ("-1719", "-25211", "not allowed assistive")):
+                raise DesktopPermissionError(ACCESSIBILITY_HELP)
+            if "-1728" in err and "process" in err:
+                m = re.search(r'process "([^"]*)"', err)
+                raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
+            if re.search(r"\(1404\)", err) or "element not found" in err:
+                raise DesktopUnavailable("the requested interface element was not found (the app may not expose accessibility info)")
+            log.warning("AppleScript failed: %s", err.strip()[-500:])  # full detail for developers, not the chat
+            raise DesktopUnavailable("macOS couldn't complete that step (details are in the BAYMAX log)")
+        except DesktopUnavailable as exc:
+            exc.detail = exc.detail or err.strip()[-400:]
+            raise
+        raise AssertionError("unreachable")
 
     async def open_app(self, name: str) -> None:
         name = validate_app_name(name)
@@ -945,9 +968,28 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         if role not in ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"):
             raise DesktopUnavailable("only text inputs can be focused for typing")
-        out = await self._osascript(_AS_FOCUS, app, role, str(round(x)), str(round(y)), timeout=20)
-        if out.strip() != "ok":  # the element exists but macOS didn't give it keyboard focus: never type blind
-            raise DesktopUnavailable(f"{app} didn't let me put the cursor in that field")
+        argv = (app, role, str(round(x)), str(round(y)))
+        out = (await self._osascript(_AS_FOCUS, *argv, timeout=20)).strip()
+        if out == "ok":
+            return
+        why = out.partition("\t")[2].strip()
+        # The field exists at this exact position in the app's main window, but setting AXFocused was refused (some
+        # text views don't accept it). Fall back to one plain click just inside that same verified field, then confirm
+        # focus again. Never type unless macOS reports the field focused.
+        if getattr(self, "_quartz", None) is not None and await self._on_a_display(x + 4, y + 4):
+            await self.click(x + 4, y + 4)
+            await asyncio.sleep(0.15)
+            out = (await self._osascript(_AS_FOCUS, *argv, timeout=20)).strip()
+            if out == "ok":
+                return
+            why = out.partition("\t")[2].strip() or why
+        raise DesktopUnavailable(f"{app} didn't let me put the cursor in that field", detail=why)
+
+    async def _on_a_display(self, x: float, y: float) -> bool:
+        try:
+            return any(d.contains(x, y) for d in await self.displays())
+        except DesktopUnavailable:
+            return False
 
     async def element_value(self, app: str, role: str, x: float, y: float) -> str:
         """Exact text of the element at (x, y) with this role, line breaks included (for verifying typed text)."""
