@@ -27,4 +27,16 @@ Xcode or Swift toolchain was available (Swift downloads are blocked by this envi
 | Diagnostics panel | lacked expression and pupils | iPhone panel shows coordinates, normalized values, gaze, expression, pupil offsets, connection, event age | N/A (UI) | N/A | NOT RUN | — |
 | Sleep/wake stops and resumes cursor and mic | — | — | PASS real Electron (cursor stream paused while asleep) | NOT RUN | NOT RUN | — |
 | Research returns real sources | TLS trust store; 404s cited | truststore + certifi; 404s rejected | PASS local HTTPS; public internet blocked here | NOT RUN | NOT RUN | — |
+| Request trace for every request | no record of why a request went wrong | `intent/trace.py`, `GET /api/requests` | PASS `test_every_request_records_its_pipeline_stages` | NOT RUN | N/A | — |
+| Typed tool catalog + timeouts | tools had no declared permissions/verification; no timeouts | `tools/catalog.py`, enforced in `TaskManager` | PASS `test_every_tool_declares_…`, `test_tool_timeouts_are_enforced` | NOT RUN | N/A | — |
+| Local inference path (chat → backend → Ollama → reply) | — | payload: system + labelled history | PASS against a fake Ollama HTTP server (real API shape) | NOT RUN — Ollama isn't installed here | N/A | — |
+| Follow-up context | earlier action results looked like normal replies | labelled history | PASS `test_follow_up_uses_the_right_earlier_question` | NOT RUN | NOT RUN | 3B model quality |
+| Delegate a prompt to ChatGPT / Claude / Gemini | not implemented | `ai.delegate` (app or website, AX field, type, read back; submit after approval) | PASS 9 tests (fake desktop) | NOT RUN | N/A | web apps must expose their prompt box to Accessibility; login/CAPTCHA stops it |
+| Post on X with confirmation | not implemented | draft → composer → approval → ⌘Return → verify | PASS `test_publishing_the_draft_needs_confirmation_then_posts`, `test_denied_publish_posts_nothing` | NOT RUN | N/A | X's composer layout may change |
+| Unicode / multi-line typing | AppleScript keystroke; newline = Return (submits) | CGEvent Unicode typing; Shift+Return line breaks; focus first; read back | PASS (plan + fake); real: `tests_macos` | NOT RUN | N/A | — |
+| Safe shortcuts, open-apps question, file by name | misrouted ("open a new tab" → website) | `desktop.shortcut` (allowlist), `desktop.running_apps`, `files.find_by_name` | PASS | NOT RUN | N/A | Spotlight-only search |
+| Double/right click, off-screen rejection | no display-bounds check | element-centre clicks; display check | PASS | NOT RUN | N/A | — |
+| Multi-step plans, E-stop mid-plan, bounded retry | single tool per request; `wait()` crashed on E-stop | `split_compound`, plan runner, `MAX_ATTEMPTS=2`, `wait()` fix | PASS | NOT RUN | N/A | — |
+| Permission diagnosis | Automation (-1743) reported as Accessibility; repeated instructions | correct mapping; `GET /api/permissions`; once per 10 min | PASS | NOT RUN | N/A | macOS can't report Automation/Microphone status in advance |
+| Mac research panel | results not shown on the Mac | slide-out panel with fetched sources only | PASS store test; rendered in Chromium (`docs/images/research-panel.png`) | NOT RUN | N/A | public internet blocked in this container |
 | iOS app compiles | — | — | N/A | N/A | NOT RUN — the last build you reported was an earlier commit | — |

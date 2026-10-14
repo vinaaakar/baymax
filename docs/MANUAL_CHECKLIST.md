@@ -122,3 +122,30 @@ results.
   - while moving the mouse with the phone connected;
   - during an Ollama reply.
 - Backend idle reference measured in the Linux test container: ~65 MB RSS and 0 % CPU over 10 s (not an M4 measurement).
+
+
+## Computer-use checks on your Mac (new)
+
+Run the opt-in native suite first (it opens a new TextEdit document; close it without saving afterwards):
+
+```
+cd ~/Developer/BAYMAX/backend
+BAYMAX_MACOS_INTEGRATION=1 .venv/bin/python -m pytest -v tests_macos
+```
+
+Then type these into BAYMAX and check the result:
+
+| Type | Expect |
+|---|---|
+| `Hi Baymax` | a greeting; nothing opens |
+| `What is Newton's third law?` | an explanation; nothing opens |
+| `What applications are currently open?` | the real list with the front app marked |
+| `Open Gemini in Safari` | Safari opens gemini.google.com; reply says it was confirmed (or which permission is missing) |
+| `Open a new tab in Safari` | a new tab opens |
+| `Open ChatGPT and type this prompt: Explain autonomous computer-use agents.` | the text appears in ChatGPT's box; nothing is sent |
+| `Ask ChatGPT to explain recursion` | an approval with the exact prompt; after you approve, it's sent |
+| `Draft a post saying 'test'`, then `post it on X` | the draft is shown; then an approval before anything is published (deny it if you don't want to post) |
+| `Find the Projects tab in Claude` (Claude open) | the iPhone face looks toward it; nothing is clicked |
+| `Open Safari and then open Terminal` | both open, in order |
+| Press ⌘⇧. during a multi-step request | it stops; later steps don't run |
+| Open `http://127.0.0.1:8765/api/requests` (with the token) or check the BAYMAX log | each request's stages |
