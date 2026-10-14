@@ -17,11 +17,11 @@ from typing import Any
 from .character.state_machine import CharacterEvent, CharacterState
 from .capabilities import capability_report, capability_text
 from .intent import trace as rtrace
-from .intent.relevance import tool_is_relevant
+from .intent.relevance import request_mode, tool_is_relevant
 from .intent.router import LAST_DRAFT, Intent, IntentRouter, RouteContext, parse_model_proposal, split_compound
 from .llm.ollama import LLMError, LLMUnavailable
 from .llm.ollama import ToolsUnsupported, tool_spec
-from .llm.prompts import NATIVE_TOOLS_HINT, claims_unperformed_action, system_prompt, tool_proposal_prompt
+from .llm.prompts import NATIVE_TOOLS_HINT, claims_unperformed_action, honest_no_action, system_prompt, tool_proposal_prompt
 from .memory.facts import Fact, fact_from_stored, find_fact, parse_remember
 from .memory.store import MemoryRejected
 from .services import Services
@@ -432,7 +432,7 @@ class Assistant:
         rtrace.stage("context", "ok", f"{len(history)} recent messages, {len(memories)} memories")
         if not tools:
             rtrace.stage("tool_selection", "skipped", "no tool is relevant: answering conversationally")
-            return await self._plain_chat(memories, history, origin)
+            return await self._plain_chat(memories, history, origin, intent.text)
         rtrace.stage("tool_selection", "ok", "offered to the model: " + ", ".join(sorted(tools)))
         if s.settings.llm.native_tools and not self._native_tools_unsupported:
             try:
@@ -449,12 +449,12 @@ class Assistant:
                 if native.tool_calls and not tool_is_relevant(native.tool_calls[0].name, intent.text):
                     log.info("model picked %s for an unrelated request; answering without tools", native.tool_calls[0].name)
                     rtrace.stage("tool_selection", "rejected", f"model proposed unrelated {native.tool_calls[0].name}")
-                    return await self._plain_chat(memories, history, origin)
+                    return await self._plain_chat(memories, history, origin, intent.text)
                 if native.tool_calls:
                     call = native.tool_calls[0]
                     if call.name not in tools:
                         rtrace.stage("tool_selection", "rejected", f"model proposed unavailable {call.name[:60]}")
-                        return await self._plain_chat(memories, history, origin)
+                        return await self._plain_chat(memories, history, origin, intent.text)
                     proposal = Intent("tool", call.name, call.arguments, call.name, source="model", text=intent.text)
                     return await self._start_tool(proposal, origin)
                 return await self._model_text_reply(native.content, tools, intent, origin)
@@ -469,7 +469,17 @@ class Assistant:
             return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
         return await self._proposal_reply(reply, tools, intent, origin)
 
-    async def _plain_chat(self, memories: list[str], history: list[dict[str, str]], origin: Origin) -> dict[str, Any]:
+    def _no_false_claims(self, text: str, request: str) -> str:
+        """No tool ran for this reply. If it claims an action anyway: for an action request replace it with an honest
+        statement (the claimed result was invented); for a question, keep the answer and add a note."""
+        if not claims_unperformed_action(text):
+            return text
+        rtrace.stage("response", "corrected", "model reply claimed an action that no tool performed")
+        if request and request_mode(request) == "action":
+            return honest_no_action(request)
+        return text + "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+
+    async def _plain_chat(self, memories: list[str], history: list[dict[str, str]], origin: Origin, request: str = "") -> dict[str, Any]:
         """Conversational answer with no tools offered (the model cannot trigger actions here)."""
         try:
             text = await self.s.llm.chat([{"role": "system", "content": system_prompt(memories)}] + history, max_tokens=400)
@@ -478,9 +488,7 @@ class Assistant:
         except LLMError as exc:
             self.s.character.dispatch(CharacterEvent.TASK_FAILED, reason=str(exc))
             return {"ok": False, "message": self._reply(f"The local model had a problem: {exc}", origin)}
-        text = text.strip()
-        if claims_unperformed_action(text):
-            text += "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+        text = self._no_false_claims(text.strip(), request)
         self.s.character.dispatch(CharacterEvent.RESET)
         return {"ok": True, "message": self._reply(text or "Could you say that another way?", origin)}
 
@@ -494,8 +502,7 @@ class Assistant:
         text = content.strip()
         if text.startswith("{"):  # some small models answer with a JSON proposal even in native mode
             return await self._proposal_reply(text, tools, intent, origin)
-        if claims_unperformed_action(text):
-            text += "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+        text = self._no_false_claims(text, intent.text)
         self.s.character.dispatch(CharacterEvent.RESET)
         return {"ok": True, "message": self._reply(text or "I'm not sure how to help with that. Could you say it another way?", origin)}
 
@@ -514,8 +521,8 @@ class Assistant:
         else:
             s.character.dispatch(CharacterEvent.RESET)
         text = proposal.reply
-        if proposal.kind == "chat" and claims_unperformed_action(text):
-            text += "\n\n(Note: no tool ran for this message, so no action was actually performed.)"
+        if proposal.kind == "chat":
+            text = self._no_false_claims(text, intent.text)
         return {"ok": True, "message": self._reply(text, origin)}
 
     # ---------------------------------------------------------- task results

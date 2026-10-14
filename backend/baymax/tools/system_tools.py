@@ -134,14 +134,54 @@ async def _check_on_display(ctx: ToolContext, x: float, y: float) -> ToolResult 
     return None
 
 
-class MoveCursorTool(Tool):
-    name = "desktop.move_cursor"
-    description = "Move the mouse cursor to screen coordinates (points)."
-    risk = Risk.MEDIUM
-    args = {"x": Arg("float"), "y": Arg("float")}
+class NewDocumentTool(Tool):
+    name = "desktop.new_document"
+    description = "Create a new, empty document in a document app (TextEdit by default) and confirm its window appeared."
+    risk = Risk.MEDIUM  # opens an unsaved, empty document; nothing is saved or overwritten
+    args = {"app": Arg("str", False, default="TextEdit", max_len=80)}
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         d = ctx.services.desktop
+        app, problem = await resolve_app_arg(ctx, args.get("app") or "TextEdit", must_run=False)
+        if problem or app is None:
+            return problem or ToolResult(False, "Which app should I create the document in?", {"errorKind": "invalid_arguments"},
+                                         needs_clarification="Which app should I create the document in?")
+        ctx.checkpoint()
+        name = await _desktop(d.new_document(app.name))
+        # Verify: a window with that document's title must actually exist (the app's report alone isn't proof).
+        titles: list[str] = []
+        for _ in range(10):
+            try:
+                titles = await d.window_titles(app.process or app.name)
+            except DesktopUnavailable:
+                titles = []
+            if any(t == name or t.startswith((name + " ", name + ".")) for t in titles):
+                return ToolResult(True, f"Created a new {app.name} document (“{name}”). It's empty and not saved.",
+                                  {"app": app.name, "document": name}, verified=True,
+                                  verification="a window with the new document's title was found")
+            await asyncio.sleep(0.3)
+        return ToolResult(True, f"{app.name} reported a new document “{name}”, but I couldn't see its window to confirm.",
+                          {"app": app.name, "document": name, "windows": titles[:8]}, verified=False,
+                          verification="no window with that title was visible (it may be on another desktop)")
+
+
+class MoveCursorTool(Tool):
+    name = "desktop.move_cursor"
+    description = "Move the mouse cursor to screen coordinates (points), or to the centre of the main display (position='center')."
+    risk = Risk.MEDIUM
+    args = {"x": Arg("float", False), "y": Arg("float", False), "position": Arg("str", False, choices=("center",))}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        if args.get("position") == "center":
+            displays = await _desktop(d.displays())
+            main = next((dp for dp in displays if dp.is_primary), displays[0] if displays else None)
+            if main is None:
+                return ToolResult(False, "macOS didn't report any display, so I didn't move the pointer.", {"errorKind": "not_found"})
+            args = {**args, "x": main.x + main.width / 2, "y": main.y + main.height / 2}
+        if args.get("x") is None or args.get("y") is None:
+            q = "Where should I move the pointer? You can say “the center of the screen” or name something on screen."
+            return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
         if (bad := await _check_on_display(ctx, args["x"], args["y"])) is not None:
             return bad
         await _desktop(d.move_cursor(args["x"], args["y"]))
@@ -572,7 +612,7 @@ class FindFileByNameTool(Tool):
 
 
 def all_system_tools() -> list[Tool]:
-    return [OpenAppTool(), OpenUrlTool(), MoveCursorTool(), ClickTool(), ScrollTool(), TypeTextTool(), ListElementsTool(), PressElementTool(),
+    return [OpenAppTool(), OpenUrlTool(), NewDocumentTool(), MoveCursorTool(), ClickTool(), ScrollTool(), TypeTextTool(), ListElementsTool(), PressElementTool(),
             RunningAppsTool(), ShortcutTool(), FindFileByNameTool(),
             ReadWindowTool(), ScreenshotTool(), ListFilesTool(), ReadFileTool(), WriteFileTool(), SearchFilesTool(), DeleteFileTool(),
             RunCommandTool(), SendMailTool(), HardwareStatusTool(), FlashFirmwareTool()]

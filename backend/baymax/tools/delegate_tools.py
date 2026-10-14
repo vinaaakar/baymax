@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,8 @@ from ..hostos.sites import BROWSERS, resolve_destination, same_site
 from ..screen.elements import TEXT_INPUT_ROLES, ScreenElement
 from ..security.policy import Risk
 from .base import Arg, Tool, ToolContext, ToolResult, ToolUnavailable
+
+FIELD_SEARCH_S = 30.0  # how long to look for the prompt box after opening the app/site
 
 
 @dataclass(frozen=True)
@@ -144,27 +147,43 @@ class DelegateToAITool(Tool):
                         break
                     await asyncio.sleep(0.25)
             # 4-5: inspect the live interface and find the prompt field (pages and apps take a moment to load).
+            data["stage"] = "opened"
             ctx.progress(0.35, f"looking for {svc.label}'s message box")
             field, els = None, []
-            for _ in range(20):
+            deadline = time.monotonic() + FIELD_SEARCH_S  # pages/apps take a moment to load, but never search forever
+            attempts = 0
+            while True:
                 ctx.checkpoint()
+                attempts += 1
                 els = await d.accessibility_elements(target)
+                win = getattr(d, "last_ax_window", None) or {}
+                data["window"] = {k: win.get(k) for k in ("name", "windows", "truncated") if k in win}
                 field = pick_prompt_field(els)
-                if field is not None:
+                if field is not None or time.monotonic() > deadline:
                     break
+                if attempts >= 2 and _LOGIN_HINT.search(" ".join(f"{e.label} {e.value}" for e in els)):
+                    break  # a sign-in page won't turn into a prompt box by waiting
                 await asyncio.sleep(0.5)
+            data["searchAttempts"], data["elementsRead"] = attempts, len(els)
         except DesktopPermissionError as exc:
             raise ToolUnavailable(str(exc)) from None
         except DesktopUnavailable as exc:
-            return ToolResult(False, f"I couldn't operate {svc.label}: {exc}.", {**data, "errorKind": "unsupported"})
+            where = (f"I opened {svc.label}, but reading its window failed" if data.get("stage") == "opened"
+                     else f"I couldn't open {svc.label}")
+            return ToolResult(False, f"{where}: {exc}. Nothing was typed or sent.", {**data, "errorKind": "unsupported"})
         if field is None:
             text = " ".join(f"{e.label} {e.value}" for e in els)
             if _LOGIN_HINT.search(text) or (data.get("url") and re.search(r"/(login|signin|i/flow/login)", str(data.get("url")))):
                 msg = (f"{svc.label} is asking you to sign in or verify first. Please do that in its window, then ask me again — "
                        "I won't enter your credentials.")
                 return ToolResult(False, msg, {**data, "errorKind": "login_required"}, needs_clarification=msg)
-            return ToolResult(False, f"I opened {svc.label} but couldn't find its message box (checked {len(els)} interface "
-                                     "elements). Its interface may have changed or still be loading.", {**data, "errorKind": "not_found"})
+            win = data.get("window") or {}
+            why = ("its window has more interface elements than I can read in time" if win.get("truncated")
+                   else "no window of it is visible on this desktop" if win.get("windows") == 0
+                   else "its interface may have changed or still be loading")
+            return ToolResult(False, f"I opened {svc.label} but couldn't find its message box within {FIELD_SEARCH_S:.0f} seconds "
+                                     f"(checked {len(els)} interface elements; {why}). Nothing was typed or sent.",
+                              {**data, "errorKind": "not_found"})
         # 6-7: type the prompt into that field and read it back.
         ctx.checkpoint()
         ctx.progress(0.55, "entering the prompt")
@@ -219,7 +238,8 @@ class DelegateToAITool(Tool):
                     return ToolResult(True, "Published your post on X" + ("." if shown else " (the composer cleared; I couldn't see the post "
                                       "in the timeline yet)."), data, verified=True, verification="composer cleared after posting")
                 return ToolResult(True, f"Sent your prompt to {svc.label}. Its answer will appear in its window"
-                                        + ("." if shown else " (I couldn't see the message in the conversation yet)."),
+                                        + ("" if shown else " (I couldn't see the message in the conversation yet)")
+                                        + ". I don't read its answer back, so I haven't checked or summarized it.",
                                   data, verified=True, verification="message box cleared after sending")
         return ToolResult(False, f"I pressed Send in {svc.label}, but the prompt is still in the box, so it may not have been sent.",
                           {**data, "errorKind": "not_verified"})

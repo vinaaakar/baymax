@@ -308,7 +308,7 @@ async def test_locate_reports_the_window_it_read_and_the_header_is_not_an_elemen
     d.p = _DumpRunner(dump)
     els = await d.accessibility_elements("TextEdit")
     assert [e.role for e in els] == ["AXTextArea", "AXMenuBarItem"]
-    assert d.last_ax_window == {"windows": 6, "chosen": "main", "name": "Untitled 6", "subrole": "AXStandardWindow"}
+    assert d.last_ax_window == {"windows": 6, "chosen": "main", "name": "Untitled 6", "subrole": "AXStandardWindow", "truncated": False}
     assert parse_window_header("#window\t0\tnone\t\t\n" + ax("AXMenuBarItem", "File", 40, 0, 36, 24))["windows"] == 0
     assert parse_window_header(ax("AXButton", "OK", 1, 1, 9, 9)) is None  # older dumps have no header
 

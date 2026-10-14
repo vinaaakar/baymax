@@ -37,7 +37,8 @@ class FakeDesktop(DesktopBackend):
         self.installed = [AppInfo("Safari", "", "com.apple.Safari"), AppInfo("Terminal", "", "com.apple.Terminal"),
                           AppInfo("Visual Studio Code", "", "com.microsoft.VSCode"), AppInfo("Finder", "", "com.apple.finder"),
                           AppInfo("Notes", "", "com.apple.Notes"), AppInfo("Xcode", "", "com.apple.dt.Xcode"),
-                          AppInfo("Spotify", "", "com.spotify.client"), AppInfo("Mail", "", "com.apple.mail")]
+                          AppInfo("Spotify", "", "com.spotify.client"), AppInfo("Mail", "", "com.apple.mail"),
+                          AppInfo("TextEdit", "", "com.apple.TextEdit")]
         self.clipboard = ""
         self.window_title: str | None = "BAYMAX — README.md"
         self.document = None
@@ -170,6 +171,15 @@ class FakeDesktop(DesktopBackend):
         self.running.add(app)
         self.front = app
         self.titles[app] = [f"{path.name} — {app}"]
+
+    async def new_document(self, app):
+        self.calls.append(("new_document", app))
+        self.running.add(app)
+        self.front = app
+        n = sum(1 for c in self.calls if c[0] == "new_document")
+        name = "Untitled" if n == 1 else f"Untitled {n}"
+        self.titles.setdefault(app, []).insert(0, name)
+        return name
 
     async def window_titles(self, app):
         self._need_ax()

@@ -135,6 +135,7 @@ class DesktopBackend:
     async def list_apps(self) -> tuple[list[AppInfo], list[AppInfo]]: raise DesktopUnavailable(self._why())
     async def open_path_in_app(self, app: str, path: Path) -> None: raise DesktopUnavailable(self._why())
     async def window_titles(self, app: str) -> list[str]: raise DesktopUnavailable(self._why())
+    async def new_document(self, app: str) -> str: raise DesktopUnavailable(self._why())
     async def clipboard_text(self) -> str: raise DesktopUnavailable(self._why())
     async def front_document(self) -> Path | None: raise DesktopUnavailable(self._why())
     # Screen understanding (baymax.screen): real geometry only, never guessed.
@@ -167,7 +168,8 @@ def parse_window_header(dump: str) -> dict[str, Any] | None:
                 count = int(parts[1])
             except ValueError:
                 count = -1
-            return {"windows": count, "chosen": parts[2], "name": parts[3], "subrole": parts[4].strip()}
+            return {"windows": count, "chosen": parts[2], "name": parts[3], "subrole": parts[4].strip(),
+                    "truncated": len(parts) > 5 and parts[5].strip() == "1"}
     return None
 
 
@@ -220,6 +222,18 @@ _AS_TYPE_LINES = """on run argv
       if i < (count of argv) then keystroke return using shift down
     end repeat
   end tell
+end run"""
+
+# Make a new, empty document in a document-based app through its own scripting (Standard Suite `make new document`)
+# and return its name. Needs the Automation permission for that app.
+_AS_NEW_DOCUMENT = """on run argv
+  using terms from application "TextEdit"
+    tell application (item 1 of argv)
+      activate
+      set newDoc to make new document
+      return name of newDoc
+    end tell
+  end using terms from
 end run"""
 
 _AS_ACTIVATE = """on run argv
@@ -278,15 +292,19 @@ end run"""
 _AS_LOCATE = """on run argv
   set appName to item 1 of argv
   set maxCount to (item 2 of argv) as integer
+  set budget to 12
+  if (count of argv) > 2 then set budget to (item 3 of argv) as integer
   set out to ""
   set n to 0
+  set wasCut to "0"
+  set t0 to current date
   tell application "System Events"
     tell process appName
-      set els to {}
       set chosenWin to my pickWindow(appName)
       set w to item 1 of chosenWin
       set wName to ""
       set wSub to ""
+      set queue to {}
       if w is not missing value then
         try
           set wName to my oneLine(name of w as text)
@@ -294,68 +312,103 @@ _AS_LOCATE = """on run argv
         try
           set wSub to subrole of w as text
         end try
-        set els to entire contents of w
+        set queue to {w}
       end if
-      -- header (fewer than 8 columns, so element parsers skip it): which window was read
-      set out to "#window" & tab & (item 3 of chosenWin) & tab & (item 2 of chosenWin) & tab & wName & tab & wSub & linefeed
-      try
-        set els to els & (menu bar items of menu bar 1)
-      end try
-      repeat with e in els
-        if n ≥ maxCount then exit repeat
+      -- Breadth-first walk bounded by an element count and a time budget. "entire contents" builds the whole tree
+      -- before returning anything and took longer than the 25 s limit in apps with huge trees (the ChatGPT app).
+      set qi to 1
+      repeat while qi ≤ (count of queue)
+        if n ≥ maxCount or (count of queue) > maxCount * 4 or (my secondsSince(t0)) > budget then
+          set wasCut to "1"
+          exit repeat
+        end if
+        set cur to item qi of queue
+        set qi to qi + 1
+        set kids to {}
         try
-          set r to role of e
-          set p to position of e
-          set z to size of e
-          set nm to ""
-          try
-            set nm to name of e
-          end try
-          if nm is missing value then set nm to ""
-          set d to ""
-          try
-            set d to description of e
-          end try
-          if d is missing value then set d to ""
-          if d is "" and r is in {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"} then
-            try
-              set d to value of attribute "AXPlaceholderValue" of e
-              if d is missing value then set d to ""
-            end try
-          end if
-          set v to ""
-          if r is in {"AXStaticText", "AXLink", "AXCell", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"} then
-            try
-              set v to value of e
-              if v is missing value then set v to ""
-              set v to my oneLine(v as text)
-            end try
-          end if
-          set en to ""
-          set ident to ""
-          if r is in {"AXButton", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXLink", "AXTab", "AXMenuItem"} then
-            try -- the AXEnabled attribute (the `enabled` property failed for every control on a real Mac)
-              set ev to value of attribute "AXEnabled" of e
-              if ev is true then
-                set en to "1"
-              else if ev is false then
-                set en to "0"
-              end if
-            end try
-            try
-              set ident to value of attribute "AXIdentifier" of e
-              if ident is missing value then set ident to ""
-              set ident to my oneLine(ident as text)
-            end try
-          end if
-          set out to out & r & tab & nm & tab & d & tab & v & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z) & tab & en & tab & ident & linefeed
-          set n to n + 1
+          set kids to UI elements of cur
         end try
+        repeat with k in kids
+          set kid to contents of k
+          set end of queue to kid
+          set ln to my describeEl(kid)
+          if ln is not "" then
+            set out to out & ln
+            set n to n + 1
+          end if
+        end repeat
+      end repeat
+      set mb to {}
+      try
+        set mb to menu bar items of menu bar 1
+      end try
+      repeat with k in mb
+        set ln to my describeEl(contents of k)
+        if ln is not "" then set out to out & ln
       end repeat
     end tell
   end tell
-  return out
+  -- header (fewer than 8 columns, so element parsers skip it): which window was read, and whether the walk was cut short
+  return "#window" & tab & (item 3 of chosenWin) & tab & (item 2 of chosenWin) & tab & wName & tab & wSub & tab & wasCut & linefeed & out
 end run
+
+on secondsSince(t0)
+  return (current date) - t0
+end secondsSince
+
+-- One element as a tab-separated line, or "" if it can't be read (no role/frame).
+on describeEl(e)
+  tell application "System Events"
+    try
+      set r to role of e
+      set p to position of e
+      set z to size of e
+      set nm to ""
+      try
+        set nm to name of e
+      end try
+      if nm is missing value then set nm to ""
+      set d to ""
+      try
+        set d to description of e
+      end try
+      if d is missing value then set d to ""
+      if d is "" and r is in {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"} then
+        try
+          set d to value of attribute "AXPlaceholderValue" of e
+          if d is missing value then set d to ""
+        end try
+      end if
+      set v to ""
+      if r is in {"AXStaticText", "AXLink", "AXCell", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"} then
+        try
+          set v to value of e
+          if v is missing value then set v to ""
+          set v to my oneLine(v as text)
+        end try
+      end if
+      set en to ""
+      set ident to ""
+      if r is in {"AXButton", "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXLink", "AXTab", "AXMenuItem"} then
+        try -- the AXEnabled attribute (the `enabled` property failed for every control on a real Mac)
+          set ev to value of attribute "AXEnabled" of e
+          if ev is true then
+            set en to "1"
+          else if ev is false then
+            set en to "0"
+          end if
+        end try
+        try
+          set ident to value of attribute "AXIdentifier" of e
+          if ident is missing value then set ident to ""
+          set ident to my oneLine(ident as text)
+        end try
+      end if
+      return r & tab & nm & tab & d & tab & v & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z) & tab & en & tab & ident & linefeed
+    end try
+  end tell
+  return ""
+end describeEl
 
 on oneLine(t)
   set AppleScript's text item delimiters to {tab, return, linefeed}
@@ -896,6 +949,13 @@ class MacDesktop(DesktopBackend):
         if not res.ok:
             raise DesktopUnavailable(f"could not open {path.name} in {app}: {res.stderr.strip()[-200:] or 'application not found'}")
 
+    async def new_document(self, app: str) -> str:
+        app = validate_app_name(app)
+        name = (await self._osascript(_AS_NEW_DOCUMENT, app, timeout=20)).strip()
+        if not name:
+            raise DesktopUnavailable(f"{app} didn't report a new document")
+        return name
+
     async def window_titles(self, app: str) -> list[str]:
         app = validate_app_name(app)
         out = await self._osascript(_AS_TITLES, app, PROCESS_ALIASES.get(app, app), timeout=15)
@@ -967,9 +1027,10 @@ class MacDesktop(DesktopBackend):
         t, x, y, w_, h = (out.replace(",", ".").split("\t") + ["0"] * 5)[:5]
         return ActiveWindow(app, t, float(x), float(y), float(w_), float(h))
 
-    async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]:
+    async def accessibility_elements(self, app: str, limit: int = 400, budget_s: int = 12) -> list[ScreenElement]:
         app = validate_app_name(app)
-        out = await self._osascript(_AS_LOCATE, app, str(max(1, min(limit, 1500))), timeout=25)
+        # The script stops walking after `budget` seconds (and says so in its header) well inside the hard timeout.
+        out = await self._osascript(_AS_LOCATE, app, str(max(1, min(limit, 1500))), str(budget_s), timeout=budget_s + 13)
         self.last_ax_window = parse_window_header(out)  # which window was read (diagnostics)
         return parse_ax_dump(out.replace(",", "."), app)  # some locales print decimal commas
 

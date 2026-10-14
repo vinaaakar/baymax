@@ -38,7 +38,10 @@ _RULES: list[tuple[str, str]] = [
     ("coding.java_class", r"\bjava\b"),
     ("coding.explain_error", r"\b(error|exception|traceback|crash|fail\w*|bug|stack ?trace|compiler)\b"),
     ("coding.find", r"\b(function|method|class|code|file|where is|defined|definition|implementation)\b"),
-    ("coding.", r"\b(code|repo|repository|project|tests?|bug|fix|refactor|implement|compile|build)\b"),
+    # "test" alone is not a code request ("test multiple line text…"): tests count only with a code/project context.
+    ("coding.", (r"\b(code|repo|repository|project|codebase|bug|fix|refactor|implement|compile|build)\b"
+                 r"|\b(?:run|rerun|re-run|execute)\s+(?:the\s+|my\s+|all\s+)?(?:unit\s+)?tests?\b|\b(?:unit|failing)\s+tests?\b"
+                 r"|\btest\s+suite\b")),
     ("shell.", r"\b(run|execute|command|terminal|shell|script)\b"),
     ("mail.", r"\b(e-?mail|mail|send)\b"),
     ("hardware.", r"\b(hardware|firmware|flash|arduino|esp32|board|device|serial|usb)\b"),
@@ -81,9 +84,17 @@ def request_mode(text: str) -> str:
     return "action"
 
 
+# Typing/text-entry wording. Without an explicit code/repository referent such requests must never reach code or
+# repository tools (seen: "Test multiple line text with three separate" -> "Repository not found: project phoenix").
+_TEXT_ENTRY = re.compile(r"\b(type|typing|text|lines?|textedit|paragraphs?|sentences?|words?|document)\b")
+_CODE_REFERENT = re.compile(r"\b(repo|repository|code|codebase|project|source|pom\.xml|gradle|unit tests?|test suite)\b|[~/][\w.-]+/")
+
+
 def tool_is_relevant(tool: str, text: str) -> bool:
     t = text.lower()
     mode = request_mode(text)
+    if tool.startswith(("coding.", "shell.", "apps.open_project")) and _TEXT_ENTRY.search(t) and not _CODE_REFERENT.search(t):
+        return False
     if mode in ("advice", "question"):
         if tool in WRITE_TOOLS or (mode == "advice" and tool.startswith(("creation3d.", "image.", "documents.write", "mail.", "hardware."))):
             return False  # suggestions and explanations never change files

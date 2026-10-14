@@ -54,9 +54,27 @@ def claims_unperformed_action(text: str) -> bool:
 
     global _CLAIM
     if _CLAIM is None:
-        _CLAIM = re.compile(r"\bI(?:'ve| have|'ll go ahead and| just)?\s+(?:opened|launched|started|created|saved|written|wrote|deleted|"
-                            r"sent|clicked|searched|downloaded|installed|ran|executed|moved|renamed|closed)\b", re.I)
+        _CLAIM = re.compile(
+            r"\bI(?:'ve| have|'ll go ahead and| just| successfully)?\s+(?:opened|launched|started|created|saved|written|wrote|"
+            r"deleted|sent|clicked|searched|downloaded|installed|ran|executed|moved|renamed|closed|set|changed|switched|turned|"
+            r"enabled|disabled|adjusted|updated|configured|applied|typed|entered|posted|published|played|paused|muted|"
+            r"scheduled|booked|researched|pointed)\b"
+            # passive / result phrasing: "Your desktop background has been set to Auto", "Display is now on Auto"
+            r"|\b(?:has|have) been (?:set|changed|switched|turned|enabled|disabled|adjusted|updated|configured|applied|opened|"
+            r"created|saved|sent|deleted|moved|posted|published|typed|entered|launched)\b"
+            r"|\b(?:is|are) now (?:set|on|off|enabled|disabled|open|running|active|configured|switched)\b"
+            r"|\b(?:set|changed|switched|updated|adjusted) (?:it |them )?to\b"
+            r"|^\s*(?:done|all set|success(?:fully)?)\b"
+            r"|\b(?:switching|setting|changing|opening|turning|adjusting|launching) (?:the |your |it )?(?:\w+ ){0,2}(?:to|on|off|now)\b",
+            re.I | re.MULTILINE)
     return bool(_CLAIM.search(text))
+
+
+def honest_no_action(request: str) -> str:
+    """Replacement for a model reply that claimed an action when no tool ran (never repeat the invented result)."""
+    req = " ".join(request.split())[:90]
+    return (f"I didn't do that: none of my tools can carry out “{req}”, so nothing on your Mac was changed. "
+            "Ask me what I can do to see the actions I can really perform.")
 
 
 def untrusted(text: str, limit: int = 6000) -> str:

@@ -34,6 +34,8 @@ async def capability_report(s: Any) -> list[Capability]:
         Capability("chat", "Answer questions and chat", "“explain recursion simply”", ()),
         Capability("voice", "Understand your voice (push-to-talk)", "click the mic and speak", ()),
         Capability("apps", "Open apps and websites", "“open Safari”, “open github.com”", ("apps.open", "apps.open_url")),
+        Capability("textedit", "Create a TextEdit document and type into it (read back to check)",
+                   "“create a new TextEdit document”, then “type three lines into TextEdit”", ("desktop.new_document", "screen.type_into")),
         Capability("project", "Open a project in your editor", "“open my BAYMAX repository in VS Code”", ("apps.open_project",)),
         Capability("screen", "Look at, point at and press things on screen", "“look at the Run button”", ("screen.find_element", "screen.point_at", "screen.click_element")),
         Capability("delegate", "Type prompts into ChatGPT, Claude or Gemini (sending only after you confirm)",
@@ -44,11 +46,13 @@ async def capability_report(s: Any) -> list[Capability]:
         Capability("code", "Find code in a project", "“find the function that starts cursor tracking”", ("coding.find",)),
         Capability("errors", "Explain an error you copied", "“explain the error I just copied”", ("coding.explain_error",)),
         Capability("java", "Create a Java class and run its test", "“create a Java class called Invoice and test it”", ("coding.java_class",)),
-        Capability("tests", "Run and fix a project's tests", "“run the tests in ~/Developer/BAYMAX/backend”", ("coding.agent",)),
+        Capability("tests", "Run a project's tests; code fixes only after you approve them, then re-tested",
+                   "“run the tests in ~/Developer/BAYMAX/backend”", ("coding.agent",)),
         Capability("research", "Search the web and show real sources", "“search the web for Spring Boot documentation”", ("research.web",)),
         Capability("docs", "Write documents, summaries and diagrams", "“summarize this document”, “diagram the system architecture”",
                    ("documents.write", "documents.summarize", "documents.diagram")),
-        Capability("3d", "Create and edit 3D models (GLB)", "“make a red sports car”, then “make it bigger”", ("creation3d.create",)),
+        Capability("3d", "Build simple 3D models (GLB) from built-in part templates (not free-form 3D generation)",
+                   "“make a red sports car”, then “make it bigger”", ("creation3d.create",)),
         Capability("sim", "Run simulations with charts", "“simulate a pendulum”", ("simulation.run",)),
         Capability("images", "Generate images", "“generate an image of a lighthouse”", ("image.generate",)),
         Capability("memory", "Remember things you ask me to", "“remember that I use Java 21”", ()),
@@ -63,9 +67,9 @@ async def capability_report(s: Any) -> list[Capability]:
             c.status, c.reason = "unavailable", llm.message
         elif c.key == "voice" and not stt.get("available"):
             c.status, c.reason = "unavailable", stt.get("message", "speech recognition unavailable")
-        elif c.key in ("apps", "project", "screen", "window", "delegate", "keys") and not desktop_ok:
+        elif c.key in ("apps", "project", "screen", "window", "delegate", "keys", "textedit") and not desktop_ok:
             c.status, c.reason = "unavailable", "desktop control works only on macOS"
-        elif c.key in ("screen", "window", "delegate", "keys") and ax is False:
+        elif c.key in ("screen", "window", "delegate", "keys", "textedit") and ax is False:
             c.status, c.reason = "needs_permission", "grant Accessibility in System Settings → Privacy & Security"
         elif c.key == "errors" and not llm.available:
             c.status, c.reason = "available", "shows the file and line; explanations need the local model"
@@ -88,6 +92,8 @@ def capability_text(caps: list[Capability]) -> str:
     if blocked:
         lines.append("Not available at the moment:")
         lines += [f"• {c.title}: {c.reason}" for c in blocked]
+    lines.append("I can't change system settings (display, wallpaper, volume, Wi-Fi). Every action is checked when it runs, "
+                 "and I tell you when I couldn't confirm it.")
     lines.append("Anything that deletes, sends or runs risky commands asks for your approval first.")
     return "\n".join(lines)
 

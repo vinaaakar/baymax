@@ -203,3 +203,80 @@ async def test_typing_stops_when_input_is_cancelled(desk):
     got = await desk.element_value("TextEdit", field.role, field.x, field.y)
     print(f"typed {len(got)} of {len('stop me ' * 60)} characters before the stop. Close the window WITHOUT saving.")
     assert 0 < len(got) < len("stop me " * 60)
+
+
+# ------------------------------------------------------------------ the full tool path (task manager + real Mac)
+@pytest.fixture
+async def real_services(tmp_path, desk):
+    """BAYMAX services on the real MacDesktop (no model needed: plans are submitted directly, as the router would)."""
+    from baymax.config import load_settings
+    from baymax.security.secrets import SecretStore
+    from baymax.services import build_services
+
+    settings = load_settings(tmp_path / "data", {"workspace_dir": str(tmp_path / "ws"), "network": {"local_port": 0},
+                                                 "voice": {"tts_engine": "none"}, "research": {"local_only": True}})
+    settings.ensure_dirs()
+    s = build_services(settings, desktop=desk, secrets=SecretStore(settings.data_dir, use_keychain=False))
+    yield s
+    await s.close()
+
+
+async def _run(s, *steps, timeout=60):
+    from baymax.tasks.models import PlanStep
+
+    task = s.tasks.submit("desktop", "macos-test", "macos integration", [PlanStep(t, t, a) for t, a in steps])
+    return await s.tasks.wait(task.id, timeout)
+
+
+async def test_create_textedit_document_type_three_lines_and_read_back_through_the_tools(desk, real_services):
+    """'Create a new TextEdit document' then 'Type three separate lines into TextEdit', as routed from the iPhone."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    t = await _run(real_services, ("desktop.new_document", {"app": "TextEdit"}))
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+    doc = t.result["data"]["document"]
+    t = await _run(real_services, ("screen.type_into", {"field": "text area", "app": "TextEdit",
+                                                        "text": "Line 1\nLine 2 — ünïcödé ✓\nLine 3 👋"}))
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+    assert "matched exactly" in t.result["verification"]
+    w = await desk.active_window()
+    print(f"typed into {doc}; front window: {w.app} “{w.title}”. Close it WITHOUT saving.")
+    assert w.app == "TextEdit"
+
+
+async def test_identify_the_active_window_through_the_tool(desk, real_services):
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    name, _, _ = await _fresh_textedit_document(desk)
+    t = await _run(real_services, ("desktop.active_window", {}))
+    assert t.status is TaskStatus.COMPLETED and "TextEdit" in t.result["summary"], t.result
+    print(t.result["summary"])
+    assert name in t.result["summary"] or "can't read the window title" in t.result["summary"]
+
+
+async def test_pointer_to_the_center_of_the_main_display_through_the_tool(desk, real_services):
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    x0, y0 = await desk.cursor_position()
+    t = await _run(real_services, ("desktop.move_cursor", {"position": "center"}))
+    await desk.move_cursor(x0, y0)  # put it back
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+
+
+async def test_reading_an_interface_is_bounded_in_time(desk):
+    """The ChatGPT timeout: reading a big app's interface must finish inside the hard limit (and say if it was cut)."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    for app in ("Finder", "TextEdit"):
+        await desk.open_app(app)
+        start = time.monotonic()
+        els = await desk.accessibility_elements(app)
+        took = time.monotonic() - start
+        print(f"{app}: {len(els)} elements in {took:.1f}s, window {desk.last_ax_window}")
+        assert took < 25 and desk.last_ax_window is not None

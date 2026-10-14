@@ -79,6 +79,43 @@ class IntentRouter:
         if re.fullmatch(r"(?:now\s+)?(?:post|publish|tweet)\s+it(?:\s+on\s+(?:x|twitter))?", t):
             return Intent("tool", "ai.delegate", {"service": "x", "prompt": LAST_DRAFT, "submit": True}, "Publish the draft on X", raw)
 
+        # ---- basic desktop workflow, checked before the document-writing and generic "open" rules
+        m = re.match(r"^(?:create|make|open|start|begin)\s+(?:a\s+|an\s+)?new\s+(?:blank\s+|empty\s+)?"
+                     r"(?:(text ?edit|text|pages)\s+(?:document|doc|file)|document|doc)(?:\s+(?:in|on|with|using)\s+(text ?edit|pages))?$", t) \
+            or re.match(r"^new\s+(text ?edit|pages)\s+(?:document|doc|file)$", t)
+        if m:
+            which = " ".join(g for g in m.groups() if g)
+            app = "Pages" if "pages" in which else "TextEdit"
+            return Intent("tool", "desktop.new_document", {"app": app}, f"New {app} document", raw)
+        if re.search(r"\b(?:identify|tell me|name|show me|which is|what is|what's|whats|get|check)\b.{0,20}?\b(?:the\s+|my\s+)?"
+                     r"(?:active|current|front(?:most)?|focused)\s+(?:window|app|application)\b", t) \
+                and not re.search(r"\b(?:read|say|says|contents?|text|in it|on it)\b", t):
+            return Intent("tool", "desktop.active_window", {}, "Active window", raw)
+        m = re.match(r"^(?:type|write|enter|put)\s+(?:(\d+|two|three|four|five|six|several|multiple|a few)\s+)?"
+                     r"(?:separate\s+|different\s+)?lines?(?:\s+of\s+text)?\s+(?:in|into|to)\s+(?:a\s+new\s+|the\s+|a\s+)?"
+                     r"(.+?)(?:\s+(?:app|document|window|doc))?$", t)
+        if m:
+            words = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+            g = m.group(1) or "3"
+            n = int(g) if g.isdigit() else words.get(g, 3)
+            n = max(1, min(n, 20))
+            target = m.group(2).strip()
+            args = {"field": "text area", "text": "\n".join(f"Line {i}" for i in range(1, n + 1))}
+            if target not in ("it", "that", "this", "there", "the document", "document"):
+                args["app"] = _title(target)
+            return Intent("tool", "screen.type_into", args, f"Type {n} lines", raw)
+        if re.match(r"^(?:test|try|check)\s+(?:a\s+|the\s+)?(?:multiple|multi)[- ]?lines?\s+text", t):
+            return Intent("chat", reply="Do you want me to type three separate lines into a text document? Say “type three lines "
+                                        "into TextEdit” (or “create a new TextEdit document” first).", text=raw)
+        m = re.match(r"^(?:open|use|go to|launch)\s+(chat ?gpt|claude|gemini|perplexity)(?:\s+app)?\s*,?\s+(?:and\s+)?(?:then\s+)?"
+                     r"(?:do|perform|run|make)\s+(?:some\s+|a\s+|the\s+)?research\s+(?:based\s+)?(?:on|about|into|regarding|of)\s+(.+)$", t)
+        if m:
+            svc = m.group(1).replace(" ", "")
+            label = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "perplexity": "Perplexity"}[svc]
+            topic = _exact_tail(raw, m.group(2)).strip()
+            return Intent("tool", "ai.delegate", {"service": svc, "prompt": f"Research this and summarize it with sources: {topic}",
+                                                  "submit": True}, f"Ask {label} to research"[:120], raw)
+
         # ---- questions about apps and the front window (answered from macOS, not guessed)
         if re.search(r"\b(what|which)\s+(?:apps|applications|programs)\s+(?:are|do i have)\s+(?:currently\s+)?(?:open|running)\b"
                      r"|\blist\s+(?:the\s+|my\s+)?(?:open|running)\s+(?:apps|applications)\b", t):
@@ -282,6 +319,10 @@ class IntentRouter:
         m = re.match(r"^(?:move|put) (?:the )?(?:mouse|cursor|pointer) to \(?(\d+)[ ,]+(\d+)\)?$", t)
         if m:
             return Intent("tool", "desktop.move_cursor", {"x": float(m.group(1)), "y": float(m.group(2))}, "Move cursor", raw)
+        # "move the pointer to the center of the screen" (also tolerates a misheard verb: "who the pointer to the center")
+        if re.match(r"^(?:\w+\s+)?(?:the\s+|my\s+)?(?:mouse|cursor|pointer)(?:\s+(?:pointer|cursor))?\s+(?:to|into|at)\s+(?:the\s+)?"
+                    r"(?:very\s+)?(?:center|centre|middle)(?:\s+of\s+(?:the\s+|my\s+)?(?:screen|display|monitor))?$", t):
+            return Intent("tool", "desktop.move_cursor", {"position": "center"}, "Move the pointer to the center", raw)
         m = re.match(r"^scroll (up|down)(?: (\d+))?(?: lines?)?$", t)
         if m:
             n = int(m.group(2) or 5)
@@ -421,7 +462,8 @@ def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" 
     intents = [router.route(p, ctx) for p in parts]
     if all(i.kind == "tool" and i.tool for i in intents):
         for prev, cur in zip(intents, intents[1:]):  # "switch to TextEdit and read it": "it" is the app just opened
-            if cur.tool == "desktop.read_window" and not cur.args.get("app") and prev.tool == "apps.open":
+            if cur.tool in ("desktop.read_window", "screen.type_into") and not cur.args.get("app") \
+                    and prev.tool in ("apps.open", "desktop.new_document") and prev.args.get("app"):
                 cur.args = {**cur.args, "app": prev.args["app"]}
         return intents
     return None

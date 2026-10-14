@@ -8,6 +8,7 @@ found; ambiguous matches produce a clarifying question; missing permissions are 
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
@@ -219,6 +220,10 @@ def _norm_text(t: str) -> str:
     return t.replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n")
 
 
+_GENERIC_FIELD = re.compile(r"(?:the\s+)?(?:main\s+)?(?:text(?:\s+entry)?(?:\s+(?:area|box|field|input|view))?|document|body|editor|"
+                            r"page|text\s+document)")
+
+
 def _field_for(query: str, els: list[ScreenElement]) -> tuple[Resolution, ScreenElement | None]:
     """The text input the user means: a field whose own name/placeholder matches, else the input next to (right of or
     below) a matching on-screen label — real frames from the accessibility tree, never fixed coordinates."""
@@ -226,6 +231,10 @@ def _field_for(query: str, els: list[ScreenElement]) -> tuple[Resolution, Screen
     res = resolve(query, inputs)
     if res.status != "not_found":
         return res, res.element
+    # "the text area" / "the document": a generic name means the window's text input when there is exactly one
+    # (e.g. a TextEdit document's text view, whose own label is "text entry area").
+    if _GENERIC_FIELD.fullmatch(query.lower().strip()) and len(inputs) == 1:
+        return Resolution("found", inputs[0], 1.0), inputs[0]
     label_res = resolve(query, [e for e in els if e.role == "AXStaticText"])
     if label_res.status != "found" or label_res.element is None:
         return res, None

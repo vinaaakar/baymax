@@ -177,5 +177,6 @@ async def test_model_text_claiming_an_action_does_nothing_and_is_corrected(voice
     r = await a.handle_text("pretend you did something")
     assert "taskId" not in r and desktop.calls == []
     text = r["message"]["text"] if isinstance(r.get("message"), dict) else str(r)
-    assert "no action was actually performed" in text
+    # An action request: the invented claim is replaced, never repeated (a question keeps its answer plus a note).
+    assert "I've opened Safari" not in text and "nothing on your Mac was changed" in text
     sub.close()
