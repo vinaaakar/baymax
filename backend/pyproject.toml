@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
-macos = ["pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'"]
+macos = ["pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'", "pyobjc-framework-Vision>=10; sys_platform == 'darwin'"]
 
 [project.scripts]
 baymax = "baymax.__main__:main"

@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from baymax.config import load_settings
-from baymax.hostos.desktop import DesktopBackend, DesktopPermissionError, DesktopUnavailable, UIElement
+from baymax.hostos.desktop import ACCESSIBILITY_HELP, SCREEN_HELP, DesktopBackend, DesktopPermissionError, DesktopUnavailable, UIElement
+from baymax.screen.elements import Display, ScreenElement, parse_ax_dump
 from baymax.security.secrets import SecretStore
 
 REPO = Path(__file__).resolve().parents[2]
@@ -23,7 +24,13 @@ class FakeDesktop(DesktopBackend):
         self.running: set[str] = set()
         self.cursor = (0.0, 0.0)
         self.accessibility = True
+        self.screen_recording = True
         self.front = "Finder"
+        # Screen understanding fixtures: a built-in display plus an external one to its left.
+        self.display_list = [Display(1, 0, 0, 1512, 982, 2.0), Display(2, -1920, -98, 1920, 1080, 1.0)]
+        self.ax_dump: dict[str, str] = {}
+        self.ax_after_press: dict[str, str] = {}
+        self.ocr: list[ScreenElement] = []
 
     def capabilities(self):
         return {"platform": "fake", "available": True, "accessibilityTrusted": self.accessibility}
@@ -76,6 +83,8 @@ class FakeDesktop(DesktopBackend):
     async def press_element(self, app, role, name):
         self._need_ax()
         self.calls.append(("press", app, role, name))
+        if app in self.ax_after_press:
+            self.ax_dump[app] = self.ax_after_press[app]
 
     async def read_window_text(self, app, limit=4000):
         self._need_ax()
@@ -83,6 +92,24 @@ class FakeDesktop(DesktopBackend):
 
     async def screenshot(self, path):
         raise DesktopPermissionError("BAYMAX needs the Screen Recording permission for this.")
+
+    async def displays(self):
+        return list(self.display_list)
+
+    async def target_app(self):
+        return self.front
+
+    async def accessibility_elements(self, app, limit=400):
+        if not self.accessibility:
+            raise DesktopPermissionError(ACCESSIBILITY_HELP)
+        self.calls.append(("ax", app))
+        return parse_ax_dump(self.ax_dump.get(app, ""), app)
+
+    async def ocr_elements(self):
+        if not self.screen_recording:
+            raise DesktopPermissionError(SCREEN_HELP)
+        self.calls.append(("ocr",))
+        return list(self.ocr)
 
 
 @pytest.fixture

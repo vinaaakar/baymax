@@ -8,7 +8,8 @@
   ``argv`` to the script, never interpolated into AppleScript source.
 * Quartz CGEvents through PyObjC for cursor move / click / scroll (requires
   Accessibility). If PyObjC is not installed these report unavailable.
-* ``screencapture`` for screenshots (requires Screen Recording).
+* ``screencapture`` for screenshots and Apple Vision OCR for screen text (require
+  Screen Recording); CoreGraphics for display geometry and window owners.
 
 Nothing here disables or works around macOS privacy protections. When a
 permission is missing the call raises :class:`DesktopPermissionError` with
@@ -21,10 +22,12 @@ import asyncio
 import re
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..screen.elements import Display, ScreenElement, parse_ax_dump, vision_box_to_global
 from .process import ProcessManager
 
 
@@ -79,6 +82,11 @@ class DesktopBackend:
     async def press_element(self, app: str, role: str, name: str) -> None: raise DesktopUnavailable(self._why())
     async def read_window_text(self, app: str, limit: int = 4000) -> str: raise DesktopUnavailable(self._why())
     async def screenshot(self, path: Path) -> Path: raise DesktopUnavailable(self._why())
+    # Screen understanding (baymax.screen): real geometry only, never guessed.
+    async def displays(self) -> list[Display]: raise DesktopUnavailable(self._why())
+    async def target_app(self) -> str: raise DesktopUnavailable(self._why())
+    async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
+    async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
     def _why(self) -> str:
         return f"desktop automation is only implemented for macOS (this host is {sys.platform})"
@@ -122,6 +130,53 @@ _AS_ELEMENTS = """on run argv
           end try
           if d is missing value then set d to ""
           set out to out & r & tab & nm & tab & d & linefeed
+        end try
+      end repeat
+    end tell
+  end tell
+  return out
+end run"""
+
+# Front window + menu bar of a process with each element's frame (global points). One line per element:
+# role, name, description, value (static text only), x, y, width, height — tab separated.
+_AS_LOCATE = """on run argv
+  set appName to item 1 of argv
+  set maxCount to (item 2 of argv) as integer
+  set out to ""
+  set n to 0
+  tell application "System Events"
+    tell process appName
+      set els to {}
+      if (count of windows) > 0 then set els to entire contents of window 1
+      try
+        set els to els & (menu bar items of menu bar 1)
+      end try
+      repeat with e in els
+        if n ≥ maxCount then exit repeat
+        try
+          set r to role of e
+          set p to position of e
+          set z to size of e
+          set nm to ""
+          try
+            set nm to name of e
+          end try
+          if nm is missing value then set nm to ""
+          set d to ""
+          try
+            set d to description of e
+          end try
+          if d is missing value then set d to ""
+          set v to ""
+          if r is in {"AXStaticText", "AXLink", "AXCell"} then
+            try
+              set v to value of e
+              if v is missing value then set v to ""
+              set v to v as text
+            end try
+          end if
+          set out to out & r & tab & nm & tab & d & tab & v & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z) & linefeed
+          set n to n + 1
         end try
       end repeat
     end tell
@@ -283,11 +338,112 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         return (await self._osascript(_AS_TEXT, app, timeout=30))[:limit]
 
+    async def displays(self) -> list[Display]:
+        if self._quartz is None:
+            raise DesktopUnavailable("display geometry needs PyObjC: pip install 'baymax-backend[macos]'")
+        return _quartz_displays(self._quartz)
+
+    async def target_app(self) -> str:
+        """The app the user is looking at: the front-most normal window that isn't BAYMAX itself
+        (talking to BAYMAX focuses its own window). Window owner names need no extra permission."""
+        Q = self._quartz
+        if Q is not None:
+            info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements, Q.kCGNullWindowID) or []
+            for w in info:
+                owner = str(w.get("kCGWindowOwnerName") or "")
+                if int(w.get("kCGWindowLayer", 1)) == 0 and owner and owner not in _SELF_APPS:
+                    return owner
+        return await self.frontmost_app()
+
+    async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]:
+        app = validate_app_name(app)
+        out = await self._osascript(_AS_LOCATE, app, str(max(1, min(limit, 1500))), timeout=25)
+        return parse_ax_dump(out.replace(",", "."), app)  # some locales print decimal commas
+
+    def screen_recording_allowed(self) -> bool | None:
+        Q = self._quartz
+        if Q is None or not hasattr(Q, "CGPreflightScreenCaptureAccess"):
+            return None
+        return bool(Q.CGPreflightScreenCaptureAccess())
+
+    async def ocr_elements(self) -> list[ScreenElement]:
+        Q = self._quartz
+        if Q is None:
+            raise DesktopUnavailable("text recognition needs PyObjC: pip install 'baymax-backend[macos]'")
+        if self.screen_recording_allowed() is False:
+            Q.CGRequestScreenCaptureAccess()  # shows the macOS prompt once; never bypassed
+            raise DesktopPermissionError(SCREEN_HELP)
+        try:
+            import Vision  # type: ignore  # noqa: F401
+        except ImportError:
+            raise DesktopUnavailable("text recognition needs PyObjC Vision: pip install 'baymax-backend[macos]'") from None
+        loop = asyncio.get_running_loop()
+        out: list[ScreenElement] = []
+        for d in _quartz_displays(Q):  # fresh capture of every display, every request (no stale screenshots)
+            out += await loop.run_in_executor(None, _vision_ocr, Q, d)
+        return out
+
     async def screenshot(self, path: Path) -> Path:
         res = await self.p.run(["screencapture", "-x", str(path)], timeout=20)
         if not res.ok or not path.exists() or path.stat().st_size == 0:
             raise DesktopPermissionError(SCREEN_HELP)
         return path
+
+
+_SELF_APPS = {"BAYMAX", "Electron", "baymax"}
+
+
+def _quartz_displays(Q: Any) -> list[Display]:
+    err, ids, count = Q.CGGetActiveDisplayList(16, None, None)
+    if err:
+        raise DesktopUnavailable(f"could not list displays (CoreGraphics error {err})")
+    out = []
+    for did in list(ids)[:count]:
+        b = Q.CGDisplayBounds(did)
+        w, h = float(b.size.width), float(b.size.height)
+        px = float(Q.CGDisplayPixelsWide(did)) or w
+        out.append(Display(int(did), float(b.origin.x), float(b.origin.y), w, h, round(px / w, 2) if w else 1.0))
+    return out
+
+
+def _vision_ocr(Q: Any, display: Display) -> list[ScreenElement]:
+    """On-device text recognition of one display (Apple Vision). Words get their own boxes."""
+    import Vision  # type: ignore  # pyobjc-framework-Vision
+
+    image = Q.CGDisplayCreateImage(display.id)
+    if image is None:
+        raise DesktopPermissionError(SCREEN_HELP)
+    req = Vision.VNRecognizeTextRequest.alloc().init()
+    req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+    req.setUsesLanguageCorrection_(False)  # UI labels, identifiers
+    handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, None)
+    ok, err = handler.performRequests_error_([req], None)
+    if not ok:
+        raise DesktopUnavailable(f"text recognition failed: {err}")
+    now = time.time()
+    out: list[ScreenElement] = []
+    for obs in req.results() or []:
+        cands = obs.topCandidates_(1)
+        if not cands:
+            continue
+        cand = cands[0]
+        text, conf = str(cand.string()), float(cand.confidence())
+        bb = obs.boundingBox()
+        x, y, w, h = vision_box_to_global((bb.origin.x, bb.origin.y, bb.size.width, bb.size.height), display)
+        out.append(ScreenElement("text", text, x, y, w, h, "ocr", conf, "", "", now))
+        pos = 0
+        for word in text.split(" "):
+            start = text.find(word, pos)
+            pos = start + len(word)
+            if not word or len(text.split(" ")) == 1:
+                continue
+            rect, _ = cand.boundingBoxForRange_error_((start, len(word)), None)
+            if rect is None:
+                continue
+            wb = rect.boundingBox()
+            x, y, w, h = vision_box_to_global((wb.origin.x, wb.origin.y, wb.size.width, wb.size.height), display)
+            out.append(ScreenElement("text", word, x, y, w, h, "ocr", conf, "", "", now))
+    return out
 
 
 def make_desktop(processes: ProcessManager) -> DesktopBackend:

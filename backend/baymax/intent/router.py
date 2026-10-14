@@ -153,6 +153,20 @@ class IntentRouter:
         m = re.match(r"^(?:press|click) (?:the )?[\"“'](.+)[\"”'] (?:button )?in (?:the )?(.+?)(?: app)?$", raw, re.I)
         if m:
             return Intent("tool", "desktop.press_element", {"app": m.group(2).strip(), "name": m.group(1)}, f"Press {m.group(1)}", raw)
+        # ---- screen understanding: find / look at / point at / click a described UI element
+        ui_word = r"\b(button|field|box|tab|menu|link|icon|checkbox|toolbar|toggle|switch|dropdown|slider)\b"
+        m = re.match(r"^(look at|point at|point to|show me|find|where is|where's|locate|highlight)\s+(.+)$", t)
+        if m and (m.group(1) in ("look at", "point at", "point to", "highlight") or re.search(ui_word, t) or re.search(r"\bon (the |my )?screen\b", t)):
+            target, app = _split_app(m.group(2))
+            if target:
+                args = {"query": target, **({"app": app} if app else {})}
+                return Intent("tool", "screen.find_element", args, f"Find {target}"[:120], raw)
+        m = re.match(r"^(?:click|press|tap|hit)(?: on)?\s+(.+)$", t)
+        if m and not re.match(r"^\(?\d", m.group(1)):
+            target, app = _split_app(m.group(1))
+            if target:
+                args = {"query": target, **({"app": app} if app else {})}
+                return Intent("tool", "screen.click_element", args, f"Press {target}"[:120], raw)
         m = re.match(r"^(?:read|what does|what's on|what is on)(?: the)? (?:window|screen)?(?: of| in)? ?(?:the )?(.+?)(?: app)?(?: say| window)?$", t)
         if m and re.search(r"\b(read|window|screen)\b", t) and not re.search(r"\bscreenshot\b", t):
             return Intent("tool", "desktop.read_window", {"app": _title(m.group(1))}, f"Read {m.group(1)}", raw)
@@ -193,6 +207,18 @@ class IntentRouter:
         if re.search(r"\b(more|less) detail(ed)?\b|\bbigger\b|\bsmaller\b|\btaller\b|\bwider\b", t) and len(t.split()) <= 10:
             return True
         return False
+
+
+def _split_app(phrase: str) -> tuple[str, str | None]:
+    """'the run button in vs code on screen' -> ('run button', 'Visual Studio Code')."""
+    p = re.sub(r"\s+(on|in) (the |my )?(screen|display|monitor)$", "", phrase.strip())
+    m = re.match(r"^(.+?)\s+in\s+(?:the\s+)?(.+?)(?:\s+(?:app|application|window))?$", p)
+    if m and len(m.group(2)) <= 40:
+        p, app = m.group(1), _title(m.group(2))
+    else:
+        app = None
+    p = re.sub(r"^(the|a|an|this|that)\s+", "", p).strip()
+    return p, app
 
 
 def _title(name: str) -> str:
