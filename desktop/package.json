@@ -14,7 +14,8 @@
     "test": "vitest run",
     "start": "npm run build && electron .",
     "electron": "electron .",
-    "dist:mac": "npm run build && electron-builder --mac --arm64"
+    "dist:mac": "npm run build && electron-builder --mac --arm64",
+    "validate:glb": "node ../scripts/khronos_validate.cjs"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.5",
@@ -31,6 +32,7 @@
     "@vitejs/plugin-react": "4.7.0",
     "electron": "38.8.6",
     "electron-builder": "26.0.12",
+    "gltf-validator": "^2.0.0-dev.3.10",
     "jsdom": "26.1.0",
     "typescript": "5.9.3",
     "vite": "6.4.4",
