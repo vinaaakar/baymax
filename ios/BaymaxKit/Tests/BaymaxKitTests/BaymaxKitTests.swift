@@ -220,17 +220,17 @@ final class VisualSpecParityTests: XCTestCase {
 
     func testBustGeometryMatchesSpec() throws {
         let av = try loadVisualSpec()["avatar"] as! [String: Any]
-        XCTAssertEqual(av["composition"] as? String, "bust")
+        XCTAssertEqual(av["composition"] as? String, "head")
         XCTAssertEqual(BustSpec.torsoProfile, pairs(av["torsoProfile"]))
-        XCTAssertEqual(BustSpec.armProfile, pairs(av["armProfile"]))
+        XCTAssertEqual(BustSpec.armProfile, (av["armProfile"] as! [[Double]]).map { SIMD2<Float>(Float($0[0]), Float($0[1])) })
         let head = av["head"] as! [String: [Double]]
         XCTAssertEqual(BustSpec.headPivot, SIMD3<Float>(head["pivot"]!.map(Float.init)))
         XCTAssertEqual(BustSpec.headCenter, SIMD3<Float>(head["center"]!.map(Float.init)))
         XCTAssertEqual(BustSpec.headRadii, SIMD3<Float>(head["radii"]!.map(Float.init)))
         XCTAssertEqual(BustSpec.armPivot, SIMD3<Float>((av["armPivot"] as! [Double]).map(Float.init)))
-        // Nothing below the bust base: the lowest modelled point is the base of the torso.
-        XCTAssertGreaterThanOrEqual(BustSpec.torsoProfile.map(\.y).min()!, 0.9)
-        XCTAssertGreaterThanOrEqual(BustSpec.armPivot.y + BustSpec.armProfile.map(\.y).min()!, 0.9)
+        // Head-only: the lowest modelled point is the collar, and there are no arms.
+        XCTAssertGreaterThanOrEqual(BustSpec.torsoProfile.map(\.y).min() ?? 0, 1.4)
+        XCTAssertTrue(BustSpec.armProfile.isEmpty)
     }
 
     func testPaletteMatchesSpec() throws {

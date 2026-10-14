@@ -3,7 +3,7 @@ import SceneKit
 import UIKit
 
 /// Original, procedural Baymax-inspired healthcare robot (not an official Disney asset).
-/// Bust composition: head, neck transition and upper chest/shoulders only — no abdomen, legs, feet or floor.
+/// Head composition: the head and a small rounded neck/shoulder collar only — no torso, arms, legs or floor.
 /// Numbers come from BaymaxKit.BustSpec (= design/baymax-visual-spec.json), shared with desktop/src/character/baymaxModel.ts.
 final class BaymaxNode: SCNNode {
     let body = SCNNode()
@@ -76,9 +76,11 @@ final class BaymaxNode: SCNNode {
 
         for (pivot, side) in [(armL, Float(-1)), (armR, Float(1))] {
             pivot.simdPosition = SIMD3<Float>(side * BustSpec.armPivot.x, BustSpec.armPivot.y, BustSpec.armPivot.z)
-            let arm = SCNNode(geometry: LatheGeometry.make(profile: CatmullRom.smooth(BustSpec.armProfile, samples: 40), segments: max(32, segments / 2), material: skin))
-            arm.scale = SCNVector3(1, 1, BustSpec.armDepthScale)
-            pivot.addChildNode(arm)
+            if BustSpec.armProfile.count > 1 {  // head-only design: no arm geometry; pivots stay so poses still apply
+                let arm = SCNNode(geometry: LatheGeometry.make(profile: CatmullRom.smooth(BustSpec.armProfile, samples: 40), segments: max(32, segments / 2), material: skin))
+                arm.scale = SCNVector3(1, 1, BustSpec.armDepthScale)
+                pivot.addChildNode(arm)
+            }
             body.addChildNode(pivot)
         }
     }

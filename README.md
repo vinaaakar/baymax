@@ -11,7 +11,7 @@ stands on a deep-red stage. Behind the character is a local-first assistant that
 > The character is an original procedural model inspired by the broad look of Baymax from
 > Disney's *Big Hero 6*. It is **not** an official Disney asset, and this project is not affiliated with Disney.
 
-![Head-and-shoulders companion rendered by the real desktop renderer at iPhone, Mac-companion and wide sizes](docs/images/bust-composition-desktop-renderer.png)
+![Head-only companion rendered by the real desktop renderer at iPhone, Mac-companion and wide sizes](docs/images/head-composition-desktop-renderer.png)
 
 ## What's in the repository
 

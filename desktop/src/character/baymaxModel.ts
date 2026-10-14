@@ -1,6 +1,6 @@
 // Procedural, original Baymax-inspired healthcare robot (not an official Disney asset).
-// Bust composition: only the head, neck transition and upper chest/shoulders are modelled
-// (design/baymax-visual-spec.json -> avatar). No abdomen, legs, feet or floor exist in the scene.
+// Head composition: only the head and a small rounded neck/shoulder collar are modelled
+// (design/baymax-visual-spec.json -> avatar). No torso, arms, legs or floor exist in the scene.
 // Units: ~1 unit = 1 m, +Y up, facing +Z. The SceneKit port (ios/.../BaymaxNode.swift) reads the same numbers.
 import * as THREE from "three";
 import { VISUAL_SPEC } from "../shared/framing";
@@ -39,9 +39,9 @@ function smoothProfile(points: [number, number][], samples = 64): THREE.Vector2[
   return curve.getPoints(samples).map((p) => new THREE.Vector2(Math.max(0, p.x), p.y));
 }
 
-// Upper chest and shoulders with a soft rounded base (the bust ends here; nothing is hidden below it).
+// Small rounded neck/shoulder collar under the head (the figure ends here; nothing is hidden below it).
 const TORSO_PROFILE = AV.torsoProfile as [number, number][];
-// Short, soft upper arms hanging from the shoulder pivot; they lift for the pointing gesture.
+// No arms in the head-only composition (empty profile): the arm pivots stay as empty groups so poses still apply.
 const ARM_PROFILE = AV.armProfile as [number, number][];
 
 export function buildBaymax(options: { segments?: number } = {}): BaymaxRig {
@@ -114,10 +114,12 @@ export function buildBaymax(options: { segments?: number } = {}): BaymaxRig {
     const pivot = new THREE.Group();
     pivot.name = side < 0 ? "armL" : "armR";
     pivot.position.set(side * AV.armPivot[0], AV.armPivot[1], AV.armPivot[2]);
-    const arm = new THREE.Mesh(track(new THREE.LatheGeometry(smoothProfile(ARM_PROFILE, 40), Math.max(32, seg / 2))), skin);
-    arm.scale.set(1, 1, AV.armDepthScale);
-    arm.castShadow = true;
-    pivot.add(arm);
+    if (ARM_PROFILE.length > 1) {
+      const arm = new THREE.Mesh(track(new THREE.LatheGeometry(smoothProfile(ARM_PROFILE, 40), Math.max(32, seg / 2))), skin);
+      arm.scale.set(1, 1, AV.armDepthScale);
+      arm.castShadow = true;
+      pivot.add(arm);
+    }
     body.add(pivot);
     return pivot;
   };

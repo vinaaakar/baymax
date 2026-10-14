@@ -26,14 +26,13 @@ and `VisualSpecParityTests` fails if any number differs from the JSON.
 - **Spacing:** 4-pt unit and 16-pt gutters.
 - **Shapes:** corner radius 14; controls at least 44 pt high.
 
-## Avatar: bust composition
+## Avatar: head composition
 
-- **Shown:** only the head, the neck transition and the upper chest/shoulders. No abdomen, legs, feet or floor exist in either scene, so
-  nothing is cropped or hidden behind a shape.
+- **Shown:** only the head on a small rounded neck/shoulder collar (radius 0.32 m, y 1.50–1.78). No torso, arms, legs or floor exist
+  in either scene, so nothing is cropped or hidden behind a shape.
 - **Head:** white ellipsoid with radii 0.26 × 0.185 × 0.22, pivoting at the neck.
 - **Face:** two black eyes joined by a thin line that follows the curvature of the head.
-- **Shoulders:** a soft rounded base ending at y = 1.0.
-- **Arms:** short arms that sit at the sides and lift for the pointing gesture.
+- **Arms:** none. Pointing is done with the head and eyes.
 - **Framing (identical on both platforms):**
   - Vertical FOV is 28°.
   - Half-height = clamp(max(0.6, 0.5 / aspect), …, 1.0).
@@ -41,7 +40,7 @@ and `VisualSpecParityTests` fails if any number differs from the JSON.
   - The camera looks straight ahead.
 
   Test vectors for aspect ratios 0.46, 0.68, 1.0, 1.6 and 2.4 are in the JSON.
-- Evidence: `docs/images/bust-composition-desktop-renderer.png` shows the real Electron renderer at phone (390×844), Mac companion
+- Evidence: `docs/images/head-composition-desktop-renderer.png` shows the real Electron renderer at phone (390×844), Mac companion
   (320×470) and wide (1000×640) sizes. The SceneKit port uses the same numbers but **has not been rendered here** (no iOS toolchain).
 
 ## Animation states

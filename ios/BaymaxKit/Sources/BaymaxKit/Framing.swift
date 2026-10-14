@@ -10,24 +10,25 @@ public enum BustSpec {
     public static let eyeYOffset: Float = 0.012
     public static let eyeRadius: Float = 0.03
     public static let eyeLineRadius: Float = 0.0045
-    /// Upper chest and shoulders with a soft rounded base. Nothing exists below it (no abdomen, legs, feet, floor).
-    public static let torsoProfile: [SIMD2<Float>] = [[0.0, 1.0], [0.26, 1.005], [0.44, 1.03], [0.56, 1.09], [0.6, 1.18], [0.58, 1.3],
-                                                      [0.5, 1.44], [0.38, 1.58], [0.24, 1.69], [0.12, 1.75], [0.0, 1.78]]
+    /// Small rounded neck/shoulder collar under the head. Nothing exists below it (no torso, arms, legs, floor).
+    public static let torsoProfile: [SIMD2<Float>] = [[0.0, 1.5], [0.14, 1.505], [0.24, 1.525], [0.3, 1.56], [0.32, 1.6], [0.31, 1.65],
+                                                      [0.27, 1.7], [0.18, 1.75], [0.08, 1.77], [0.0, 1.775]]
     public static let torsoDepthScale: Float = 0.82
     public static let armPivot = SIMD3<Float>(0.5, 1.36, 0)
-    public static let armProfile: [SIMD2<Float>] = [[0.0, -0.36], [0.1, -0.345], [0.135, -0.29], [0.15, -0.18], [0.155, -0.06], [0.12, 0.03], [0.0, 0.06]]
+    /// Empty: the head-only design has no arms (the pivots remain so pointing poses still move the head).
+    public static let armProfile: [SIMD2<Float>] = []
     public static let armDepthScale: Float = 0.92
 }
 
 public struct FramingSpec: Equatable, Sendable {
     public var fovDeg = 28.0
     public var headTop = 2.03
-    public var bustBottom = 1.0
-    public var minHalfWidth = 0.5
-    public var minHalfHeight = 0.6
-    public var topMargin = 0.26
-    public var anchorFromTop = 0.4
-    public var maxHalfHeight = 1.0
+    public var bustBottom = 1.5
+    public var minHalfWidth = 0.44
+    public var minHalfHeight = 0.5
+    public var topMargin = 0.16
+    public var anchorFromTop = 0.42
+    public var maxHalfHeight = 1.2
     public init() {}
 }
 
