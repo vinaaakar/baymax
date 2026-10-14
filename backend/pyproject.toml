@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baymax-backend"
+version = "0.1.0"
+description = "BAYMAX local-first AI companion backend (orchestration, tools, protocol server)"
+requires-python = ">=3.11"
+dependencies = [
+  "aiohttp>=3.9",
+  "cryptography>=42",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+macos = ["pyobjc-framework-Quartz>=10; sys_platform == 'darwin'"]
+
+[project.scripts]
+baymax = "baymax.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["baymax*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

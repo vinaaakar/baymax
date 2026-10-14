@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+.pytest_cache/
+*.egg-info/
+# Node
+node_modules/
+desktop/dist/
+desktop/dist-electron/
+desktop/release/
+# iOS
+ios/build/
+ios/*.xcodeproj/
+ios/DerivedData/
+*.xcuserstate
+# Runtime data (never commit)
+.baymax/
+*.db
+*.sqlite3
+*.pem
+*.key
+local_token
+# OS
+.DS_Store
