@@ -124,14 +124,15 @@ final class AppModel: ObservableObject {
             return
         }
         speechOut.stop()
-        Task {
-            display.localListening = true
-            connection.send("voice.state", ["state": "listening"])
-            announce()
-            await speechIn.start { [weak self] text in
+        Task { [weak self] in
+            guard let self else { return }
+            self.display.localListening = true
+            self.connection.send("voice.state", ["state": "listening"])
+            self.announce()
+            await self.speechIn.start { [weak self] text in
                 self?.send(text: text, fromVoice: true)
             }
-            if !speechIn.isListening { micEnded() }
+            if !self.speechIn.isListening { self.micEnded() }
         }
     }
 
