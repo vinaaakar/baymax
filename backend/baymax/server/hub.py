@@ -114,6 +114,8 @@ class DeviceHub:
                                                         "role": p.get("role", "assistant"), **({"taskId": p["taskId"]} if p.get("taskId") else {})})
             if etype == "task.update":
                 body = {"taskId": p["taskId"], "status": p["status"], "title": p["title"]}
+                if p.get("kind"):
+                    body["kind"] = str(p["kind"])[:40]  # lets the phone show the researching expression
                 if p.get("step"):
                     body["step"] = str(p["step"])
                 if p.get("progress") is not None:

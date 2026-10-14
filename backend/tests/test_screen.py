@@ -219,3 +219,23 @@ async def test_active_window_title_and_pointing(services, assistant, fake_deskto
     assert t.status is TaskStatus.COMPLETED and t.verified
     g = (await _events(sub, ["gaze.target"]))["gaze.target"]
     assert g["gx"] == 550 and g["gy"] == 380  # centre of the real window frame (100,80 900x600)
+
+
+async def test_what_can_you_do_with_the_current_screen_inspects_it_for_real(services, assistant, fake_desktop):
+    fake_desktop.front = "Code"
+    fake_desktop.ax_dump["Code"] = VSCODE
+    r = await assistant.handle_text("What can you do with the current screen?")
+    t = await services.tasks.wait(r["taskId"], 5)
+    s = t.result["summary"]
+    assert t.status is TaskStatus.COMPLETED and t.verified
+    assert "You're in Code" in s and "“Run Python File” button" in s and "type into a field" in s  # real controls, not a generic list
+    assert ("ax", "Code") in fake_desktop.calls
+
+
+async def test_screen_inspection_is_honest_without_accessibility(services, assistant, fake_desktop):
+    fake_desktop.front = "Safari"
+    fake_desktop.accessibility = False
+    r = await assistant.handle_text("what can you help me with on this page")
+    t = await services.tasks.wait(r["taskId"], 5)
+    s = t.result["summary"]
+    assert "You're in Safari" in s and "Accessibility" in s and "can't inspect its controls" in s

@@ -31,7 +31,33 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 from baymax.security.pairing import compute_mac  # noqa: E402
 
-PORT, LAN = 18765, 18766
+PORT, LAN, CDP = 18765, 18766, 19229
+
+
+async def face_state(s: aiohttp.ClientSession, shot: Path | None = None) -> list[dict]:
+    """Reads what the real Electron companion face is drawing (renderer, expression, pupil offsets) over CDP."""
+    out = []
+    async with s.get(f"http://127.0.0.1:{CDP}/json") as r:
+        targets = [t for t in await r.json() if t.get("type") == "page"]
+    for t in targets:
+        async with s.ws_connect(t["webSocketDebuggerUrl"], max_msg_size=0) as ws:
+            expr = ("(() => { const el = document.querySelector('.character-canvas'); return el ? JSON.stringify({url: location.href, "
+                    "renderer: el.dataset.renderer, expression: el.dataset.expression, pupil: el.dataset.pupil, "
+                    "webgl: !!document.querySelector('.character-canvas canvas'), w: el.clientWidth, h: el.clientHeight}) : null })()")
+            await ws.send_json({"id": 1, "method": "Runtime.evaluate", "params": {"expression": expr, "returnByValue": True}})
+            res = await ws.receive_json()
+            val = res.get("result", {}).get("result", {}).get("value")
+            if not val:
+                continue
+            info = json.loads(val)
+            if shot is not None and info["w"] < 600:  # the compact companion window
+                await ws.send_json({"id": 2, "method": "Page.captureScreenshot", "params": {"format": "png"}})
+                img = await ws.receive_json()
+                import base64
+                shot.write_bytes(base64.b64decode(img["result"]["data"]))
+                info["screenshot"] = str(shot)
+            out.append(info)
+    return out
 
 
 def env(t, p, mid="m"):
@@ -84,7 +110,8 @@ async def main() -> int:
 
             # --- launch the real Electron app (it attaches to the running backend)
             exe = ROOT / "desktop/node_modules/electron/dist/electron"
-            electron = subprocess.Popen([str(exe), str(ROOT / "desktop"), "--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader"],
+            electron = subprocess.Popen([str(exe), str(ROOT / "desktop"), "--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader",
+                                         f"--remote-debugging-port={CDP}"],
                                         env=envv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             d = xdisplay.Display()
             root = d.screen().root
@@ -152,6 +179,23 @@ async def main() -> int:
                 print(f"pointer ({x:4d},{y:4d}) -> phone vx={p['vx']:.4f} vy={p['vy']:.4f} display={p['displayId']} "
                       f"{p['displayWidth']}x{p['displayHeight']} latency={latencies[-1]:.0f} ms")
 
+            # --- the companion face (2D SVG) follows the same real pointer: pupils left of centre for a pointer on the left, right for
+            # one on the right (the Mac maps the pointer relative to the companion window, 600 px for a full look)
+            faces = {}
+            for name, (x, y) in (("left", path[0]), ("right", path[1])):
+                root.warp_pointer(x, y)
+                d.sync()
+                await asyncio.sleep(1.2)
+                faces[name] = await face_state(s, ROOT / "docs/images/companion-2d-electron.png" if name == "right" else None)
+            comp = [(fl, fr) for fl in faces["left"] for fr in faces["right"] if fl["url"] == fr["url"] and fl["w"] < 600]
+            face_ok = bool(comp)
+            for fl, fr in comp:
+                lx, rx = float(fl["pupil"].split(",")[0]), float(fr["pupil"].split(",")[0])
+                print(f"companion face: renderer={fr['renderer']} webgl-canvas={fr['webgl']} expression={fl['expression']}/{fr['expression']} "
+                      f"pupil x left={lx:.3f} right={rx:.3f}")
+                face_ok = face_ok and fr["renderer"] == "svg-2d" and not fr["webgl"] and lx < -0.03 and rx > 0.03 and fr["expression"] == "TRACKING"
+            print(f"2D face follows the real pointer: {face_ok}")
+
             # --- sleep pauses streaming, wake resumes
             async with s.post(f"http://127.0.0.1:{PORT}/api/sleep", json={"sleeping": True}, headers=H):
                 pass
@@ -173,7 +217,7 @@ async def main() -> int:
             async with s.get(f"http://127.0.0.1:{PORT}/api/status", headers=H) as r:
                 st = (await r.json())["cursor"]
             print("backend relay stats:", {k: st[k] for k in ("received", "published", "rejected")})
-            ok = max(errors) < 0.002 and slept_ok
+            ok = max(errors) < 0.002 and slept_ok and face_ok
             print(f"RESULT: {'PASS' if ok else 'FAIL'} — {len(path)} positions, max error {max(errors):.5f}, "
                   f"median latency {sorted(latencies)[len(latencies) // 2]:.0f} ms")
             await phone.close()

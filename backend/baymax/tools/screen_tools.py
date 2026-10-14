@@ -11,6 +11,7 @@ import asyncio
 from typing import Any
 
 from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
+from ..hostos.sites import BROWSERS
 from ..screen.elements import Display, Resolution, ScreenElement, friendly_role, region, resolve, to_gaze
 from ..security.policy import Risk
 from .base import Arg, Tool, ToolContext, ToolResult, ToolUnavailable
@@ -195,5 +196,62 @@ class PointWindowTool(Tool):
                           verification="window frame reported by macOS")
 
 
+_INTERACTIVE = {"AXButton": "button", "AXTab": "tab", "AXRadioButton": "tab", "AXTextField": "field", "AXTextArea": "field",
+                "AXSearchField": "search field", "AXComboBox": "field", "AXLink": "link", "AXPopUpButton": "menu", "AXMenuButton": "menu",
+                "AXCheckBox": "checkbox"}
+
+
+class InspectScreenTool(Tool):
+    name = "screen.inspect"
+    description = "Inspect the window the user is working in and say what BAYMAX can do with it (real controls, permissions)."
+    risk = Risk.LOW
+    args: dict[str, Arg] = {}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        try:
+            w = await d.active_window()
+        except DesktopPermissionError as exc:
+            return ToolResult(False, f"I can't see which window you're using yet. {exc}", {"errorKind": "permission"})
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I couldn't tell which window you're using: {exc}.", {"errorKind": "not_found"})
+        where = f"{w.app} — “{w.title}”" if w.title else w.app
+        data: dict[str, Any] = {"app": w.app, "title": w.title}
+        ctx.progress(0.4, f"reading the controls in {w.app}")
+        try:
+            els = await d.accessibility_elements(w.app)
+        except DesktopPermissionError as exc:
+            return ToolResult(True, f"You're in {where}. I can't inspect its controls: {exc} Until then I can only open apps and "
+                                    "websites and tell you which window is in front.", {**data, "errorKind": "permission"},
+                              verified=True, verification="front window reported by macOS; controls not readable")
+        except DesktopUnavailable as exc:
+            els, data["note"] = [], str(exc)
+        controls = [e for e in els if e.role in _INTERACTIVE]
+        data["controls"] = len(controls)
+        seen: list[str] = []
+        for e in controls:
+            item = f"the “{e.label}” {_INTERACTIVE[e.role]}"
+            if item not in seen:
+                seen.append(item)
+            if len(seen) == 5:
+                break
+        page = ""
+        if w.app in BROWSERS:
+            url = await d.browser_url(w.app)
+            if url:
+                data["url"] = url
+                page = f" (page {url})"
+        if not controls:
+            return ToolResult(True, f"You're in {where}{page}. It doesn't expose any controls I can identify, so I can read its text "
+                                    "or recognise text on screen, but I can't press anything there.", data, verified=True,
+                              verification="accessibility tree read; no interactive elements")
+        can = ["read this window's text", "find or point at a control by name", "click a named control"]
+        if any(_INTERACTIVE[e.role].endswith("field") for e in controls):
+            can.append("type into a field")
+        text = (f"You're in {where}{page}. I can see {len(controls)} controls, including {', '.join(seen)}. "
+                f"Here I can {', '.join(can[:-1])} or {can[-1]} — for example “click {controls[0].label}”.")
+        return ToolResult(True, text, data, verified=True, verification=f"{len(els)} accessibility elements read from {w.app}")
+
+
 def all_screen_tools() -> list[Tool]:
-    return [FindElementTool(), ClickElementTool(), ActiveWindowTool(), PointWindowTool()]
+    return [FindElementTool(), ClickElementTool(), ActiveWindowTool(), PointWindowTool(), InspectScreenTool()]

@@ -504,6 +504,7 @@
           "title": "str"
         },
         "optional": {
+          "kind": "str",
           "step": "str",
           "progress": "float",
           "detail": "str"

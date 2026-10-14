@@ -1,19 +1,36 @@
 // Compact floating companion window (Mac). Simple by design; details live in the workspace.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../api/store";
 import BaymaxCharacter, { describeState } from "../character/BaymaxCharacter";
 import { ApprovalBanners, ChatInput, ConnectionPill, EStopButton, MicButton, ProgressBar, useActiveTasks, useClient, useVoice } from "../components/common";
+import { DEFAULT_GAZE } from "../shared/gaze";
 import type { CharacterState } from "../shared/protocol";
 
-export function useCursorLook(): { x: number; y: number } | null {
+/** Real cursor direction plus whether samples are arriving right now (drives the TRACKING expression). */
+export function useCursorLook(): { look: { x: number; y: number } | null; live: boolean } {
   const [look, setLook] = useState<{ x: number; y: number } | null>(null);
+  const [live, setLive] = useState(false);
+  const lastAt = useRef(0);
   useEffect(() => {
-    if (window.baymax?.onCursor) return window.baymax.onCursor(setLook);
-    const onMove = (e: MouseEvent) => setLook({ x: (e.clientX / innerWidth) * 2 - 1, y: -((e.clientY / innerHeight) * 2 - 1) });
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
+    const on = (v: { x: number; y: number }) => {
+      lastAt.current = performance.now();
+      setLook(v);
+      setLive(true);
+    };
+    const check = setInterval(() => setLive(performance.now() - lastAt.current < DEFAULT_GAZE.staleMs), 500);
+    let off: () => void;
+    if (window.baymax?.onCursor) off = window.baymax.onCursor(on);
+    else {
+      const onMove = (e: MouseEvent) => on({ x: (e.clientX / innerWidth) * 2 - 1, y: -((e.clientY / innerHeight) * 2 - 1) });
+      window.addEventListener("mousemove", onMove);
+      off = () => window.removeEventListener("mousemove", onMove);
+    }
+    return () => {
+      off();
+      clearInterval(check);
+    };
   }, []);
-  return look;
+  return { look, live };
 }
 
 /** Screen targets found by "look at the … button": the Mac companion looks and points at them for a while. */
@@ -48,7 +65,7 @@ export default function Companion() {
   const estop = useStore((s) => s.estop);
   const lastAssistant = useStore((s) => [...s.messages].reverse().find((m) => m.role === "assistant"));
   const voice = useVoice();
-  const look = useCursorLook();
+  const cursor = useCursorLook();
   const gaze = useGazeTarget();
   const active = useActiveTasks();
   const [showCaption, setShowCaption] = useState(false);
@@ -71,7 +88,8 @@ export default function Companion() {
       </div>
       {/* The face has its own region between the status bar and the controls: nothing is drawn over it. */}
       <div className="face-region">
-        <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={look} point={gaze.point} onClick={() => sleeping && toggleSleep()} />
+        <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={cursor.look} cursorLive={cursor.live && !sleeping}
+          point={gaze.point} taskKind={task?.kind} progress={task?.progress} onClick={() => sleeping && toggleSleep()} />
       </div>
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
       <div className="controls">

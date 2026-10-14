@@ -1,8 +1,9 @@
 # BAYMAX visual specification
 
 The machine-readable source of truth is [`design/baymax-visual-spec.json`](../design/baymax-visual-spec.json). The Mac app imports it directly
-(`desktop/src/shared/framing.ts`, `desktop/src/character/baymaxModel.ts`). The iPhone app mirrors it in `BaymaxKit/Framing.swift`,
-and `VisualSpecParityTests` fails if any number differs from the JSON.
+(`desktop/src/shared/face2d.ts`). The iPhone app mirrors it in `BaymaxKit/Face2D.swift`, and `VisualSpecParityTests` fails if any number
+or test vector differs from the JSON. After changing `face2d`, regenerate the vectors with `npx vite-node scripts/gen-face-vectors.ts`
+(in `desktop/`).
 
 ## Colours
 
@@ -26,49 +27,47 @@ and `VisualSpecParityTests` fails if any number differs from the JSON.
 - **Spacing:** 4-pt unit and 16-pt gutters.
 - **Shapes:** corner radius 14; controls at least 44 pt high.
 
-## Avatar: head composition
+## Character: flat 2D vector face
 
-- **Shown:** only the head on a small rounded neck/shoulder collar (radius 0.32 m, y 1.50–1.78). No torso, arms, legs or floor exist
-  in either scene, so nothing is cropped or hidden behind a shape.
-- **Head:** white ellipsoid with radii 0.26 × 0.185 × 0.22, pivoting at the neck.
-- **Face:** two black eyes joined by a thin line that follows the curvature of the head.
-- **Arms:** none. Pointing is done with the head and eyes.
-- **Eyes:** follow the gaze by rotating up to 0.12 rad (sideways) and 0.08 rad (up/down) about the neck pivot, so they slide along the
-  face instead of sinking into it. In IDLE the eyes lead (90 % of the look) and the head follows a little.
-- **Lighting:** neutral white key and fill with a restrained red room bounce. The red rim light rises only with real activity.
+There is no 3D model, camera or scene on either platform. The Mac draws SVG (`desktop/src/character/BaymaxCharacter.tsx`); the iPhone
+draws SwiftUI `Canvas` paths (`ios/BaymaxCompanion/Character/CharacterView.swift`). Both use the same geometry function.
+
+- **Shapes:** a white rounded head (ellipse 1 × 0.74 face units) with a radial gradient (upper-left highlight to a soft grey rim) and a
+  soft drop shadow, plus two black oval eyes joined by a thin line. The eyes carry a tiny highlight.
+- **Stage:** deep burgundy, with a red glow behind the head that rises only with real activity.
+- **Depth without 3D:** for gaze, the eye group slides across the face (up to 0.30 sideways, 0.20 up/down). The eye nearest the edge
+  narrows by up to 28 % and the eyes move slightly closer together. The head shifts a little (parallax) and rolls with the pose.
+  The eyes always stay inside the head; this is tested for cursor positions on and beyond the screen edges.
+- **Fit:** the head fills 62 % of the width or 56 % of the height (66 % in landscape), whichever is smaller. It is never cropped.
 - **Layout:** on both devices the face has its own region between the status bar and the controls; nothing is drawn over it.
   The iPhone is landscape-first (Desk mode, on by default); in landscape the conversation opens beside a smaller face.
-- **Framing (identical on both platforms):**
-  - Vertical FOV is 28°.
-  - Half-height = min(max(minHalf, 0.44 / aspect), 1.2), where minHalf goes from 0.5 (square) to 0.36 (aspect ≥ 1.6), so landscape
-    face regions (iPhone desk mode) show a larger head.
-  - The head-and-collar centre sits 42 % from the top, but the frame top never cuts the head (head top + 0.16 margin, which leaves room for status pills).
-  - The camera looks straight ahead.
+- **Evidence:**
+  - `docs/images/face-2d-states.png`: the Mac renderer in Chromium for IDLE, TRACKING left-up and right-down, POINTING, RESEARCHING,
+    LISTENING, SLEEPING and CONFUSED.
+  - `docs/images/companion-2d-electron.png`: the real Electron companion during the X11 end-to-end test.
+  - The SwiftUI port uses the same math and test vectors but **has not been compiled or rendered here** (no Swift/Xcode toolchain).
 
-  Test vectors for aspect ratios 0.46, 0.68, 1.0, 1.6 and 2.4 are in the JSON.
-- Evidence: `docs/images/head-landscape-desktop-renderer.png` shows the real Electron renderer at phone (390×844), Mac companion
-  (320×470) and wide (1000×640) sizes. The SceneKit port uses the same numbers but **has not been rendered here** (no iOS toolchain).
+## Expressions
 
-## Animation states
+These are derived only from real events: the backend state machine (`protocol/baymax-protocol.json`), live cursor samples, verified
+screen targets and the running task's kind (`expressionFor` / `FaceExpression.from`).
 
-These are driven only by real events: the state machine in `protocol/baymax-protocol.json`, shared by Python, TypeScript and Swift.
-
-| State | Behaviour |
-|---|---|
-| IDLE | slow breathing and blinking; gaze follows the Mac cursor when it is streamed |
-| LISTENING | leans in; glow follows the real microphone level |
-| THINKING | head tilts; slow glow |
-| SPEAKING | nods while TTS is actually playing |
-| EXECUTING | focused forward pose while a task runs |
-| SUCCESS | short happy lift, only after a verified result |
-| CONFUSED | tilt and shrug when a request is ambiguous |
-| CONCERNED | head lowered for approvals, permissions and E-stop |
-| SLEEPING | eyes closed, dimmed; cursor stream, microphone and speech stopped |
-| ERROR | brief recoil, red glow |
-| DISCONNECTED | dimmed, eyes half-closed |
-
-**Pointing:** when a `gaze.target` arrives (for example "look at the Run button"), the head and eyes turn to the target and the arm on
-that side lifts, for the duration the backend specifies.
+| Expression | When | What the face does |
+|---|---|---|
+| IDLE | idle, no cursor samples | slow breathing and blinking, resting gaze |
+| TRACKING | idle while real cursor samples arrive | eyes follow the cursor; small cursor glyph |
+| LISTENING | microphone recording | ring that pulses with the real microphone level |
+| THINKING | the model is working | eyes up and aside; three soft dots |
+| RESEARCHING | a research task is running | dots plus a magnifier orbiting the head |
+| EXECUTING | any other task is running | progress arc (real progress if reported, otherwise a moving arc) |
+| SPEAKING | text-to-speech is actually playing | glow follows speech |
+| POINTING | a verified `gaze.target` | eyes and head turn to it; arrowhead at the head edge and a target-lock reticle in that direction |
+| SUCCESS | verified result | gentle squint (happy eyes) and glow |
+| CONFUSED | ambiguous request | head tilt, one eye smaller |
+| CONCERNED | approvals, permissions, E-stop | eyes lowered |
+| SLEEPING | asleep | eyes closed to thin lines, dimmed, "z" |
+| ERROR | failure | red ring flash |
+| DISCONNECTED | no backend/Mac | dimmed, eyes half closed, link-off glyph |
 
 ## Component behaviour
 

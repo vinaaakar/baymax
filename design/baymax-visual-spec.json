@@ -1,7 +1,7 @@
 {
   "name": "baymax-visual-spec",
-  "version": 1,
-  "notes": "Single source of truth for the Mac (three.js) and iPhone (SceneKit) companion. Both renderers build the same procedural bust from these numbers and frame it with the same algorithm (desktop/src/shared/framing.ts, ios/BaymaxKit/Sources/BaymaxKit/Framing.swift). Original procedural character inspired by a soft healthcare robot; no third-party assets.",
+  "version": 2,
+  "notes": "Single source of truth for the Mac (React SVG) and iPhone (SwiftUI shapes) companion. The character is flat 2D vector art: a white rounded head with two black oval eyes joined by a thin line on a deep burgundy stage. No 3D model, camera or scene exists on either platform. Both renderers build the same face from face2d with the same math (desktop/src/shared/face2d.ts, ios/BaymaxKit/Sources/BaymaxKit/Face2D.swift), checked against face2dTestVectors and expressionTestVectors.",
   "colors": {
     "background": "#180509",
     "accent": "#B5122A",
@@ -48,103 +48,6 @@
     "radius": 14,
     "controlHeight": 44
   },
-  "avatar": {
-    "composition": "head",
-    "rule": "Only the head and a small rounded neck/shoulder collar are modelled. No torso, belly, arms, hands, legs, feet or floor exist in the scene; nothing is hidden by cropping.",
-    "units": "1 unit ~ 1 m; +Y up, character faces +Z",
-    "head": {
-      "pivot": [
-        0,
-        1.71,
-        0.03
-      ],
-      "center": [
-        0,
-        0.135,
-        0.04
-      ],
-      "radii": [
-        0.26,
-        0.185,
-        0.22
-      ]
-    },
-    "eyes": {
-      "x": 0.085,
-      "yOffset": 0.012,
-      "radius": 0.03,
-      "lineRadius": 0.0045,
-      "travel": [
-        0.12,
-        0.08
-      ],
-      "travelUnit": "radians the eyes rotate about the neck pivot for a full look (x: left/right, y: up/down), so they slide along the head's curved surface"
-    },
-    "torsoProfile": [
-      [
-        0.0,
-        1.5
-      ],
-      [
-        0.14,
-        1.505
-      ],
-      [
-        0.24,
-        1.525
-      ],
-      [
-        0.3,
-        1.56
-      ],
-      [
-        0.32,
-        1.6
-      ],
-      [
-        0.31,
-        1.65
-      ],
-      [
-        0.27,
-        1.7
-      ],
-      [
-        0.18,
-        1.75
-      ],
-      [
-        0.08,
-        1.77
-      ],
-      [
-        0.0,
-        1.775
-      ]
-    ],
-    "torsoDepthScale": 0.82,
-    "armPivot": [
-      0.5,
-      1.36,
-      0.0
-    ],
-    "armProfile": [],
-    "armDepthScale": 0.92
-  },
-  "framing": {
-    "description": "Vertical field of view is fixed. minHalf = lerp(minHalfHeight, minHalfHeightWide, clamp((aspect-wideFrom)/(wideTo-wideFrom))) so landscape views (iPhone desk mode) show a larger head; halfV = min(max(minHalf, minHalfWidth / aspect), maxHalfHeight). The head+collar centre sits at anchorFromTop, but the frame top never cuts the head (headTop + topMargin). The camera looks straight ahead.",
-    "fovDeg": 28,
-    "headTop": 2.03,
-    "bustBottom": 1.5,
-    "minHalfWidth": 0.44,
-    "minHalfHeight": 0.5,
-    "topMargin": 0.16,
-    "anchorFromTop": 0.42,
-    "maxHalfHeight": 1.2,
-    "minHalfHeightWide": 0.36,
-    "wideFrom": 1.0,
-    "wideTo": 1.6
-  },
   "states": {
     "IDLE": "slow breathing, occasional blink, gaze follows the Mac cursor when streamed",
     "LISTENING": "leans in slightly, head tilts, glow pulses with the real microphone level",
@@ -156,56 +59,572 @@
     "CONCERNED": "head lowers, arms close; approvals, permissions, emergency stop",
     "SLEEPING": "eyes closed, dimmed, very slow breathing; cursor, mic and listeners paused",
     "ERROR": "brief recoil, red glow, then calm",
-    "DISCONNECTED": "dimmed, eyes half-closed, looking down"
+    "DISCONNECTED": "dimmed, eyes half-closed, looking down",
+    "TRACKING": "IDLE while real cursor samples arrive: eyes follow the cursor",
+    "RESEARCHING": "a research task is running: eyes up, magnifier indicator",
+    "POINTING": "a verified screen target: eyes and head turn to it, chevron and target lock point at it"
   },
-  "framingTestVectors": [
+  "face2d": {
+    "units": "face units: origin at the head centre, x right, y down, head half-width = 1",
+    "head": {
+      "rx": 1,
+      "ry": 0.74,
+      "breatheGain": 0.6
+    },
+    "eye": {
+      "x": 0.36,
+      "y": 0,
+      "rx": 0.105,
+      "ry": 0.13,
+      "minOpen": 0.012,
+      "margin": 0.08
+    },
+    "line": {
+      "thickness": 0.024
+    },
+    "travel": {
+      "x": 0.3,
+      "y": 0.2,
+      "yawFollow": 0.25,
+      "pitchFollow": 0.15
+    },
+    "foreshorten": {
+      "width": 0.28,
+      "spacing": 0.1
+    },
+    "parallax": {
+      "yaw": 0.12,
+      "pitch": 0.1,
+      "body": 1.5
+    },
+    "pointer": {
+      "radius": 1.16
+    },
+    "fit": {
+      "widthFrac": 0.62,
+      "heightFrac": 0.56,
+      "centerY": 0.42,
+      "landscapeHeightFrac": 0.66,
+      "landscapeCenterY": 0.46,
+      "parallaxRoom": 0.08
+    },
+    "shading": {
+      "description": "Head: radial gradient from skin (upper-left highlight) to skinShade at the rim, plus a soft drop shadow. Eyes: flat face color with a tiny highlight. Stage: radial burgundy glow behind the head.",
+      "skin": "#F7F6F3",
+      "skinShade": "#D9D4D2",
+      "rimShade": "#B9AFAF",
+      "shadow": "#0A0204",
+      "eyeHighlight": "#3A3A40",
+      "highlightCenter": [
+        -0.35,
+        -0.45
+      ],
+      "shadowOffset": [
+        0,
+        0.08
+      ],
+      "shadowBlur": 0.12
+    },
+    "expressions": {
+      "CONFUSED": {
+        "eyeScaleR": 0.82
+      },
+      "CONCERNED": {
+        "eyeScaleL": 0.94,
+        "eyeScaleR": 0.94
+      }
+    },
+    "indicators": {
+      "TRACKING": "small cursor glyph under the face while real cursor samples arrive",
+      "LISTENING": "ring around the head that pulses with the real microphone level",
+      "THINKING": "three soft dots above the head",
+      "RESEARCHING": "magnifier glyph orbiting the head while a research task runs",
+      "EXECUTING": "progress arc around the head (task progress when reported)",
+      "SPEAKING": "glow pulses with the speech envelope",
+      "POINTING": "chevron at the head edge aimed at the target plus a target-lock reticle in that direction",
+      "SLEEPING": "eyes closed to thin lines, stage dimmed, 'z' glyph",
+      "ERROR": "red ring flash",
+      "DISCONNECTED": "stage dimmed, eyes half closed, link-off glyph"
+    }
+  },
+  "face2dTestVectors": [
     {
-      "aspect": 0.46,
-      "halfHeight": 0.956522,
-      "centerY": 1.611957,
-      "distance": 3.836399
+      "name": "rest",
+      "pose": {
+        "bodyY": 0,
+        "breathe": 1,
+        "lean": 0,
+        "sway": 0,
+        "headYaw": 0,
+        "headPitch": 0.05,
+        "headRoll": 0,
+        "eyeX": 0,
+        "eyeY": 0,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.16,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "IDLE",
+      "point": null,
+      "geometry": {
+        "head": {
+          "cx": 0,
+          "cy": 0.005,
+          "rx": 1,
+          "ry": 0.74,
+          "rotation": 0
+        },
+        "eyeL": {
+          "cx": -0.36,
+          "cy": 0.0075,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.36,
+          "cy": 0.0075,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.36,
+          "y1": 0.0075,
+          "x2": 0.36,
+          "y2": 0.0075,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0,
+          "y": 0.0075
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
     },
     {
-      "aspect": 0.68,
-      "halfHeight": 0.647059,
-      "centerY": 1.661471,
-      "distance": 2.595211
+      "name": "cursor top-left",
+      "pose": {
+        "bodyY": 0.000897,
+        "breathe": 1.005983,
+        "lean": 0,
+        "sway": 0.000549,
+        "headYaw": -0.27783,
+        "headPitch": -0.069316,
+        "headRoll": 0.001072,
+        "eyeX": -0.9,
+        "eyeY": 0.7,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.16,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "TRACKING",
+      "point": null,
+      "geometry": {
+        "head": {
+          "cx": -0.03334,
+          "cy": -0.008277,
+          "rx": 1,
+          "ry": 0.742656,
+          "rotation": 0.001072
+        },
+        "eyeL": {
+          "cx": -0.672599,
+          "cy": -0.150397,
+          "rx": 0.083066,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": -0.006316,
+          "cy": -0.150397,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.672599,
+          "y1": -0.150397,
+          "x2": -0.006316,
+          "y2": -0.150397,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": -0.339457,
+          "y": -0.150397
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
     },
     {
-      "aspect": 1.0,
-      "halfHeight": 0.5,
-      "centerY": 1.69,
-      "distance": 2.00539
+      "name": "cursor right",
+      "pose": {
+        "bodyY": 0.000897,
+        "breathe": 1.005983,
+        "lean": 0,
+        "sway": 0.000549,
+        "headYaw": 0.28217,
+        "headPitch": 0.074684,
+        "headRoll": 0.001072,
+        "eyeX": 0.9,
+        "eyeY": -0.14,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.16,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "TRACKING",
+      "point": null,
+      "geometry": {
+        "head": {
+          "cx": 0.03386,
+          "cy": 0.006123,
+          "rx": 1,
+          "ry": 0.742656,
+          "rotation": 0.001072
+        },
+        "eyeL": {
+          "cx": 0.007487,
+          "cy": 0.039203,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.673598,
+          "cy": 0.039203,
+          "rx": 0.082996,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": 0.007487,
+          "y1": 0.039203,
+          "x2": 0.673598,
+          "y2": 0.039203,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0.340543,
+          "y": 0.039203
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
     },
     {
-      "aspect": 1.3,
-      "halfHeight": 0.43,
-      "centerY": 1.76,
-      "distance": 1.724636
+      "name": "pointing left-up",
+      "pose": {
+        "bodyY": 0.000897,
+        "breathe": 1.005983,
+        "lean": 0.0045,
+        "sway": 0.000549,
+        "headYaw": -0.28,
+        "headPitch": -0.09,
+        "headRoll": 0.001072,
+        "eyeX": -0.8,
+        "eyeY": 0.5,
+        "eyeOpen": 1,
+        "armL": 0.65,
+        "armR": 0.16,
+        "armLFwd": 1.125,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "POINTING",
+      "point": {
+        "x": -0.8,
+        "y": 0.5
+      },
+      "geometry": {
+        "head": {
+          "cx": -0.0336,
+          "cy": -0.010345,
+          "rx": 1,
+          "ry": 0.742656,
+          "rotation": 0.001072
+        },
+        "eyeL": {
+          "cx": -0.645473,
+          "cy": -0.1135,
+          "rx": 0.084969,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.025473,
+          "cy": -0.1135,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "line": {
+          "x1": -0.645473,
+          "y1": -0.1135,
+          "x2": 0.025473,
+          "y2": -0.1135,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": -0.31,
+          "y": -0.1135
+        },
+        "pointer": {
+          "angle": -2.582993,
+          "x": -1.017278,
+          "y": -0.465296
+        },
+        "glow": 0,
+        "dim": 0
+      }
     },
     {
-      "aspect": 1.6,
-      "halfHeight": 0.36,
-      "centerY": 1.83,
-      "distance": 1.443881
+      "name": "sleeping",
+      "pose": {
+        "bodyY": -0.02,
+        "breathe": 1.0187,
+        "lean": 0.05,
+        "sway": 0,
+        "headYaw": 0,
+        "headPitch": 0.34,
+        "headRoll": 0.08,
+        "eyeX": 0,
+        "eyeY": 0,
+        "eyeOpen": 0.04,
+        "armL": 0.1,
+        "armR": 0.1,
+        "armLFwd": 0,
+        "armRFwd": 0,
+        "glow": 0,
+        "dim": 0.45
+      },
+      "expression": "SLEEPING",
+      "point": null,
+      "geometry": {
+        "head": {
+          "cx": 0,
+          "cy": 0.064,
+          "rx": 1,
+          "ry": 0.748303,
+          "rotation": 0.08
+        },
+        "eyeL": {
+          "cx": -0.36,
+          "cy": 0.051,
+          "rx": 0.105,
+          "ry": 0.012
+        },
+        "eyeR": {
+          "cx": 0.36,
+          "cy": 0.051,
+          "rx": 0.105,
+          "ry": 0.012
+        },
+        "line": {
+          "x1": -0.36,
+          "y1": 0.051,
+          "x2": 0.36,
+          "y2": 0.051,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0,
+          "y": 0.051
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0.45
+      }
     },
     {
-      "aspect": 2.4,
-      "halfHeight": 0.36,
-      "centerY": 1.83,
-      "distance": 1.443881
-    },
-    {
-      "aspect": 3.2,
-      "halfHeight": 0.36,
-      "centerY": 1.83,
-      "distance": 1.443881
+      "name": "confused",
+      "pose": {
+        "bodyY": 0.000134,
+        "breathe": 1.000894,
+        "lean": 0,
+        "sway": 0,
+        "headYaw": 0.1,
+        "headPitch": -0.04,
+        "headRoll": -0.24,
+        "eyeX": 0,
+        "eyeY": 0.3,
+        "eyeOpen": 1,
+        "armL": 0.16,
+        "armR": 0.35,
+        "armLFwd": 0,
+        "armRFwd": 0.45,
+        "glow": 0,
+        "dim": 0
+      },
+      "expression": "CONFUSED",
+      "point": null,
+      "geometry": {
+        "head": {
+          "cx": 0.012,
+          "cy": -0.004201,
+          "rx": 1,
+          "ry": 0.740397,
+          "rotation": -0.24
+        },
+        "eyeL": {
+          "cx": -0.333022,
+          "cy": -0.066,
+          "rx": 0.105,
+          "ry": 0.13
+        },
+        "eyeR": {
+          "cx": 0.383022,
+          "cy": -0.066,
+          "rx": 0.084775,
+          "ry": 0.1066
+        },
+        "line": {
+          "x1": -0.333022,
+          "y1": -0.066,
+          "x2": 0.383022,
+          "y2": -0.066,
+          "thickness": 0.024
+        },
+        "pupil": {
+          "x": 0.025,
+          "y": -0.066
+        },
+        "pointer": null,
+        "glow": 0,
+        "dim": 0
+      }
     }
   ],
-  "lighting": {
-    "description": "Neutral white key/fill with restrained red room bounce; red rim glow only rises with real activity (pose.glow).",
-    "rimBase": 0.25,
-    "rimGlow": 0.9,
-    "ambientRedness": 0.12
-  }
+  "fitTestVectors": [
+    {
+      "w": 390,
+      "h": 844,
+      "scale": 120.9,
+      "cx": 195,
+      "cy": 354.48
+    },
+    {
+      "w": 844,
+      "h": 390,
+      "scale": 161.036036,
+      "cx": 422,
+      "cy": 179.4
+    },
+    {
+      "w": 932,
+      "h": 430,
+      "scale": 177.552553,
+      "cx": 466,
+      "cy": 197.8
+    },
+    {
+      "w": 430,
+      "h": 932,
+      "scale": 133.3,
+      "cx": 215,
+      "cy": 391.44
+    },
+    {
+      "w": 520,
+      "h": 640,
+      "scale": 161.2,
+      "cx": 260,
+      "cy": 268.8
+    },
+    {
+      "w": 1200,
+      "h": 800,
+      "scale": 330.33033,
+      "cx": 600,
+      "cy": 368
+    }
+  ],
+  "expressionTestVectors": [
+    {
+      "state": "IDLE",
+      "cursorLive": false,
+      "pointing": false,
+      "taskKind": null,
+      "expression": "IDLE"
+    },
+    {
+      "state": "IDLE",
+      "cursorLive": true,
+      "pointing": false,
+      "taskKind": null,
+      "expression": "TRACKING"
+    },
+    {
+      "state": "IDLE",
+      "cursorLive": true,
+      "pointing": true,
+      "taskKind": null,
+      "expression": "POINTING"
+    },
+    {
+      "state": "EXECUTING",
+      "cursorLive": false,
+      "pointing": false,
+      "taskKind": "research",
+      "expression": "RESEARCHING"
+    },
+    {
+      "state": "EXECUTING",
+      "cursorLive": false,
+      "pointing": false,
+      "taskKind": "apps",
+      "expression": "EXECUTING"
+    },
+    {
+      "state": "THINKING",
+      "cursorLive": false,
+      "pointing": false,
+      "taskKind": "research",
+      "expression": "RESEARCHING"
+    },
+    {
+      "state": "SLEEPING",
+      "cursorLive": true,
+      "pointing": true,
+      "taskKind": null,
+      "expression": "SLEEPING"
+    },
+    {
+      "state": "LISTENING",
+      "cursorLive": true,
+      "pointing": false,
+      "taskKind": null,
+      "expression": "LISTENING"
+    },
+    {
+      "state": "SUCCESS",
+      "cursorLive": false,
+      "pointing": true,
+      "taskKind": null,
+      "expression": "POINTING"
+    },
+    {
+      "state": "DISCONNECTED",
+      "cursorLive": false,
+      "pointing": false,
+      "taskKind": null,
+      "expression": "DISCONNECTED"
+    },
+    {
+      "state": "ERROR",
+      "cursorLive": false,
+      "pointing": true,
+      "taskKind": null,
+      "expression": "ERROR"
+    }
+  ]
 }

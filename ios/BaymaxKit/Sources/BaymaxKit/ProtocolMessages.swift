@@ -35,7 +35,7 @@ public enum BaymaxProtocol {
         "connection.status": (["status": .str], ["devices": .int, "llm": .str, "model": .str]),
         "voice.state": (["state": .str], ["level": .float, "source": .str]),
         "assistant.message": (["text": .str, "messageId": .str], ["speak": .bool, "taskId": .str, "role": .str]),
-        "task.update": (["taskId": .str, "status": .str, "title": .str], ["step": .str, "progress": .float, "detail": .str]),
+        "task.update": (["taskId": .str, "status": .str, "title": .str], ["kind": .str, "step": .str, "progress": .float, "detail": .str]),
         "task.result": (["taskId": .str, "status": .str, "summary": .str], ["verified": .bool, "artifacts": .list]),
         "approval.request": (["approvalId": .str, "taskId": .str, "summary": .str, "risk": .str], ["remoteAllowed": .bool, "expiresAt": .int]),
         "estop.state": (["engaged": .bool], ["reason": .str]),

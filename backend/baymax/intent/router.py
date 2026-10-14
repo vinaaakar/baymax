@@ -63,6 +63,10 @@ class IntentRouter:
                         r"(can|do) you hear me( now)?|can you listen( to me)?|you there|testing( testing)?|test|mic test|"
                         r"thank you|thanks|nice to meet you)( baymax)?", bare):
             return Intent("greeting", text=raw)
+        # ---- capabilities *in the current context* ("what can you do with this screen / here / in this app"): inspect it for real
+        if re.search(r"\b(can|could) you (do|help( me)?)\b.{0,25}\b(with|on|in|about|for)\b.{0,20}\b(screen|window|app|page|tab|site)\b"
+                     r"|\bwhat can you do (here|now)\b", bare):
+            return Intent("tool", "screen.inspect", {}, "Inspect the current screen", raw)
         if re.search(r"\bwhat (else )?(work|works|walks|things|stuff|tasks|jobs|features|kind of (things|tasks|work))?\s*(can|could|do) you (do|perform|help( me)? with)\b"
                      r"|\bwhat are (you|your) (able to do|capable of|capabilities|abilities|features|skills)\b"
                      r"|\bwhat can you do\b|\bhow can you help\b|\bwhat do you do\b|^(help|capabilities|features)$"

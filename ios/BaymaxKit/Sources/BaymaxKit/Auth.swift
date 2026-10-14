@@ -17,6 +17,7 @@ public struct TaskSummary: Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var status: String
+    public var kind: String?  // task family from the Mac ("research", "apps", ...)
     public var step: String?
     public var progress: Double?
     public var detail: String?

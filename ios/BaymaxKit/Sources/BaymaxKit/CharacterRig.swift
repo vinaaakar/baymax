@@ -114,7 +114,7 @@ public enum CharacterRig {
         return out
     }
 
-    /// Frames per second for SceneKit: low when nothing happens, to save battery.
+    /// Frames per second for the face renderer: low when nothing happens, to save battery.
     public static func frameRate(for state: CharacterState, reducedMotion: Bool, lowPower: Bool) -> Int {
         if state == .sleeping || state == .disconnected { return 12 }
         if lowPower { return 20 }

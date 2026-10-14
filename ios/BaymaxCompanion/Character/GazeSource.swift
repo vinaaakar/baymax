@@ -2,7 +2,7 @@ import BaymaxKit
 import Foundation
 
 /// Thread-safe holder for live gaze data: written on the main actor when cursor/gaze messages arrive,
-/// read by the SceneKit render thread every frame (no SwiftUI re-render per cursor sample).
+/// read by the 2D face renderer every frame (no SwiftUI state change per cursor sample).
 final class GazeSource: @unchecked Sendable {
     /// What the debug overlay shows: the last real cursor sample exactly as received from the Mac.
     struct DebugSnapshot {
@@ -16,6 +16,9 @@ final class GazeSource: @unchecked Sendable {
         var dropped = 0
         var look = Look(x: 0, y: 0)
         var live = false
+        var expression = "—"          // what the face is showing (FaceExpression)
+        var pupil = (x: 0.0, y: 0.0)  // eye-group offset from rest, face units
+        var pointLabel: String?        // verified screen target being pointed at
     }
 
     private let lock = NSLock()
@@ -54,12 +57,20 @@ final class GazeSource: @unchecked Sendable {
         debug.samples = samples
     }
 
+    /// The renderer reports what it drew, so the diagnostics panel shows the real expression and pupil offsets.
+    func recordFace(expression: FaceExpression, pupil: (x: Double, y: Double)) {
+        lock.lock(); defer { lock.unlock() }
+        debug.expression = expression.rawValue
+        debug.pupil = pupil
+    }
+
     func debugSnapshot() -> DebugSnapshot {
         lock.lock(); defer { lock.unlock() }
         var d = debug
         let now = Self.nowMs()
         d.look = tracker.look(now: now)
         d.live = tracker.isLive(now: now)
+        d.pointLabel = tracker.activePoint(now: now)?.label
         return d
     }
 

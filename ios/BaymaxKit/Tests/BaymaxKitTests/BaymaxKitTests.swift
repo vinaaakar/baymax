@@ -184,7 +184,7 @@ final class GazeTests: XCTestCase {
     }
 }
 
-/// design/baymax-visual-spec.json is the single source for the bust composition on both platforms.
+/// design/baymax-visual-spec.json is the single source for the 2D face on both platforms.
 final class VisualSpecParityTests: XCTestCase {
     private func loadVisualSpec() throws -> [String: Any] {
         var url = URL(fileURLWithPath: #filePath)
@@ -193,58 +193,91 @@ final class VisualSpecParityTests: XCTestCase {
         return try JSONSerialization.jsonObject(with: data) as! [String: Any]
     }
 
-    private func pairs(_ value: Any?) -> [SIMD2<Float>] {
-        let rows = value as! [[Double]]
-        return rows.map { SIMD2<Float>(Float($0[0]), Float($0[1])) }
+    private func pose(_ d: [String: Double]) -> Pose {
+        var p = Pose()
+        p.bodyY = d["bodyY"]!; p.breathe = d["breathe"]!; p.lean = d["lean"]!; p.sway = d["sway"]!
+        p.headYaw = d["headYaw"]!; p.headPitch = d["headPitch"]!; p.headRoll = d["headRoll"]!
+        p.eyeX = d["eyeX"]!; p.eyeY = d["eyeY"]!; p.eyeOpen = d["eyeOpen"]!
+        p.armL = d["armL"]!; p.armR = d["armR"]!; p.armLFwd = d["armLFwd"]!; p.armRFwd = d["armRFwd"]!
+        p.glow = d["glow"]!; p.dim = d["dim"]!
+        return p
     }
 
-    func testFramingMatchesSharedVectors() throws {
-        let spec = try loadVisualSpec()
-        let f = spec["framing"] as! [String: Any]
-        let mine = FramingSpec()
-        XCTAssertEqual(mine.fovDeg, f["fovDeg"] as! Double)
-        XCTAssertEqual(mine.headTop, f["headTop"] as! Double)
-        XCTAssertEqual(mine.bustBottom, f["bustBottom"] as! Double)
-        XCTAssertEqual(mine.minHalfWidth, f["minHalfWidth"] as! Double)
-        XCTAssertEqual(mine.minHalfHeight, f["minHalfHeight"] as! Double)
-        XCTAssertEqual(mine.topMargin, f["topMargin"] as! Double)
-        XCTAssertEqual(mine.anchorFromTop, f["anchorFromTop"] as! Double)
-        XCTAssertEqual(mine.maxHalfHeight, f["maxHalfHeight"] as! Double)
-        XCTAssertEqual(mine.minHalfHeightWide, f["minHalfHeightWide"] as! Double)
-        XCTAssertEqual(mine.wideFrom, f["wideFrom"] as! Double)
-        XCTAssertEqual(mine.wideTo, f["wideTo"] as! Double)
-        for v in spec["framingTestVectors"] as! [[String: Double]] {
-            let c = BustFraming.camera(aspect: v["aspect"]!)
-            XCTAssertEqual(c.halfHeight, v["halfHeight"]!, accuracy: 1e-5)
-            XCTAssertEqual(c.centerY, v["centerY"]!, accuracy: 1e-5)
-            XCTAssertEqual(c.distance, v["distance"]!, accuracy: 1e-5)
+    /// Allows a last-digit difference: the vectors were produced by JavaScript, whose sin/rounding may differ by 1e-6.
+    private func assertEllipse(_ e: FaceEllipse, _ d: Any?, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
+        let w = d as! [String: Double]
+        for (a, b) in [(e.cx, w["cx"]!), (e.cy, w["cy"]!), (e.rx, w["rx"]!), (e.ry, w["ry"]!)] {
+            XCTAssertEqual(a, b, accuracy: 3e-6, name, file: file, line: line)
         }
     }
 
-    func testBustGeometryMatchesSpec() throws {
-        let av = try loadVisualSpec()["avatar"] as! [String: Any]
-        XCTAssertEqual(av["composition"] as? String, "head")
-        XCTAssertEqual(BustSpec.torsoProfile, pairs(av["torsoProfile"]))
-        XCTAssertEqual(BustSpec.armProfile, (av["armProfile"] as! [[Double]]).map { SIMD2<Float>(Float($0[0]), Float($0[1])) })
-        let head = av["head"] as! [String: [Double]]
-        XCTAssertEqual(BustSpec.headPivot, SIMD3<Float>(head["pivot"]!.map(Float.init)))
-        XCTAssertEqual(BustSpec.headCenter, SIMD3<Float>(head["center"]!.map(Float.init)))
-        XCTAssertEqual(BustSpec.headRadii, SIMD3<Float>(head["radii"]!.map(Float.init)))
-        XCTAssertEqual(BustSpec.armPivot, SIMD3<Float>((av["armPivot"] as! [Double]).map(Float.init)))
-        // Head-only: the lowest modelled point is the collar, and there are no arms.
-        XCTAssertGreaterThanOrEqual(BustSpec.torsoProfile.map(\.y).min() ?? 0, 1.4)
-        XCTAssertTrue(BustSpec.armProfile.isEmpty)
+    func testFaceNumbersMatchSpec() throws {
+        let f = try loadVisualSpec()["face2d"] as! [String: Any]
+        let head = f["head"] as! [String: Double], eye = f["eye"] as! [String: Double], travel = f["travel"] as! [String: Double]
+        XCTAssertEqual(FaceSpec.headRx, head["rx"]); XCTAssertEqual(FaceSpec.headRy, head["ry"]); XCTAssertEqual(FaceSpec.breatheGain, head["breatheGain"])
+        XCTAssertEqual(FaceSpec.eyeX, eye["x"]); XCTAssertEqual(FaceSpec.eyeY, eye["y"]); XCTAssertEqual(FaceSpec.eyeRx, eye["rx"])
+        XCTAssertEqual(FaceSpec.eyeRy, eye["ry"]); XCTAssertEqual(FaceSpec.eyeMinOpen, eye["minOpen"]); XCTAssertEqual(FaceSpec.eyeMargin, eye["margin"])
+        XCTAssertEqual(FaceSpec.travelX, travel["x"]); XCTAssertEqual(FaceSpec.travelY, travel["y"])
+        XCTAssertEqual(FaceSpec.yawFollow, travel["yawFollow"]); XCTAssertEqual(FaceSpec.pitchFollow, travel["pitchFollow"])
+        XCTAssertEqual(FaceSpec.lineThickness, (f["line"] as! [String: Double])["thickness"])
+        let shading = f["shading"] as! [String: Any]
+        XCTAssertEqual(FaceSpec.skin, shading["skin"] as? String)
+        XCTAssertEqual(FaceSpec.skinShade, shading["skinShade"] as? String)
     }
 
-    func testEyesAndLightingMatchSpec() throws {
+    func testFaceGeometryMatchesSharedVectors() throws {
         let spec = try loadVisualSpec()
-        let eyes = (spec["avatar"] as! [String: Any])["eyes"] as! [String: Any]
-        let travel = eyes["travel"] as! [Double]
-        XCTAssertEqual(BustSpec.eyeTravel, SIMD2<Float>(Float(travel[0]), Float(travel[1])))
-        let light = spec["lighting"] as! [String: Double]
-        XCTAssertEqual(BustSpec.rimBase, light["rimBase"])
-        XCTAssertEqual(BustSpec.rimGlow, light["rimGlow"])
-        XCTAssertEqual(BustSpec.ambientRedness, light["ambientRedness"])
+        for v in spec["face2dTestVectors"] as! [[String: Any]] {
+            let expr = FaceExpression(rawValue: v["expression"] as! String)!
+            let pt = (v["point"] as? [String: Double]).map { Look(x: $0["x"]!, y: $0["y"]!) }
+            let g = Face2D.geometry(pose(v["pose"] as! [String: Double]), expression: expr, point: pt)
+            let want = v["geometry"] as! [String: Any]
+            let name = v["name"] as! String
+            assertEllipse(g.head, want["head"], name)
+            XCTAssertEqual(g.headRotation, (want["head"] as! [String: Double])["rotation"]!, accuracy: 3e-6, name)
+            assertEllipse(g.eyeL, want["eyeL"], name)
+            assertEllipse(g.eyeR, want["eyeR"], name)
+            let pupil = want["pupil"] as! [String: Double]
+            XCTAssertEqual(g.pupil.x, pupil["x"]!, accuracy: 3e-6, name)
+            XCTAssertEqual(g.pupil.y, pupil["y"]!, accuracy: 3e-6, name)
+            if let p = want["pointer"] as? [String: Double] {
+                XCTAssertEqual(g.pointer?.angle ?? .nan, p["angle"]!, accuracy: 3e-6, name)
+                XCTAssertEqual(g.pointer?.x ?? .nan, p["x"]!, accuracy: 3e-6, name)
+            } else {
+                XCTAssertNil(g.pointer, name)
+            }
+        }
+        for v in spec["fitTestVectors"] as! [[String: Double]] {
+            let f = Face2D.fit(width: v["w"]!, height: v["h"]!)
+            XCTAssertEqual(f.scale, v["scale"]!, accuracy: 3e-6)
+            XCTAssertEqual(f.cx, v["cx"]!, accuracy: 3e-6)
+            XCTAssertEqual(f.cy, v["cy"]!, accuracy: 3e-6)
+        }
+        for v in spec["expressionTestVectors"] as! [[String: Any]] {
+            let state = CharacterState(rawValue: v["state"] as! String)!
+            let e = FaceExpression.from(state, cursorLive: v["cursorLive"] as! Bool, pointing: v["pointing"] as! Bool, taskKind: v["taskKind"] as? String)
+            XCTAssertEqual(e.rawValue, v["expression"] as? String)
+        }
+    }
+
+    func testRealCursorMovesPupilsAndTheyStayOnTheFace() {
+        func at(_ vx: Double, _ vy: Double) -> FaceGeometry {
+            let l = GazeMath.cursorToLook(vx: vx, vy: vy)
+            return Face2D.geometry(CharacterRig.target(.idle, t: 1, input: RigInput(lookX: l.x, lookY: l.y, reducedMotion: true)), expression: .tracking)
+        }
+        XCTAssertGreaterThan(at(1, 0.5).pupil.x - at(0, 0.5).pupil.x, 0.5)
+        XCTAssertLessThan(at(0.5, 0).pupil.y, at(0.5, 1).pupil.y)
+        for vx in stride(from: -0.5, through: 1.5, by: 0.25) {
+            for vy in stride(from: -0.5, through: 1.5, by: 0.25) {
+                let g = at(vx, vy)
+                for e in [g.eyeL, g.eyeR] {
+                    for (dx, dy) in [(e.rx, 0.0), (-e.rx, 0.0), (0.0, e.ry), (0.0, -e.ry)] {
+                        let x = e.cx + dx, y = e.cy + dy
+                        XCTAssertLessThanOrEqual((x / g.head.rx) * (x / g.head.rx) + (y / g.head.ry) * (y / g.head.ry), 1)
+                    }
+                }
+            }
+        }
     }
 
     func testPaletteMatchesSpec() throws {
@@ -281,12 +314,13 @@ final class CompanionLayoutTests: XCTestCase {
         XCTAssertEqual(CompanionLayout.compute(width: 520, height: 300, conversationOpen: true).mode, .faceWithConversationSheet)
     }
 
-    func testWideFaceRegionShowsALargerHeadWithoutCropping() {
-        let f = FramingSpec()
-        for aspect in [1.6, 2.4, 3.2] {  // landscape face regions
-            let c = BustFraming.camera(aspect: aspect)
-            XCTAssertEqual(c.halfHeight, f.minHalfHeightWide, accuracy: 1e-9)
-            XCTAssertGreaterThanOrEqual(c.centerY + c.halfHeight, f.headTop + f.topMargin - 1e-9)  // head never cut
+    func testFaceIsNeverCropped() {
+        for (w, h) in [(390.0, 844.0), (844.0, 390.0), (300.0, 300.0), (1600.0, 500.0)] {
+            let f = Face2D.fit(width: w, height: h)
+            XCTAssertLessThanOrEqual(f.cx + f.scale * FaceSpec.headRx, w)
+            XCTAssertGreaterThanOrEqual(f.cy - f.scale * FaceSpec.headRy, 0)
+            XCTAssertLessThanOrEqual(f.cy + f.scale * FaceSpec.headRy, h)
         }
+        XCTAssertGreaterThan(Face2D.fit(width: 844, height: 390).scale, Face2D.fit(width: 390, height: 844).scale * 0.9)
     }
 }

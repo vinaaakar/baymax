@@ -56,7 +56,8 @@ struct CompanionScreen: View {
 
     /// The head only, in its own region. Disconnected/asleep dims it; tapping a sleeping face wakes it.
     private var face: some View {
-        CharacterView(state: model.state, level: model.speechIn.level, gaze: model.gaze)
+        CharacterView(state: model.state, level: model.speechIn.level, gaze: model.gaze,
+                      taskKind: model.activeTask?.kind, progress: model.activeTask?.progress)
             .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
             .saturation(model.state == .disconnected ? 0.5 : 1)
             .contentShape(Rectangle())

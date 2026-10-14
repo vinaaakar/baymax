@@ -101,3 +101,9 @@ def test_v2_outbound_validation():
         proto.make("gaze.target", {"kind": "laser", "x": 0.1, "y": 0.1})
     with pytest.raises(ValueError):
         proto.make("cursor.update", {"x": "left", "y": 0, "displayId": 1, "displayWidth": 1, "displayHeight": 1})
+
+
+def test_task_update_carries_kind_for_the_phone_face():
+    from baymax.protocol import messages as proto
+    m = proto.make("task.update", {"taskId": "t1", "status": "RUNNING", "title": "Research", "kind": "research"})
+    assert m.payload["kind"] == "research"  # the phone shows the RESEARCHING expression from this

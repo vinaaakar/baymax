@@ -1,128 +1,188 @@
 import BaymaxKit
-import SceneKit
 import SwiftUI
 
-/// SceneKit view of the companion. Animation is driven only by the displayed (real) state.
-struct CharacterView: UIViewRepresentable {
+/// The companion face: flat 2D vector art drawn with SwiftUI paths, gradients and layers (no SceneKit, no 3D model).
+/// Same face, spec and math as the Mac (design/baymax-visual-spec.json "face2d", BaymaxKit.Face2D).
+/// Animation is driven only by the displayed (real) state, real cursor samples and real tasks.
+struct CharacterView: View {
     var state: CharacterState
     var level: Double
     var gaze: GazeSource
+    var taskKind: String? = nil
+    var progress: Double? = nil
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    @State private var animator = FaceAnimator()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    func makeUIView(context: Context) -> SCNView {
-        let view = SCNView()
-        view.backgroundColor = .clear
-        view.antialiasingMode = .multisampling4X
-        view.isUserInteractionEnabled = false
-        view.scene = context.coordinator.scene
-        view.pointOfView = context.coordinator.camera
-        view.delegate = context.coordinator
-        view.isPlaying = true
-        view.rendersContinuously = true
-        view.isAccessibilityElement = false
-        return view
+    var body: some View {
+        let fps = CharacterRig.frameRate(for: state, reducedMotion: reduceMotion, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
+        TimelineView(.animation(minimumInterval: 1.0 / Double(fps))) { timeline in
+            Canvas { ctx, size in
+                let g = animator.step(now: timeline.date.timeIntervalSinceReferenceDate, state: state, level: level, gaze: gaze,
+                                      taskKind: taskKind, reducedMotion: reduceMotion)
+                FacePainter(g: g, expression: animator.expression, fit: Face2D.fit(width: size.width, height: size.height),
+                            size: size, level: level, progress: progress, t: animator.time).draw(&ctx)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Draws one frame. Layers, back to front: stage glow, rings/arcs, head (gradient + soft shadow), eye line, eyes,
+/// then indicators (pointing chevron and target lock, thinking dots, research magnifier, cursor glyph, sleep "z").
+private struct FacePainter {
+    let g: FaceGeometry
+    let expression: FaceExpression
+    let fit: FaceFit
+    let size: CGSize
+    let level: Double
+    let progress: Double?
+    let t: Double
+
+    private var s: Double { fit.scale }
+    private var hx: Double { fit.cx + g.head.cx * s }
+    private var hy: Double { fit.cy + g.head.cy * s }
+
+    private func hex(_ h: String) -> Color { Color(hex: UInt32(h.dropFirst(), radix: 16) ?? 0xFFFFFF) }
+
+    private func ring(_ k: Double) -> Path {
+        Path(ellipseIn: CGRect(x: hx - g.head.rx * s * k, y: hy - g.head.ry * s * k, width: 2 * g.head.rx * s * k, height: 2 * g.head.ry * s * k))
     }
 
-    func updateUIView(_ view: SCNView, context: Context) {
-        let c = context.coordinator
-        c.lock.lock()
-        c.state = state
-        c.level = level
-        c.lock.unlock()
-        c.gaze = gaze
-        let reduced = UIAccessibility.isReduceMotionEnabled
-        view.preferredFramesPerSecond = CharacterRig.frameRate(for: state, reducedMotion: reduced, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
+    func draw(_ ctx: inout GraphicsContext) {
+        // Stage glow behind the head: rises with real activity (pose glow), dims when asleep/disconnected.
+        var glow = ctx
+        glow.opacity = (0.25 + g.glow * 0.55) * (1 - g.dim * 0.6)
+        let gr = max(g.head.rx * s * 1.9, 1)
+        glow.fill(Path(ellipseIn: CGRect(x: hx - gr, y: hy - g.head.ry * s * 2.1, width: 2 * gr, height: 4.2 * g.head.ry * s)),
+                  with: .radialGradient(Gradient(colors: [Theme.glow.opacity(0.55), Theme.background.opacity(0)]),
+                                        center: CGPoint(x: hx, y: hy), startRadius: 0, endRadius: gr * 1.05))
+
+        switch expression {
+        case .listening:
+            ctx.stroke(ring(1.12 + level * 0.1), with: .color(Theme.glow.opacity(0.35 + level * 0.6)), lineWidth: 2 + level * 4)
+        case .error:
+            ctx.stroke(ring(1.12), with: .color(Color(hex: 0xFF5D6C).opacity(0.4 + 0.4 * abs(sin(t * 3)))), lineWidth: 3)
+        case .executing:
+            drawProgressArc(&ctx)
+        default:
+            break
+        }
+
+        // Head.
+        var head = ctx
+        head.translateBy(x: hx, y: hy)
+        head.rotate(by: .radians(g.headRotation))
+        let headRect = CGRect(x: -g.head.rx * s, y: -g.head.ry * s, width: 2 * g.head.rx * s, height: 2 * g.head.ry * s)
+        head.drawLayer { layer in
+            layer.addFilter(.shadow(color: hex(FaceSpec.shadow).opacity(0.55), radius: FaceSpec.shadowBlur * s, x: 0, y: FaceSpec.shadowOffsetY * s))
+            let hl = CGPoint(x: FaceSpec.highlightCenter.0 * 0.35 * headRect.width, y: FaceSpec.highlightCenter.1 * 0.35 * headRect.height)
+            layer.fill(Path(ellipseIn: headRect), with: .radialGradient(
+                Gradient(stops: [.init(color: .white, location: 0), .init(color: hex(FaceSpec.skin), location: 0.45),
+                                 .init(color: hex(FaceSpec.skinShade), location: 0.85), .init(color: hex(FaceSpec.rimShade), location: 1)]),
+                center: hl, startRadius: 0, endRadius: 0.85 * max(headRect.width, headRect.height)))
+        }
+
+        // Eyes joined by a thin line (head-local coordinates, so they roll with the head).
+        var line = Path()
+        line.move(to: CGPoint(x: g.eyeL.cx * s, y: g.eyeL.cy * s))
+        line.addLine(to: CGPoint(x: g.eyeR.cx * s, y: g.eyeR.cy * s))
+        head.stroke(line, with: .color(Theme.face), style: StrokeStyle(lineWidth: max(1, g.lineThickness * s), lineCap: .round))
+        for e in [g.eyeL, g.eyeR] {
+            head.fill(Path(ellipseIn: CGRect(x: (e.cx - e.rx) * s, y: (e.cy - e.ry) * s, width: 2 * e.rx * s, height: 2 * e.ry * s)), with: .color(Theme.face))
+            if e.ry > 0.05 {
+                let w = e.rx * 0.44 * s, h = e.ry * 0.32 * s
+                head.fill(Path(ellipseIn: CGRect(x: (e.cx - e.rx * 0.32) * s - w / 2, y: (e.cy - e.ry * 0.42) * s - h / 2, width: w, height: h)),
+                          with: .color(hex(FaceSpec.eyeHighlight).opacity(0.8)))
+            }
+        }
+
+        drawIndicators(&ctx)
     }
 
-    final class Coordinator: NSObject, SCNSceneRendererDelegate {
-        let scene = SCNScene()
-        let camera = SCNNode()
-        let baymax = BaymaxNode(segments: 48)
-        let rim = SCNNode()
-        let key = SCNNode()
-        let lock = NSLock()
-        var state: CharacterState = .idle
-        var level = 0.0
-        var gaze: GazeSource?
-        private var pose = Pose()
-        private var start: TimeInterval?
-        private var last: TimeInterval = 0
-
-        override init() {
-            super.init()
-            scene.background.contents = UIColor.clear
-            // Bust framing (head + shoulders only), identical to the Mac: BaymaxKit.BustFraming.
-            let cam = SCNCamera()
-            cam.projectionDirection = .vertical
-            cam.wantsHDR = false
-            camera.camera = cam
-            frame(aspect: 0.46)
-            scene.rootNode.addChildNode(camera)
-
-            let ambient = SCNNode()
-            ambient.light = SCNLight()
-            ambient.light!.type = .ambient
-            // Mostly neutral with a restrained red room bounce (design spec "lighting", same as the Mac).
-            let red = CGFloat(BustSpec.ambientRedness)
-            ambient.light!.color = UIColor(red: 0.62, green: 0.62 - red * 1.2, blue: 0.62 - red, alpha: 1)
-            ambient.light!.intensity = 380
-            scene.rootNode.addChildNode(ambient)
-
-            key.light = SCNLight()
-            key.light!.type = .directional
-            key.light!.intensity = 1100
-            key.light!.castsShadow = true
-            key.light!.shadowMode = .deferred
-            key.light!.shadowRadius = 8
-            key.light!.shadowSampleCount = 8
-            key.light!.shadowColor = UIColor(white: 0, alpha: 0.4)
-            key.position = SCNVector3(2.5, 4.5, 4)
-            key.look(at: SCNVector3(0, 1, 0))
-            scene.rootNode.addChildNode(key)
-
-            rim.light = SCNLight()
-            rim.light!.type = .omni
-            rim.light!.color = UIColor(red: 1, green: 0.2, blue: 0.31, alpha: 1) // #FF334F
-            rim.light!.intensity = 600
-            rim.light!.attenuationEndDistance = 9
-            rim.position = SCNVector3(0, 2.3, -1.6)
-            scene.rootNode.addChildNode(rim)
-
-            scene.rootNode.addChildNode(baymax)
+    private func drawProgressArc(_ ctx: inout GraphicsContext) {
+        // Known progress: a filled arc. Unknown: a short arc that travels (never a fake percentage).
+        let known = progress.map { $0.isFinite } ?? false
+        let start = known ? -Double.pi / 2 : t * 2.4
+        let sweep = known ? max(0.02, min(1, progress!)) * 2 * .pi : .pi * 0.45
+        let rx = g.head.rx * s * 1.13, ry = g.head.ry * s * 1.13
+        var arc = Path()
+        let steps = 48
+        for i in 0...steps {
+            let a = start + sweep * Double(i) / Double(steps)
+            let p = CGPoint(x: hx + cos(a) * rx, y: hy + sin(a) * ry)
+            if i == 0 { arc.move(to: p) } else { arc.addLine(to: p) }
         }
+        ctx.stroke(arc, with: .color(Theme.glow.opacity(0.85)), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+    }
 
-        private var framedAspect = 0.0
-
-        /// Re-frames only when the view's shape changes (rotation, split view, first layout).
-        func frame(aspect: Double) {
-            guard abs(aspect - framedAspect) > 0.001 else { return }
-            framedAspect = aspect
-            let f = BustFraming.camera(aspect: aspect)
-            camera.camera?.fieldOfView = CGFloat(f.fovDeg)
-            camera.simdPosition = SIMD3<Float>(0, Float(f.centerY), Float(f.distance))
-            camera.simdOrientation = simd_quatf(angle: 0, axis: [0, 1, 0]) // looks straight ahead (-Z)
+    private func drawIndicators(_ ctx: inout GraphicsContext) {
+        switch expression {
+        case .pointing:
+            guard let p = g.pointer else { return }
+            var arrow = ctx
+            arrow.translateBy(x: fit.cx + p.x * s, y: fit.cy + p.y * s)
+            arrow.rotate(by: .radians(p.angle))
+            var head = Path()
+            head.move(to: CGPoint(x: 0.13 * s, y: 0))
+            head.addLine(to: CGPoint(x: -0.02 * s, y: -0.085 * s))
+            head.addQuadCurve(to: CGPoint(x: -0.02 * s, y: 0.085 * s), control: CGPoint(x: 0.02 * s, y: 0))
+            head.closeSubpath()
+            arrow.fill(head, with: .color(Theme.glow))
+            drawReticle(&ctx, angle: p.angle)
+        case .thinking, .researching:
+            for i in 0..<3 {
+                let r = 0.035 * s
+                let c = CGPoint(x: hx + Double(i - 1) * 0.16 * s, y: hy - g.head.ry * s * 1.28)
+                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
+                         with: .color(Theme.white.opacity(0.25 + 0.6 * max(0, sin(t * 3 - Double(i) * 0.8)))))
+            }
+            if expression == .researching {
+                let c = CGPoint(x: hx + cos(t * 1.4) * g.head.rx * s * 1.2, y: hy + sin(t * 1.4) * g.head.ry * s * 1.25)
+                let r = 0.07 * s
+                ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Theme.white.opacity(0.85)),
+                           lineWidth: max(1.5, 0.022 * s))
+                var handle = Path()
+                handle.move(to: CGPoint(x: c.x + 0.05 * s, y: c.y + 0.05 * s))
+                handle.addLine(to: CGPoint(x: c.x + 0.12 * s, y: c.y + 0.12 * s))
+                ctx.stroke(handle, with: .color(Theme.white.opacity(0.85)), style: StrokeStyle(lineWidth: max(1.5, 0.026 * s), lineCap: .round))
+            }
+        case .tracking:
+            // Small cursor glyph: real cursor samples are arriving from the Mac.
+            let k = 0.0018 * s, ox = hx - 0.03 * s, oy = hy + g.head.ry * s * 1.18
+            let pts: [(Double, Double)] = [(0, 0), (0, 34), (9, 26), (15, 40), (21, 37), (15, 24), (27, 24)]
+            var cursor = Path()
+            cursor.addLines(pts.map { CGPoint(x: ox + $0.0 * k, y: oy + $0.1 * k) })
+            cursor.closeSubpath()
+            ctx.fill(cursor, with: .color(Theme.muted.opacity(0.75)))
+        case .sleeping:
+            ctx.draw(Text("z").font(.system(size: max(10, 0.2 * s), weight: .semibold)).foregroundColor(Theme.muted.opacity(0.7)),
+                     at: CGPoint(x: hx + g.head.rx * s * 0.85, y: hy - g.head.ry * s * (1.05 + 0.08 * sin(t))))
+        case .disconnected:
+            var link = Path()
+            let y = hy + g.head.ry * s * 1.25
+            link.move(to: CGPoint(x: hx - 0.1 * s, y: y)); link.addLine(to: CGPoint(x: hx - 0.02 * s, y: y))
+            link.move(to: CGPoint(x: hx + 0.02 * s, y: y)); link.addLine(to: CGPoint(x: hx + 0.1 * s, y: y))
+            link.move(to: CGPoint(x: hx - 0.03 * s, y: y - 0.05 * s)); link.addLine(to: CGPoint(x: hx + 0.03 * s, y: y + 0.05 * s))
+            ctx.stroke(link, with: .color(Theme.muted.opacity(0.8)), lineWidth: 2)
+        default:
+            break
         }
+    }
 
-        func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
-            let vp = renderer.currentViewport // render-thread safe (unlike UIView.bounds)
-            if vp.width > 0, vp.height > 0 { frame(aspect: Double(vp.width / vp.height)) }
-            if start == nil { start = time; last = time }
-            let dt = time - last
-            last = time
-            lock.lock()
-            let s = state, lvl = level
-            lock.unlock()
-            let reduced = UIAccessibility.isReduceMotionEnabled
-            // Real cursor position from the Mac (or rest pose when no samples arrive).
-            let g = gaze?.current() ?? (look: Look(x: 0, y: 0.3), point: nil, live: false)
-            let input = RigInput(lookX: g.look.x, lookY: g.look.y, level: lvl, reducedMotion: reduced, point: g.point)
-            let target = CharacterRig.target(s, t: time - (start ?? time), input: input)
-            // Follow the cursor quickly (low lag) but keep body motion soft.
-            pose = CharacterRig.blend(pose, target, dt: dt, rate: reduced ? 14 : (g.live || g.point != nil ? 12 : 5))
-            baymax.apply(pose)
-            rim.light?.intensity = CGFloat(600 * (BustSpec.rimBase + pose.glow * BustSpec.rimGlow))
-            key.light?.intensity = CGFloat(1100 * (1 - pose.dim * 0.55))
+    /// Target lock toward the target, at the edge of the face region.
+    private func drawReticle(_ ctx: inout GraphicsContext, angle: Double) {
+        let pad = 18.0, dx = cos(angle), dy = sin(angle)
+        let rx = dx > 0 ? (size.width - pad - hx) / dx : dx < 0 ? (pad - hx) / dx : .infinity
+        let ry = dy > 0 ? (size.height - pad - hy) / dy : dy < 0 ? (pad - hy) / dy : .infinity
+        let reach = min(rx, ry)
+        let c = CGPoint(x: hx + dx * reach, y: hy + dy * reach)
+        let r = 9 + 2 * sin(t * 5)
+        var p = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        for (ax, ay) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+            p.move(to: CGPoint(x: c.x + ax * (r - 3), y: c.y + ay * (r - 3)))
+            p.addLine(to: CGPoint(x: c.x + ax * (r + 5), y: c.y + ay * (r + 5)))
         }
+        ctx.stroke(p, with: .color(Theme.glow), lineWidth: 2)
     }
 }

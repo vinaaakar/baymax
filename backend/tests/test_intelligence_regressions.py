@@ -338,3 +338,11 @@ async def test_no_internal_tool_names_in_replies(env):
     await asyncio.sleep(0.2)  # the completion message is posted right after the task finishes
     texts = [m["text"] for m in env["s"].conversation.recent(20) if m["role"] == "assistant"]
     assert texts and not any("desktop." in t or "I'll use" in t or "AppleScript" in t for t in texts)
+
+
+async def test_open_known_site_without_browser_opens_the_url_not_an_app(env):
+    r = await env["a"].handle_text("Open YouTube")
+    t = await env["s"].tasks.wait(r["taskId"], 10)
+    assert t.status is TaskStatus.COMPLETED, t.error
+    assert ("open_url", "https://www.youtube.com", None) in env["desk"].calls
+    assert "default browser" in t.result["summary"] and not t.verified  # honest: the default browser's page wasn't inspected

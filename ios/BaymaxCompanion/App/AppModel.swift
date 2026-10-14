@@ -251,6 +251,7 @@ final class AppModel: ObservableObject {
             var t = tasks[id] ?? TaskSummary(id: id, title: env.string("title") ?? "", status: "")
             t.title = env.string("title") ?? t.title
             t.status = env.string("status") ?? t.status
+            t.kind = env.string("kind") ?? t.kind
             t.step = env.string("step") ?? t.step
             t.progress = env.double("progress") ?? t.progress
             t.detail = env.string("detail") ?? t.detail

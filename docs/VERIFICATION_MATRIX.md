@@ -1,39 +1,30 @@
 # Verification matrix
 
-Columns follow the request: **unit** and **integration** tests ran in a Linux cloud container (Python 3.13, Node, Electron under
-Xvfb, JDK 21). **Real Mac** and **real iPhone** mean run on your hardware. No Mac, iPhone or Xcode was available to me, so every
-hardware column is **NOT RUN** until you run [MANUAL_CHECKLIST.md](MANUAL_CHECKLIST.md).
+Automated tests ran in a Linux cloud container: Python 3.13, Node 22, real Electron 38 under Xvfb, and Chromium. No Mac, iPhone,
+Xcode or Swift toolchain was available (Swift downloads are blocked by this environment's network policy). So:
+- every **actual macOS** and **actual iPhone** column is **NOT RUN** until you run [MANUAL_CHECKLIST.md](MANUAL_CHECKLIST.md);
+- Swift code (BaymaxKit tests and the app) is **written but not compiled here**.
 
-Allowed results: PASS · FAIL · NOT RUN · N/A.
-
-| # | Feature | Root cause fixed | Code changed | Unit test | Integration test | Real Mac | Real iPhone |
-|---|---|---|---|---|---|---|---|
-| 1 | Mac app launches | an outdated backend on port 8765 was silently reused | `desktop/electron/backend.ts`, `backend/baymax/buildinfo.py` | PASS | PASS: real Electron replaced an outdated backend | NOT RUN | N/A |
-| 2 | Ollama availability reported correctly | phone read device-count updates as "no model" | `server/hub.py`, `AppModel.swift`, `CompanionScreen.swift` | PASS | PASS: TLS phone client sees ready/unavailable and live changes | NOT RUN | NOT RUN |
-| 3 | Greeting → normal answer, no tool | model offered every tool on every turn | `intent/router.py`, `intent/relevance.py`, `assistant.py` | PASS | PASS: misbehaving fake model | NOT RUN | NOT RUN |
-| 4 | "What can you do?" from the real registry | no live capability report | `capabilities.py` | PASS | PASS | NOT RUN | NOT RUN |
-| 5 | Background noise never triggers an action | only 5 whisper tags filtered; silence hallucinations passed | `voice/stt.py` | PASS | PASS: real executable + WAV | NOT RUN | N/A |
-| 6 | Active-window tool uses the real front app | read_window required an app; "None" reached AppleScript | `tools/system_tools.py`, `hostos/desktop.py`, `tools/screen_tools.py` | PASS | PASS (fake desktop) | NOT RUN | N/A |
-| 7 | Invalid app names rejected safely ("EB Max", "None") | names only pattern-checked | `hostos/apps.py`, `tools/system_tools.py` | PASS | PASS | NOT RUN | N/A |
-| 8 | Unavailable app → useful message | AppleScript -1728 surfaced raw | `hostos/desktop.py`, `hostos/apps.py` | PASS | PASS | NOT RUN | N/A |
-| 9 | Real cursor event reaches the phone | no Mac→phone cursor path existed | `electron/presence*.ts`, `presence/cursor.py`, `server/hub.py` | PASS | PASS: real Electron + real X pointer → TLS phone client (Linux) | NOT RUN | NOT RUN |
-| 10 | Phone gaze follows the cursor | phone gaze fixed at zero; eyes moved ~1 cm | `Gaze.swift`, `CharacterView.swift`, `BaymaxNode.swift`, spec `eyes.travel` | PASS (TS); Swift tests written, not run | N/A | N/A | NOT RUN |
-| 11 | Sleep stops cursor updates and listening | mic kept running when sleep came from the other device | `presence/cursor.py`, `recorder.ts`, `common.tsx`, `AppModel.swift` | PASS | PASS: X11 cursor test + two-device session test | NOT RUN | NOT RUN |
-| 12 | Wake resumes, mic stays off | — | same | PASS | PASS | NOT RUN | NOT RUN |
-| 13 | "Open <app>" verified | resolver + verify running | `tools/system_tools.py` | PASS | PASS (fake desktop) | NOT RUN | N/A |
-| 14 | File creation makes a real file | — | `tools/dev_tools.py` | PASS | PASS: Java files written and re-read | NOT RUN | N/A |
-| 15 | Code generation runs a real test | — | `tools/dev_tools.py` | PASS | PASS: javac/java with JDK 21 | NOT RUN | N/A |
-| 16 | Research returns real sources | TLS trust store missing; 404s cited | `research/tls.py`, `research/web.py` | PASS | PASS: local HTTPS + SearXNG-compatible server; public internet blocked here | NOT RUN | NOT RUN |
-| 17 | No network → honest error | class-name-only errors | `research/web.py` | PASS | PASS: proxy 403 reported exactly | NOT RUN | N/A |
-| 18 | Mac and iPhone share state | — | `server/hub.py` | PASS | PASS: two-device session test (simulated phone) | NOT RUN | NOT RUN |
-| 19 | Disconnect/reconnect restores state | paired phone couldn't reconnect after Mac restart | `server/app.py` (listener at start), `CompanionConnection.swift` | PASS | PASS: abrupt TCP abort + reconnect | NOT RUN | NOT RUN |
-| 20 | Emergency stop | — | `tasks/manager.py` | PASS | PASS: real child process killed via phone message | NOT RUN | NOT RUN |
-| 21 | iOS app compiles in Xcode | — | — | N/A | N/A | N/A | **NOT RUN here** — you reported "Build Succeeded" for commit `4df568b`; later commits not yet compiled |
-| 22 | Installs and launches on the iPhone | signing/Developer Mode | — | N/A | N/A | N/A | Launched by you (UI visible, earlier build) |
-| 23 | Head-only on both platforms | full-body geometry; then a stale build | spec, `baymaxModel.ts`, `BaymaxNode.swift` | PASS | PASS: Electron renders at 3 sizes | NOT RUN | NOT RUN |
-| 24 | Real iPhone gaze follows real cursor | see 9–10 | — | N/A | N/A | NOT RUN | NOT RUN |
-
-Also added this round:
-- "Point toward the window I am using" and "Read the title of the active window" (`screen.point_window`, `desktop.active_window`).
-- ChatGPT-style prompt boxes are now matched by partial label ("Message ChatGPT").
-- The iPhone shows the "following cursor" icon only while samples are actually arriving.
+| Feature | Root cause | Fix applied | Automated test | Tested on actual macOS | Tested on actual iPhone | Remaining issue |
+|---|---|---|---|---|---|---|
+| "Hello" → greeting, no tools | model offered every tool on every turn | router greeting intent; tools filtered by relevance before the model sees them | PASS `test_greetings_never_touch_tools` | NOT RUN | NOT RUN | — |
+| "What is Newton's third law?" → answer, no tools | same | constrained tool selection: no relevant tool → plain chat with no tools offered | PASS `test_knowledge_question_is_answered_without_offering_tools` | NOT RUN | NOT RUN | answer quality depends on llama3.2:3b |
+| "Can you hear me?" reports the real microphone/transcription state | typed question got a canned "Yes, I can hear you" | typed: reports whisper.cpp readiness from `stt.status()`; voice: confirms with the transcript | PASS `test_typed_can_you_hear_me_reports_real_voice_status` | NOT RUN | NOT RUN | — |
+| "What can you do?" → real capability readiness | — | live registry and readiness report | PASS `test_capabilities_come_from_the_registry_without_tools` | NOT RUN | NOT RUN | — |
+| "What can you do with the current screen?" → real inspection | routed to the generic capability list | new `screen.inspect`: front window, real accessibility controls, browser URL; honest permission message | PASS `test_what_can_you_do_with_the_current_screen_inspects_it_for_real`, `test_screen_inspection_is_honest_without_accessibility` | NOT RUN | N/A | — |
+| "Open Safari" → launched and verified running | — | app resolver plus a running check | PASS (fake desktop) | NOT RUN | N/A | — |
+| "Open Gemini in Safari" → Safari opens gemini.google.com, verified | the whole phrase "Gemini In Safari" was treated as an app name | destination resolver (`hostos/sites.py`) is separate from the browser; `open -a Safari <url>`; verified from Safari's address bar | PASS `test_open_site_in_browser_separates_destination_from_app`, `test_open_gemini_in_safari_is_verified_from_the_address_bar`, `test_unconfirmed_page_is_not_claimed` | NOT RUN | N/A | reading the address bar needs the Automation permission for Safari; without it BAYMAX says it couldn't confirm |
+| "Open YouTube" (no browser named) | — | known site → URL in the default browser, reported as unverified | PASS `test_open_known_site_without_browser_opens_the_url_not_an_app` | NOT RUN | N/A | — |
+| "Read the current window" → real front app | "None" passed to AppleScript | front-app resolution, ask when unknown | PASS (fake desktop) | NOT RUN | N/A | — |
+| "Find the Projects tab" → real UI search | — | accessibility tree, then OCR; ambiguous → question; partial-label matching | PASS `test_screen.py` | NOT RUN | N/A | — |
+| E-stop blocks actions, not conversation | — | checked before each action only | PASS `test_estop_blocks_actions_but_not_conversation` | NOT RUN | NOT RUN | — |
+| No tool names / raw AppleScript in replies | "I'll use desktop.read_window…" announcements; raw osascript errors | announcements removed; AppleScript errors logged, a plain message is shown | PASS `test_no_internal_tool_names_in_replies` | NOT RUN | NOT RUN | — |
+| Background noise never triggers an action | silence hallucinations ("Thank you.") passed | sound tags and hallucinations filtered | PASS (unit + real whisper executable earlier) | NOT RUN | N/A | — |
+| Real cursor → Mac face pupils | — | 2D face driven by real cursor samples | PASS real Electron + real X pointer: renderer `svg-2d`, no WebGL canvas, TRACKING, pupil x −0.076 (left) / +0.090 (right) | NOT RUN | N/A | X11 only reports the pointer inside Electron windows; macOS reads it globally |
+| Real cursor → iPhone pupils | phone gaze fixed at zero (earlier) | cursor relay over TLS; same 2D face math on the phone | PASS relay (real Electron → TLS phone client, max error 0.00005); Swift parity tests written, not run | NOT RUN | NOT RUN | SwiftUI renderer not compiled here |
+| 2D companion (no 3D) on both platforms | three.js and SceneKit renderers | Mac: SVG face; iPhone: SwiftUI `Canvas` face; one spec (`face2d`) with test vectors; `baymaxModel.ts`, `framing.ts`, `Framing.swift` and the SceneKit node removed | PASS `face2d.test.ts` (vectors, eyes stay on the face, no `three`/SceneKit imports); Swift `VisualSpecParityTests` written, not run | NOT RUN | NOT RUN | needs an Xcode build on your Mac |
+| Expressions: IDLE, TRACKING, LISTENING, THINKING, RESEARCHING, EXECUTING, SPEAKING, POINTING, SLEEPING, ERROR, DISCONNECTED | no researching, tracking or pointing indicators | `expressionFor` / `FaceExpression.from` from real state, live cursor, verified targets and the task kind (`task.update.kind` now sent to the phone) | PASS expression vectors (TS), Chromium renders in `docs/images/face-2d-states.png` | NOT RUN | NOT RUN | — |
+| Diagnostics panel | lacked expression and pupils | iPhone panel shows coordinates, normalized values, gaze, expression, pupil offsets, connection, event age | N/A (UI) | N/A | NOT RUN | — |
+| Sleep/wake stops and resumes cursor and mic | — | — | PASS real Electron (cursor stream paused while asleep) | NOT RUN | NOT RUN | — |
+| Research returns real sources | TLS trust store; 404s cited | truststore + certifi; 404s rejected | PASS local HTTPS; public internet blocked here | NOT RUN | NOT RUN | — |
+| iOS app compiles | — | — | N/A | N/A | NOT RUN — the last build you reported was an earlier commit | — |

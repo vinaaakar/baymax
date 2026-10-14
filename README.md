@@ -11,7 +11,7 @@ stands on a deep-red stage. Behind the character is a local-first assistant that
 > The character is an original procedural model inspired by the broad look of Baymax from
 > Disney's *Big Hero 6*. It is **not** an official Disney asset, and this project is not affiliated with Disney.
 
-![Head-only companion rendered by the real desktop renderer at iPhone, Mac-companion and wide sizes](docs/images/head-landscape-desktop-renderer.png)
+![2D companion face in several expressions, rendered by the real desktop renderer](docs/images/face-2d-states.png)
 
 ## What's in the repository
 
@@ -19,8 +19,8 @@ stands on a deep-red stage. Behind the character is a local-first assistant that
 |---|---|---|
 | `protocol/` | Single source of truth for character states, the task lifecycle and every Mac↔iPhone message | JSON, shared by Python, TS and Swift |
 | `backend/` | AI orchestration, tools, security, 3D engine, servers | Python 3.11+, aiohttp, numpy |
-| `desktop/` | Mac app: floating companion, conversation window, engineering workspace, menu-bar tray | Electron, React, TypeScript, Vite, three.js |
-| `ios/` | iPhone companion app and the `BaymaxKit` logic package | SwiftUI, SceneKit, Speech, CryptoKit |
+| `desktop/` | Mac app: floating companion, conversation window, engineering workspace, menu-bar tray | Electron, React, TypeScript, Vite (SVG companion face; three.js only for the 3D-creation viewer) |
+| `ios/` | iPhone companion app and the `BaymaxKit` logic package | SwiftUI (Canvas 2D face), Speech, CryptoKit |
 | `scripts/` | `setup_mac.sh`, `test_all.sh`, Khronos GLB validation | bash / node |
 | `docs/` | Setup, user guide, architecture, security, implementation report, limitations | |
 
@@ -42,7 +42,7 @@ Day-to-day use is covered in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 | Python backend (tasks, policy, tools, servers) | Implemented, tested | 524 pytest tests pass |
 | Shared protocol + state machines | Implemented in Python, TS, Swift | Parity tests in all three; Swift tests not executed here (no toolchain) |
 | Mac app (Electron) | Implemented; launched on Linux (Xvfb) | Electron started, spawned the backend, rendered the character; not run on macOS here |
-| Character + red theme | Implemented (three.js and SceneKit) | Screenshots above come from the real renderer driven by real backend states |
+| Character + red theme | Flat 2D vector face on both (SVG on the Mac, SwiftUI Canvas on iPhone) from one spec | Mac face rendered in real Electron; SwiftUI port not compiled here (no toolchain) |
 | iPhone app | Source complete; **not compiled in this environment** | 18 Swift files pass a syntax parse; CI config for macOS builds included |
 | Local LLM (Ollama) | Integrated; no cloud fallback | Tested against a fake Ollama server; real Ollama not available here |
 | Voice | whisper.cpp STT + `say`/AVSpeech TTS integrated | Pipeline unit-tested; real speech not run (no mic/engines here) |
