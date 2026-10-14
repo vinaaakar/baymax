@@ -68,6 +68,7 @@ export default function Companion() {
   const cursor = useCursorLook();
   const gaze = useGazeTarget();
   const active = useActiveTasks();
+  const approvals = useStore((s) => Object.keys(s.approvals).length);
   const [showCaption, setShowCaption] = useState(false);
 
   useEffect(() => {
@@ -79,20 +80,22 @@ export default function Companion() {
 
   const toggleSleep = () => client?.post("/api/sleep", { sleeping: !sleeping });
   const task = active[0];
+  const pinned = voice.listening || showCaption || estop.engaged || approvals > 0 || !!voice.error || !!task || state === "DISCONNECTED";
   return (
-    <div className={`stage companion-layout ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""}`}>
-      <div className="topbar drag">
+    // Landscape face mode: the face fills the window; the bars fade in on hover/focus and stay while something needs attention.
+    <div className={`stage companion-layout face-mode ${state === "SLEEPING" || state === "DISCONNECTED" ? "dim" : ""} ${pinned ? "chrome-pinned" : ""}`}>
+      <div className="topbar drag chrome">
         <ConnectionPill compact />
         <span className="spacer" />
         <button className="btn small no-drag" onClick={() => window.baymax?.openWindow("workspace")} title="Open engineering workspace" aria-label="Open engineering workspace">⌘</button>
       </div>
-      {/* The face has its own region between the status bar and the controls: nothing is drawn over it. */}
+      {/* The face fills the window, like the reference desk device; the bars are overlaid only when needed. */}
       <div className="face-region">
         <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={cursor.look} cursorLive={cursor.live && !sleeping}
           point={gaze.point} taskKind={task?.kind} progress={task?.progress} onClick={() => sleeping && toggleSleep()} />
       </div>
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
-      <div className="controls">
+      <div className="controls chrome">
         {showCaption && lastAssistant && state !== "SLEEPING" && (
           <div className="speech-caption" aria-hidden="true" title={lastAssistant.text}>{lastAssistant.text}</div>
         )}

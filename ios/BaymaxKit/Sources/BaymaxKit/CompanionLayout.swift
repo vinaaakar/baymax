@@ -1,7 +1,8 @@
 import Foundation
 
 /// Layout rules for the iPhone companion screen (landscape-first desk mode). Pure, so they are unit-tested.
-/// The face always gets its own region between the top bar and the controls; nothing is drawn over it.
+/// Portrait: the face gets its own region between the top bar and the controls. Landscape face mode: the face fills the
+/// screen and the bars appear only when tapped or when something needs attention.
 public struct CompanionLayout: Equatable, Sendable {
     public enum Mode: Equatable, Sendable {
         case faceOnly                 // Companion Face Mode (default)
@@ -17,6 +18,8 @@ public struct CompanionLayout: Equatable, Sendable {
     public var micDiameter: Double
     /// Maximum lines of the last reply shown under the face.
     public var replyLines: Int
+    /// Landscape face mode: the face fills the whole screen (like a desk device); the bars are overlaid on demand.
+    public var immersive: Bool { landscape && mode == .faceOnly }
 
     /// Minimum landscape width (points, inside safe areas) for the side-by-side conversation layout.
     public static let sideBySideMinWidth = 560.0

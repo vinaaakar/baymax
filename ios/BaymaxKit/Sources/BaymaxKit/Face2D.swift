@@ -35,9 +35,9 @@ public enum FaceSpec {
     public static let travelX = 0.30, travelY = 0.2, yawFollow = 0.25, pitchFollow = 0.15
     public static let foreshortenWidth = 0.28, foreshortenSpacing = 0.1
     public static let parallaxYaw = 0.12, parallaxPitch = 0.1, parallaxBody = 1.5
-    public static let pointerRadius = 1.16
-    public static let fitWidthFrac = 0.62, fitHeightFrac = 0.56, fitCenterY = 0.42
-    public static let fitLandscapeHeightFrac = 0.66, fitLandscapeCenterY = 0.46, fitParallaxRoom = 0.08
+    public static let pointerRadius = 1.1
+    public static let fitWidthFrac = 0.7, fitHeightFrac = 0.56, fitCenterY = 0.42
+    public static let fitLandscapeHeightFrac = 0.94, fitLandscapeCenterY = 0.5, fitParallaxRoom = 0.08
     /// Per-expression eye scale (left, right).
     public static let eyeScale: [FaceExpression: (Double, Double)] = [.confused: (1, 0.82), .concerned: (0.94, 0.94)]
     // Shading (hex): see design spec face2d.shading.

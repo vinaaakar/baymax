@@ -60,9 +60,9 @@ private struct FacePainter {
 
         switch expression {
         case .listening:
-            ctx.stroke(ring(1.12 + level * 0.1), with: .color(Theme.glow.opacity(0.35 + level * 0.6)), lineWidth: 2 + level * 4)
+            ctx.stroke(ring(1.06 + level * 0.06), with: .color(Theme.glow.opacity(0.35 + level * 0.6)), lineWidth: 2 + level * 4)
         case .error:
-            ctx.stroke(ring(1.12), with: .color(Color(hex: 0xFF5D6C).opacity(0.4 + 0.4 * abs(sin(t * 3)))), lineWidth: 3)
+            ctx.stroke(ring(1.06), with: .color(Color(hex: 0xFF5D6C).opacity(0.4 + 0.4 * abs(sin(t * 3)))), lineWidth: 3)
         case .executing:
             drawProgressArc(&ctx)
         default:
@@ -105,7 +105,7 @@ private struct FacePainter {
         let known = progress.map { $0.isFinite } ?? false
         let start = known ? -Double.pi / 2 : t * 2.4
         let sweep = known ? max(0.02, min(1, progress!)) * 2 * .pi : .pi * 0.45
-        let rx = g.head.rx * s * 1.13, ry = g.head.ry * s * 1.13
+        let rx = g.head.rx * s * 1.07, ry = g.head.ry * s * 1.07
         var arc = Path()
         let steps = 48
         for i in 0...steps {
@@ -133,12 +133,12 @@ private struct FacePainter {
         case .thinking, .researching:
             for i in 0..<3 {
                 let r = 0.035 * s
-                let c = CGPoint(x: hx + Double(i - 1) * 0.16 * s, y: hy - g.head.ry * s * 1.28)
+                let c = CGPoint(x: hx + g.head.rx * s * 1.12 + Double(i) * 0.13 * s, y: hy - g.head.ry * s * (0.62 + Double(i) * 0.12))
                 ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
                          with: .color(Theme.white.opacity(0.25 + 0.6 * max(0, sin(t * 3 - Double(i) * 0.8)))))
             }
             if expression == .researching {
-                let c = CGPoint(x: hx + cos(t * 1.4) * g.head.rx * s * 1.2, y: hy + sin(t * 1.4) * g.head.ry * s * 1.25)
+                let c = CGPoint(x: hx + cos(t * 1.4) * g.head.rx * s * 1.18, y: hy + sin(t * 1.4) * g.head.ry * s * 0.85)
                 let r = 0.07 * s
                 ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Theme.white.opacity(0.85)),
                            lineWidth: max(1.5, 0.022 * s))
@@ -149,7 +149,7 @@ private struct FacePainter {
             }
         case .tracking:
             // Small cursor glyph: real cursor samples are arriving from the Mac.
-            let k = 0.0018 * s, ox = hx - 0.03 * s, oy = hy + g.head.ry * s * 1.18
+            let k = 0.0018 * s, ox = hx + g.head.rx * s * 1.1, oy = hy + g.head.ry * s * 0.55
             let pts: [(Double, Double)] = [(0, 0), (0, 34), (9, 26), (15, 40), (21, 37), (15, 24), (27, 24)]
             var cursor = Path()
             cursor.addLines(pts.map { CGPoint(x: ox + $0.0 * k, y: oy + $0.1 * k) })
@@ -157,13 +157,13 @@ private struct FacePainter {
             ctx.fill(cursor, with: .color(Theme.muted.opacity(0.75)))
         case .sleeping:
             ctx.draw(Text("z").font(.system(size: max(10, 0.2 * s), weight: .semibold)).foregroundColor(Theme.muted.opacity(0.7)),
-                     at: CGPoint(x: hx + g.head.rx * s * 0.85, y: hy - g.head.ry * s * (1.05 + 0.08 * sin(t))))
+                     at: CGPoint(x: hx + g.head.rx * s * 1.05, y: hy - g.head.ry * s * (0.7 + 0.08 * sin(t))))
         case .disconnected:
             var link = Path()
-            let y = hy + g.head.ry * s * 1.25
-            link.move(to: CGPoint(x: hx - 0.1 * s, y: y)); link.addLine(to: CGPoint(x: hx - 0.02 * s, y: y))
-            link.move(to: CGPoint(x: hx + 0.02 * s, y: y)); link.addLine(to: CGPoint(x: hx + 0.1 * s, y: y))
-            link.move(to: CGPoint(x: hx - 0.03 * s, y: y - 0.05 * s)); link.addLine(to: CGPoint(x: hx + 0.03 * s, y: y + 0.05 * s))
+            let y = hy + g.head.ry * s * 0.6, x = hx + g.head.rx * s * 1.2
+            link.move(to: CGPoint(x: x - 0.1 * s, y: y)); link.addLine(to: CGPoint(x: x - 0.02 * s, y: y))
+            link.move(to: CGPoint(x: x + 0.02 * s, y: y)); link.addLine(to: CGPoint(x: x + 0.1 * s, y: y))
+            link.move(to: CGPoint(x: x - 0.03 * s, y: y - 0.05 * s)); link.addLine(to: CGPoint(x: x + 0.03 * s, y: y + 0.05 * s))
             ctx.stroke(link, with: .color(Theme.muted.opacity(0.8)), lineWidth: 2)
         default:
             break

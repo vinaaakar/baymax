@@ -299,6 +299,9 @@ final class CompanionLayoutTests: XCTestCase {
         XCTAssertEqual(l.mode, .faceOnly)
         XCTAssertEqual(l.faceWidthFraction, 1)
         XCTAssertLessThan(l.micDiameter, 64)  // compact controls leave the height to the face
+        XCTAssertTrue(l.immersive)  // face fills the screen; bars overlaid on demand
+        XCTAssertFalse(CompanionLayout.compute(width: 844, height: 360, conversationOpen: true).immersive)
+        XCTAssertFalse(CompanionLayout.compute(width: 390, height: 760, conversationOpen: false).immersive)
     }
 
     func testLandscapeConversationSitsBesideASmallerFace() {

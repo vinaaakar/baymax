@@ -111,14 +111,14 @@ export default function BaymaxCharacter(props: CharacterProps) {
 
         {/* Indicators behind/around the head (all derived from real state). */}
         {expression === "LISTENING" && (
-          <ellipse cx={hx} cy={hy} {...ringR(1.12 + level * 0.1)} fill="none" stroke={C.highlight} strokeWidth={2 + level * 4}
+          <ellipse cx={hx} cy={hy} {...ringR(1.06 + level * 0.06)} fill="none" stroke={C.highlight} strokeWidth={2 + level * 4}
             opacity={0.35 + level * 0.6} data-indicator="listening" />
         )}
         {expression === "ERROR" && (
-          <ellipse cx={hx} cy={hy} {...ringR(1.12)} fill="none" stroke={C.error} strokeWidth={3} opacity={0.4 + 0.4 * Math.abs(Math.sin(t * 3))} data-indicator="error" />
+          <ellipse cx={hx} cy={hy} {...ringR(1.06)} fill="none" stroke={C.error} strokeWidth={3} opacity={0.4 + 0.4 * Math.abs(Math.sin(t * 3))} data-indicator="error" />
         )}
         {expression === "EXECUTING" && (
-          <ProgressArc cx={hx} cy={hy} rx={g.head.rx * s * 1.13} ry={g.head.ry * s * 1.13} progress={props.progress ?? null} t={t} />
+          <ProgressArc cx={hx} cy={hy} rx={g.head.rx * s * 1.07} ry={g.head.ry * s * 1.07} progress={props.progress ?? null} t={t} />
         )}
 
         <g transform={`translate(${hx} ${hy}) rotate(${roll})`} filter="url(#bx-shadow)">
@@ -146,27 +146,27 @@ export default function BaymaxCharacter(props: CharacterProps) {
         {(expression === "THINKING" || expression === "RESEARCHING") && (
           <g data-indicator="thinking">
             {[0, 1, 2].map((i) => (
-              <circle key={i} cx={hx + (i - 1) * 0.16 * s} cy={hy - g.head.ry * s * 1.28} r={0.035 * s} fill={C.text}
+              <circle key={i} cx={hx + g.head.rx * s * 1.12 + i * 0.13 * s} cy={hy - g.head.ry * s * (0.62 + i * 0.12)} r={0.035 * s} fill={C.text}
                 opacity={0.25 + 0.6 * Math.max(0, Math.sin(t * 3 - i * 0.8))} />
             ))}
           </g>
         )}
         {expression === "RESEARCHING" && (
-          <g data-indicator="researching" transform={`translate(${hx + Math.cos(t * 1.4) * g.head.rx * s * 1.2} ${hy + Math.sin(t * 1.4) * g.head.ry * s * 1.25})`}>
+          <g data-indicator="researching" transform={`translate(${hx + Math.cos(t * 1.4) * g.head.rx * s * 1.18} ${hy + Math.sin(t * 1.4) * g.head.ry * s * 0.85})`}>
             <circle r={0.07 * s} fill="none" stroke={C.text} strokeWidth={Math.max(1.5, 0.022 * s)} opacity={0.85} />
             <line x1={0.05 * s} y1={0.05 * s} x2={0.12 * s} y2={0.12 * s} stroke={C.text} strokeWidth={Math.max(1.5, 0.026 * s)} strokeLinecap="round" />
           </g>
         )}
         {expression === "TRACKING" && (
-          <path data-indicator="tracking" transform={`translate(${hx - 0.03 * s} ${hy + g.head.ry * s * 1.18}) scale(${0.0018 * s})`}
+          <path data-indicator="tracking" transform={`translate(${hx + g.head.rx * s * 1.1} ${hy + g.head.ry * s * 0.55}) scale(${0.0018 * s})`}
             d="M0 0 L0 34 L9 26 L15 40 L21 37 L15 24 L27 24 Z" fill={C.muted} opacity={0.75} />
         )}
         {expression === "SLEEPING" && (
-          <text x={hx + g.head.rx * s * 0.85} y={hy - g.head.ry * s * (1.05 + 0.08 * Math.sin(t))} fill={C.muted}
+          <text x={hx + g.head.rx * s * 1.05} y={hy - g.head.ry * s * (0.7 + 0.08 * Math.sin(t))} fill={C.muted}
             fontSize={0.2 * s} fontWeight={600} opacity={0.7} data-indicator="sleeping">z</text>
         )}
         {expression === "DISCONNECTED" && (
-          <g data-indicator="disconnected" transform={`translate(${hx} ${hy + g.head.ry * s * 1.25})`} stroke={C.muted} strokeWidth={2} opacity={0.8}>
+          <g data-indicator="disconnected" transform={`translate(${hx + g.head.rx * s * 1.2} ${hy + g.head.ry * s * 0.6})`} stroke={C.muted} strokeWidth={2} opacity={0.8}>
             <line x1={-0.1 * s} y1={0} x2={-0.02 * s} y2={0} /><line x1={0.02 * s} y1={0} x2={0.1 * s} y2={0} />
             <line x1={-0.03 * s} y1={-0.05 * s} x2={0.03 * s} y2={0.05 * s} />
           </g>

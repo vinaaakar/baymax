@@ -38,13 +38,17 @@ draws SwiftUI `Canvas` paths (`ios/BaymaxCompanion/Character/CharacterView.swift
 - **Depth without 3D:** for gaze, the eye group slides across the face (up to 0.30 sideways, 0.20 up/down). The eye nearest the edge
   narrows by up to 28 % and the eyes move slightly closer together. The head shifts a little (parallax) and rolls with the pose.
   The eyes always stay inside the head; this is tested for cursor positions on and beyond the screen edges.
-- **Fit:** the head fills 62 % of the width or 56 % of the height (66 % in landscape), whichever is smaller. It is never cropped.
-- **Layout:** on both devices the face has its own region between the status bar and the controls; nothing is drawn over it.
-  The iPhone is landscape-first (Desk mode, on by default); in landscape the conversation opens beside a smaller face.
+- **Landscape face mode (default on both):** like the reference desk device, the head fills about 87 % of the screen height,
+  centred, and nothing else is shown. The Mac companion is a 560×320 landscape window whose bars fade in on hover. The iPhone
+  shows its bars when you tap the face and hides them after 6 s. Bars stay visible while listening, during a task, for
+  approvals, E-stop, connection problems, or when VoiceOver is on.
+- **Fit:** in portrait the head fills 70 % of the width or 56 % of the height, whichever is smaller. It is never cropped.
+  With the conversation open in landscape, the face moves to a narrower region beside it.
 - **Evidence:**
   - `docs/images/face-2d-states.png`: the Mac renderer in Chromium for IDLE, TRACKING left-up and right-down, POINTING, RESEARCHING,
     LISTENING, SLEEPING and CONFUSED.
-  - `docs/images/companion-2d-electron.png`: the real Electron companion during the X11 end-to-end test.
+  - `docs/images/companion-2d-electron.png`: the real Electron companion (pointer over it, so the bars are shown) during the X11 end-to-end test.
+  - `docs/images/mac-landscape.png` (560×320) and `docs/images/iphone-landscape.png` (844×390): resting landscape face mode.
   - The SwiftUI port uses the same math and test vectors but **has not been compiled or rendered here** (no Swift/Xcode toolchain).
 
 ## Expressions

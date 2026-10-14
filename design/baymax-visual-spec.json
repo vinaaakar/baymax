@@ -98,15 +98,16 @@
       "body": 1.5
     },
     "pointer": {
-      "radius": 1.16
+      "radius": 1.1
     },
     "fit": {
-      "widthFrac": 0.62,
+      "widthFrac": 0.7,
       "heightFrac": 0.56,
       "centerY": 0.42,
-      "landscapeHeightFrac": 0.66,
-      "landscapeCenterY": 0.46,
-      "parallaxRoom": 0.08
+      "landscapeHeightFrac": 0.94,
+      "landscapeCenterY": 0.5,
+      "parallaxRoom": 0.08,
+      "description": "Landscape (width/height >= 1.2) is the desk-companion face mode: the head fills ~87% of the height, centred, like the reference device; controls are overlaid on demand."
     },
     "shading": {
       "description": "Head: radial gradient from skin (upper-left highlight) to skinShade at the rim, plus a soft drop shadow. Eyes: flat face color with a tiny highlight. Stage: radial burgundy glow behind the head.",
@@ -380,8 +381,8 @@
         },
         "pointer": {
           "angle": -2.582993,
-          "x": -1.017278,
-          "y": -0.465296
+          "x": -0.966398,
+          "y": -0.441764
         },
         "glow": 0,
         "dim": 0
@@ -508,44 +509,44 @@
     {
       "w": 390,
       "h": 844,
-      "scale": 120.9,
+      "scale": 136.5,
       "cx": 195,
       "cy": 354.48
     },
     {
       "w": 844,
       "h": 390,
-      "scale": 161.036036,
+      "scale": 229.354354,
       "cx": 422,
-      "cy": 179.4
+      "cy": 195
     },
     {
       "w": 932,
       "h": 430,
-      "scale": 177.552553,
+      "scale": 252.877878,
       "cx": 466,
-      "cy": 197.8
+      "cy": 215
     },
     {
       "w": 430,
       "h": 932,
-      "scale": 133.3,
+      "scale": 150.5,
       "cx": 215,
       "cy": 391.44
     },
     {
       "w": 520,
       "h": 640,
-      "scale": 161.2,
+      "scale": 182,
       "cx": 260,
       "cy": 268.8
     },
     {
       "w": 1200,
       "h": 800,
-      "scale": 330.33033,
+      "scale": 420,
       "cx": 600,
-      "cy": 368
+      "cy": 400
     }
   ],
   "expressionTestVectors": [

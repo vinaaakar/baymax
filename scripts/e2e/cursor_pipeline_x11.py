@@ -45,14 +45,14 @@ async def face_state(s: aiohttp.ClientSession, shot: Path | None = None) -> list
                     "renderer: el.dataset.renderer, expression: el.dataset.expression, pupil: el.dataset.pupil, "
                     "webgl: !!document.querySelector('.character-canvas canvas'), w: el.clientWidth, h: el.clientHeight}) : null })()")
             await ws.send_json({"id": 1, "method": "Runtime.evaluate", "params": {"expression": expr, "returnByValue": True}})
-            res = await ws.receive_json()
+            res = await ws.receive_json(timeout=15)
             val = res.get("result", {}).get("result", {}).get("value")
             if not val:
                 continue
             info = json.loads(val)
             if shot is not None and info["w"] < 600:  # the compact companion window
                 await ws.send_json({"id": 2, "method": "Page.captureScreenshot", "params": {"format": "png"}})
-                img = await ws.receive_json()
+                img = await ws.receive_json(timeout=15)
                 import base64
                 shot.write_bytes(base64.b64decode(img["result"]["data"]))
                 info["screenshot"] = str(shot)

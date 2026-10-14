@@ -2,8 +2,9 @@ import BaymaxKit
 import SwiftUI
 
 /// The main iPhone screen — a desk companion, landscape first.
-/// Layout (top to bottom): compact status + settings, the face (its own region; nothing overlaps it),
-/// short status messages, and one compact row of controls. In landscape with the conversation open, the face
+/// Landscape (default): the face fills the screen like a desk device; tap it to show the status bar and controls,
+/// which hide again after a few seconds unless something needs attention. Portrait (top to bottom): compact status +
+/// settings, the face (its own region), short status messages, and one compact row of controls. In landscape with the conversation open, the face
 /// shrinks to the left and the conversation panel sits beside it. Rules live in BaymaxKit.CompanionLayout.
 struct CompanionScreen: View {
     @EnvironmentObject var model: AppModel
@@ -14,6 +15,9 @@ struct CompanionScreen: View {
     @State private var draft = ""
     @FocusState private var focused: Bool
     @AppStorage("baymax.debugCursor") private var debugCursor = false
+    @State private var chromeShown = false
+    @State private var chromeToken = 0
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 
     var body: some View {
         GeometryReader { geo in
@@ -21,25 +25,29 @@ struct CompanionScreen: View {
                                                  conversationOpen: showConversation)
             ZStack {
                 Theme.stage
-                VStack(spacing: layout.landscape ? 6 : 10) {
-                    topBar
-                    if debugCursor {
-                        CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping)
-                    }
-                    if layout.mode == .faceBesideConversation {
-                        HStack(spacing: 12) {
-                            face.frame(width: geo.size.width * layout.faceWidthFraction)
-                            ConversationPanel(onClose: { showConversation = false })
-                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+                if layout.immersive {
+                    immersiveFace(layout)
+                } else {
+                    VStack(spacing: layout.landscape ? 6 : 10) {
+                        topBar
+                        if debugCursor {
+                            CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping)
                         }
-                    } else {
-                        face.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if layout.mode == .faceBesideConversation {
+                            HStack(spacing: 12) {
+                                face.frame(width: geo.size.width * layout.faceWidthFraction)
+                                ConversationPanel(onClose: { showConversation = false })
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+                            }
+                        } else {
+                            face.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        statusArea(layout)
+                        controlRow(layout)
                     }
-                    statusArea(layout)
-                    controlRow(layout)
+                    .padding(.horizontal, layout.landscape ? 12 : 16)
+                    .padding(.vertical, 4)
                 }
-                .padding(.horizontal, layout.landscape ? 12 : 16)
-                .padding(.vertical, 4)
             }
             .sheet(isPresented: Binding(get: { showConversation && layout.mode == .faceWithConversationSheet },
                                         set: { if !$0 { showConversation = false } })) {
@@ -54,6 +62,53 @@ struct CompanionScreen: View {
         }
     }
 
+    /// Bars stay visible whenever something needs the user (or VoiceOver is on); otherwise they appear on tap and hide again.
+    private var chromePinned: Bool {
+        voiceOver || typing || model.speechIn.state == .listening || model.estopEngaged || !model.approvals.isEmpty
+            || model.activeTask != nil || !model.display.connected || model.connectionProblem != nil
+    }
+
+    private func revealChrome() {
+        chromeShown = true
+        chromeToken += 1
+    }
+
+    /// Landscape face mode: the face fills the screen, like the reference desk device. Tap to show the bars.
+    private func immersiveFace(_ layout: CompanionLayout) -> some View {
+        let visible = chromeShown || chromePinned
+        return ZStack {
+            face.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
+            VStack(spacing: 6) {
+                topBar.padding(.top, 4)
+                Spacer(minLength: 0)
+                statusArea(layout)
+                controlRow(layout)
+            }
+            .padding(.horizontal, 12)
+            .background(alignment: .bottom) {
+                LinearGradient(colors: [.clear, Theme.background.opacity(0.92)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 140).ignoresSafeArea().allowsHitTesting(false)
+            }
+            .opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+            .animation(.easeInOut(duration: 0.22), value: visible)
+            if debugCursor {
+                VStack {
+                    CursorDebugPanel(gaze: model.gaze, connection: model.connectionText, sleeping: model.sleeping).frame(maxWidth: 360)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .allowsHitTesting(false)
+            }
+        }
+        .task(id: chromeToken) {
+            guard chromeShown else { return }
+            try? await Task.sleep(for: .seconds(6))
+            chromeShown = false
+        }
+    }
+
     /// The head only, in its own region. Disconnected/asleep dims it; tapping a sleeping face wakes it.
     private var face: some View {
         CharacterView(state: model.state, level: model.speechIn.level, gaze: model.gaze,
@@ -61,10 +116,10 @@ struct CompanionScreen: View {
             .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
             .saturation(model.state == .disconnected ? 0.5 : 1)
             .contentShape(Rectangle())
-            .onTapGesture { if model.sleeping { model.setSleeping(false) } }
+            .onTapGesture { if model.sleeping { model.setSleeping(false) } else { revealChrome() } }
             .accessibilityElement()
             .accessibilityLabel("BAYMAX, \(model.state.accessibilityDescription)")
-            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "")
+            .accessibilityHint(model.sleeping ? "Double-tap to wake" : "Double-tap to show the controls")
             .accessibilityAddTraits(.isImage)
     }
 

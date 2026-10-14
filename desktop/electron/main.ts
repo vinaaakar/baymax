@@ -53,8 +53,9 @@ function createWindow(name: WinName): BrowserWindow {
   const win =
     name === "companion"
       ? new BrowserWindow({
-          ...common, width: 320, height: 470, x: workArea.x + workArea.width - 340, y: workArea.y + workArea.height - 490,
-          frame: false, resizable: true, minWidth: 260, minHeight: 380, alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
+          // Landscape desk companion: the face fills the window; controls appear on hover (like the iPhone in landscape).
+          ...common, width: 560, height: 320, x: workArea.x + workArea.width - 580, y: workArea.y + workArea.height - 340,
+          frame: false, resizable: true, minWidth: 420, minHeight: 250, alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
           titleBarStyle: "hidden", hasShadow: true, title: "BAYMAX",
         })
       : name === "conversation"
@@ -94,12 +95,7 @@ function startCursorTracking(): void {
     const win = windows.companion;
     if (sleeping || !win || win.isDestroyed() || !win.isVisible()) return; // sleep suspends cursor tracking
     const p = screen.getCursorScreenPoint();
-    const b = win.getBounds();
-    const cx = b.x + b.width / 2;
-    const cy = b.y + b.height * 0.32;
-    const x = Math.max(-1, Math.min(1, (p.x - cx) / 600));
-    const y = Math.max(-1, Math.min(1, -(p.y - cy) / 400));
-    win.webContents.send("baymax:cursor", { x, y });
+    win.webContents.send("baymax:cursor", lookFromWindow(p, win.getBounds()));
   }, 66);
 }
 
