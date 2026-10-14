@@ -76,6 +76,10 @@ async def _fresh_textedit_document(desk, timeout: float = 8.0):
             return name, areas[0], els
         if time.monotonic() > deadline:
             break
+        if front != "TextEdit":  # focus went elsewhere (or never arrived): bring TextEdit forward again
+            from baymax.hostos.desktop import _AS_ACTIVATE
+
+            await desk._osascript(_AS_ACTIVATE, "TextEdit", timeout=10)
         await asyncio.sleep(0.5)
     hint = f" Front app now: {await _front_app_state(desk)}."
     if win.get("windows") == 0:

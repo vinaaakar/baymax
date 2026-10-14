@@ -979,46 +979,69 @@ class MacDesktop(DesktopBackend):
             raise DesktopUnavailable("display geometry needs PyObjC: pip install 'baymax-backend[macos]'")
         return _quartz_displays(self._quartz)
 
-    async def target_app(self) -> str:
-        """The app the user is looking at: the front-most normal window that isn't BAYMAX itself
-        (talking to BAYMAX focuses its own window). Window owner names need no extra permission."""
+    async def _front_app_not_self(self) -> str | None:
+        """The app macOS reports as frontmost right now (System Events, live), unless it is BAYMAX itself."""
+        try:
+            front = (await self.frontmost_app()).strip()
+        except DesktopUnavailable:
+            return None
+        return front if front and front not in _SELF_APPS else None
+
+    def _cg_windows(self, owner: str | None) -> list[dict[str, Any]]:
+        """On-screen normal windows, front to back, that aren't BAYMAX's - only `owner`'s when given. Thin strips
+        (seen: a 1710x68 Terminal window titled "0") are not windows anyone is working in."""
         Q = self._quartz
-        if Q is not None:
-            info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements, Q.kCGNullWindowID) or []
-            for w in info:
-                owner = str(w.get("kCGWindowOwnerName") or "")
-                if int(w.get("kCGWindowLayer", 1)) == 0 and owner and owner not in _SELF_APPS:
-                    return owner
-        front = (await self.frontmost_app()).strip()
-        if not front or front in _SELF_APPS:
-            raise DesktopUnavailable("I couldn't tell which app you mean (BAYMAX itself is in front). Click the window first, or name the app.")
-        return front
+        if Q is None:
+            return []
+        info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements, Q.kCGNullWindowID) or []
+        out = []
+        for w in info:
+            name = str(w.get("kCGWindowOwnerName") or "")
+            b = w.get("kCGWindowBounds") or {}
+            if int(w.get("kCGWindowLayer", 1)) != 0 or not name or name in _SELF_APPS:
+                continue
+            if owner is not None and name.lower() != owner.lower():
+                continue
+            if float(b.get("Width", 0)) < 100 or float(b.get("Height", 0)) < 100:
+                continue
+            out.append(w)
+        return out
+
+    async def target_app(self) -> str:
+        """The app the user is looking at: the frontmost app as macOS reports it now; when that is BAYMAX itself
+        (talking to BAYMAX focuses its own window), the app owning the front-most normal window behind it.
+        (The window list alone is not proof of focus: its first entry can be a strip of another app.)"""
+        front = await self._front_app_not_self()
+        if front:
+            return front
+        wins = self._cg_windows(None)
+        if wins:
+            return str(wins[0].get("kCGWindowOwnerName"))
+        raise DesktopUnavailable("I couldn't tell which app you mean (BAYMAX itself is in front). Click the window first, or name the app.")
 
     async def active_window(self) -> ActiveWindow:
-        """Front-most normal window that isn't BAYMAX. App and frame come from CoreGraphics (no permission needed);
-        the title needs Screen Recording (CoreGraphics) or Accessibility (System Events)."""
-        Q = self._quartz
-        if Q is not None:
-            info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements, Q.kCGNullWindowID) or []
-            for w in info:
-                owner = str(w.get("kCGWindowOwnerName") or "")
-                if int(w.get("kCGWindowLayer", 1)) != 0 or not owner or owner in _SELF_APPS:
-                    continue
-                b = w.get("kCGWindowBounds") or {}
-                win = ActiveWindow(owner, None, float(b.get("X", 0)), float(b.get("Y", 0)), float(b.get("Width", 0)), float(b.get("Height", 0)))
-                title = str(w.get("kCGWindowName") or "")
-                if title:
-                    win.title = title
-                    return win
-                try:  # no Screen Recording: ask Accessibility for the title instead
-                    proc = await self.process_name(owner)
-                    parts = (await self._osascript(_AS_WINDOW, proc, timeout=10)).strip().split("\t")
-                    win.title = parts[0] if parts and parts[0] else ""
-                except DesktopPermissionError:
-                    win.title_note = "reading window titles needs the Accessibility permission (or Screen Recording)"
-                except DesktopUnavailable as exc:
-                    win.title_note = str(exc)
+        """The frontmost app's front-most window (BAYMAX itself excluded). App and frame come from CoreGraphics (no
+        permission needed); the title needs Screen Recording (CoreGraphics) or Accessibility (System Events)."""
+        front = await self._front_app_not_self()
+        wins = self._cg_windows(front) if front else self._cg_windows(None)
+        if wins:
+            w = wins[0]
+            owner = str(w.get("kCGWindowOwnerName") or "")
+            b = w.get("kCGWindowBounds") or {}
+            win = ActiveWindow(owner, None, float(b.get("X", 0)), float(b.get("Y", 0)), float(b.get("Width", 0)), float(b.get("Height", 0)))
+            title = str(w.get("kCGWindowName") or "")
+            if title:
+                win.title = title
                 return win
+            try:  # no Screen Recording: ask Accessibility for the title instead
+                proc = await self.process_name(owner)
+                parts = (await self._osascript(_AS_WINDOW, proc, timeout=10)).strip().split("\t")
+                win.title = parts[0] if parts and parts[0] else ""
+            except DesktopPermissionError:
+                win.title_note = "reading window titles needs the Accessibility permission (or Screen Recording)"
+            except DesktopUnavailable as exc:
+                win.title_note = str(exc)
+            return win
         app = await self.target_app()
         proc = await self.process_name(app)
         out = (await self._osascript(_AS_WINDOW, proc, timeout=10)).strip()

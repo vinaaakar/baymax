@@ -322,3 +322,50 @@ async def test_emergency_stop_mid_plan_stops_typing_and_skips_later_steps(env):
     assert t.status is TaskStatus.CANCELLED and desk._input_gen == gen + 1
     assert not [c for c in desk.calls if c[0] in ("type", "read_window")]  # typing never finished; later step never ran
     env["s"].estop.reset()
+
+
+# ------------------------------------------------------------------ active window = the app macOS says is in front
+class _FakeCG:
+    kCGWindowListOptionOnScreenOnly = 1
+    kCGWindowListExcludeDesktopElements = 16
+    kCGNullWindowID = 0
+
+    def __init__(self, windows):
+        self.windows = windows
+
+    def CGWindowListCopyWindowInfo(self, *_a):
+        return self.windows
+
+
+def _cgw(owner, title, x, y, w, h):
+    return {"kCGWindowOwnerName": owner, "kCGWindowName": title, "kCGWindowLayer": 0,
+            "kCGWindowBounds": {"X": x, "Y": y, "Width": w, "Height": h}}
+
+
+def _mac_with(front, windows):
+    from baymax.hostos.desktop import MacDesktop
+
+    d = MacDesktop.__new__(MacDesktop)
+    d._quartz = _FakeCG(windows)
+
+    async def osa(script, *args, timeout=20.0):
+        return front + "\n"
+
+    d._osascript = osa
+    return d
+
+
+async def test_active_window_is_the_frontmost_apps_window_not_the_first_listed_strip():
+    # Seen on the real Mac: "You're in Terminal; the window is titled “0”" (a 1710x68 strip) while TextEdit was in front.
+    d = _mac_with("TextEdit", [_cgw("Terminal", "0", 0, 39, 1710, 68), _cgw("Terminal", "zsh", 0, 100, 1200, 800),
+                               _cgw("TextEdit", "Untitled 3", 200, 120, 900, 700)])
+    w = await d.active_window()
+    assert (w.app, w.title) == ("TextEdit", "Untitled 3")
+    assert await d.target_app() == "TextEdit"
+
+
+async def test_when_baymax_is_in_front_the_window_behind_it_is_used_and_strips_are_skipped():
+    d = _mac_with("Electron", [_cgw("Electron", "BAYMAX", 0, 0, 640, 400), _cgw("Terminal", "0", 0, 39, 1710, 68),
+                               _cgw("Safari", "Apple", 100, 100, 1200, 800)])
+    w = await d.active_window()
+    assert (w.app, w.title) == ("Safari", "Apple") and await d.target_app() == "Safari"
