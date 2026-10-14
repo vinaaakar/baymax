@@ -102,6 +102,12 @@ class CodingAgent:
             report.baseline = await self.run_tests(root, cmd)
             report.final = report.baseline
             report.status = "tests_passed" if report.baseline.passed else "tests_failed"
+            missing = _missing_runner(report.baseline)
+            if missing:
+                report.status = "environment_error"
+                report.notes.append(f"The test runner could not start: {missing}. This is an environment problem, not a test failure; "
+                                    "no code was changed.")
+                return report
         else:
             report.status = "no_tests"
             report.notes.append("No test command was detected, so nothing was executed.")
@@ -187,6 +193,24 @@ class CodingAgent:
             {"role": "user", "content": f"Goal: {goal or 'make the failing tests pass'}\nRepository: {info.summary()}\nTop level: {', '.join(info.top_level[:40])}\n\n"
                                         f"Relevant files:\n{chr(10).join(snippets) or '(none identified)'}\n\nLatest test output:\n{untrusted(test_output, 5000)}"},
         ]
+
+
+_MISSING = [
+    (re.compile(r"No module named (pytest|unittest)"), "Python module '{0}' is not installed for this interpreter (pip install {0})"),
+    (re.compile(r"program not found: (\S+)"), "'{0}' is not installed or not on PATH"),
+    (re.compile(r"(mvn|gradle|npm|go|cargo): (command )?not found"), "'{0}' is not installed or not on PATH"),
+    (re.compile(r"Cannot find module '([^']+)'"), "the Node module '{0}' is missing (run npm install, with approval)"),
+]
+
+
+def _missing_runner(run: TestRun) -> str | None:
+    if run.passed:
+        return None
+    for rx, msg in _MISSING:
+        m = rx.search(run.output_tail)
+        if m:
+            return msg.format(m.group(1))
+    return None
 
 
 def parse_edits(reply: str) -> tuple[str, list[dict[str, str]], list[dict[str, str]]]:

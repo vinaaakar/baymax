@@ -70,6 +70,26 @@ class Modifier:
         self.planner = planner
 
     def parse(self, spec: ModelSpec, instruction: str) -> ModificationResult:
+        """Parse an instruction; compound requests ("make the body blue and bigger wheels") are split into clauses."""
+        clauses = [c for c in re.split(r"\s*(?:,|;|\band then\b|\bthen\b|\band\b|\balso\b)\s*", instruction) if c.strip()]
+        if len(clauses) <= 1:
+            return self._parse_clause(spec, instruction)
+        merged = ModificationResult(None)
+        unclear: list[str] = []
+        for clause in clauses:
+            r = self._parse_clause(spec, clause)
+            if r.undo:
+                merged.undo = True
+            if r.clarification:
+                unclear.append(clause.strip())
+            merged.operations.extend(r.operations)
+        if not merged.operations and not merged.undo:
+            merged.clarification = self._parse_clause(spec, instruction).clarification or "I couldn't map that to a change I can make."
+        elif unclear:
+            merged.message = "Skipped (not understood): " + "; ".join(unclear)
+        return merged
+
+    def _parse_clause(self, spec: ModelSpec, instruction: str) -> ModificationResult:
         text = " ".join(re.sub(r"[^\w#%.\s/-]", " ", instruction.lower()).split())
         gen = self.planner.generator_for(spec)
         ops: list[dict[str, Any]] = []

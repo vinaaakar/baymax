@@ -152,3 +152,11 @@ async def test_file_write_and_delete_needs_approval(services, assistant):
     services.tasks.respond_approval(appr.id, True, "local")
     t = await services.tasks.wait(task.id, 5)
     assert t.status is TaskStatus.COMPLETED and not (services.workspace.root / "notes" / "a.txt").exists()
+
+
+async def test_transcription_without_request_returns_to_idle(services, assistant):
+    assistant.mic_state("listening", "device:x")
+    assistant.mic_state("transcribing", "device:x")
+    assert services.character.state is CharacterState.THINKING
+    assistant.mic_state("idle", "device:x")
+    assert services.character.state is CharacterState.IDLE

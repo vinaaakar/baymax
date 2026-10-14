@@ -245,3 +245,16 @@ async def test_revoked_device_is_disconnected(server):
         while msg.type == aiohttp.WSMsgType.TEXT:
             msg = await ws.receive()
         assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING)
+
+
+async def test_cors_only_for_local_origins(server):
+    async with aiohttp.ClientSession() as s:
+        pre = {"Origin": "null", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization"}
+        async with s.options(server.base + "/api/chat", headers=pre) as r:
+            assert r.status == 204 and r.headers["Access-Control-Allow-Origin"] == "null"
+        async with s.options(server.base + "/api/chat", headers={**pre, "Origin": "https://evil.example"}) as r:
+            assert r.status == 403 and "Access-Control-Allow-Origin" not in r.headers
+        async with s.get(server.base + "/api/status", headers={**H(server), "Origin": "http://localhost:5173"}) as r:
+            assert r.status == 200 and r.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+        async with s.get(server.base + "/api/tasks/nope", headers=H(server)) as r:
+            assert r.status == 404

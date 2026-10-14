@@ -125,6 +125,8 @@ class Modify3DTool(Tool):
         msgs = []
         if model_ops:
             msgs.append(f"Updated {result_saved.spec.title} to version {result_saved.spec.version}.")
+        if parsed is not None and parsed.message:
+            msgs.append(parsed.message)
         if view:
             data["view"] = view
             msgs.append(f"Camera set to the {view} view.")
@@ -432,7 +434,7 @@ class CodingAgentTool(_RepoTool):
         agent = CodingAgent(s.processes, timeout=s.settings.agent.command_timeout_s, max_output=s.settings.agent.max_command_output_bytes,
                             max_attempts=s.settings.agent.max_repair_attempts)
         report = await agent.run(ws.root, files, args.get("goal", ""), chat, ctx.progress, ctx.checkpoint)
-        ok = report.status in ("tests_passed", "fixed", "inspected", "no_tests", "changed_untested")
+        ok = report.status in ("tests_passed", "fixed", "inspected", "no_tests", "changed_untested")  # environment_error is a failure
         verified = report.status in ("tests_passed", "fixed")
         doc = s.settings.artifacts_dir / "code" / f"{time.strftime('%Y%m%d-%H%M%S')}-{ctx.task_id}-report.json"
         writer.write_json(doc, report.to_dict())

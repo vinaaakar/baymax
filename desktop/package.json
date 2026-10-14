@@ -1,0 +1,80 @@
+{
+  "name": "baymax-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BAYMAX Mac companion: floating character, conversation and engineering workspace",
+  "main": "dist-electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "vite",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run typecheck && npm run build:renderer && npm run build:electron",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "test": "vitest run",
+    "start": "npm run build && electron .",
+    "electron": "electron .",
+    "dist:mac": "npm run build && electron-builder --mac --arm64"
+  },
+  "dependencies": {
+    "@types/qrcode": "^1.5.5",
+    "qrcode": "^1.5.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/react": "18.3.20",
+    "@types/react-dom": "18.3.6",
+    "@types/three": "0.170.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "electron": "38.8.6",
+    "electron-builder": "26.0.12",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.3",
+    "vite": "6.4.4",
+    "vitest": "3.2.7"
+  },
+  "build": {
+    "appId": "com.baymax.companion",
+    "productName": "BAYMAX",
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "baymax/**",
+          "pyproject.toml"
+        ]
+      },
+      {
+        "from": "../protocol",
+        "to": "protocol"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "BAYMAX listens only while you hold the push-to-talk button, to transcribe your request locally.",
+        "NSAppleEventsUsageDescription": "BAYMAX opens and controls apps you ask it to, after your approval where required."
+      }
+    }
+  }
+}

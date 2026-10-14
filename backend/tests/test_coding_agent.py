@@ -127,3 +127,11 @@ def test_parse_edits_validation():
         parse_edits(json.dumps({"files": [{"path": f"f{i}", "content": ""} for i in range(25)]}))
     plan, e, f = parse_edits('Sure! {"plan": "p", "edits": [{"path": "a", "search": "b", "replace": "c"}]}')
     assert plan == "p" and e[0]["path"] == "a" and f == []
+
+
+async def test_missing_test_runner_is_reported_as_environment_problem(repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))  # python3 not found at all
+    ops = FileOps(Workspace(repo), tmp_path / "b", "t6")
+    report = await CodingAgent(ProcessManager()).run(repo, ops, "fix", None, noop, lambda: None)
+    assert report.status == "environment_error" and "not installed" in report.summary()
+    assert report.changes == [] and (repo / "calc.py").read_text() == BUGGY

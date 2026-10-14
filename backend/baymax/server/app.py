@@ -142,6 +142,17 @@ class BaymaxServer:
         origin = request.headers.get("Origin")
         if origin and not origin.startswith(ALLOWED_ORIGINS):
             return web.json_response({"error": "forbidden origin"}, status=403)
+        cors = {"Access-Control-Allow-Origin": origin, "Vary": "Origin"} if origin else {}
+        if request.method == "OPTIONS":  # CORS preflight from the desktop renderer (file:// or localhost dev server)
+            return web.Response(status=204, headers={**cors, "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE",
+                                                     "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                                                     "Access-Control-Max-Age": "600"})
+        resp = await self._authorized(request, handler)
+        if cors and not resp.prepared:
+            resp.headers.update(cors)
+        return resp
+
+    async def _authorized(self, request: web.Request, handler):
         if request.path in ("/api/health", "/api/ws"):
             return await handler(request)
         auth = request.headers.get("Authorization", "")
@@ -150,8 +161,8 @@ class BaymaxServer:
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
             return await handler(request)
-        except web.HTTPException:
-            raise
+        except web.HTTPException as exc:
+            return web.json_response({"error": exc.reason}, status=exc.status)
         except (ArgumentError, ValueError, KeyError, json.JSONDecodeError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 

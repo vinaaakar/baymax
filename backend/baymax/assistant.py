@@ -45,6 +45,7 @@ class Assistant:
         self._origins: dict[str, Origin] = {}
         self._watch: asyncio.Task | None = None
         self._speech: asyncio.Task | None = None
+        self._transcribing = False  # set while a client transcribes; cleared once text arrives
         self.s.tts.on_state = self._on_tts_state
 
     # ------------------------------------------------------------- lifecycle
@@ -77,9 +78,15 @@ class Assistant:
             self.stop_speaking()
             self.s.character.dispatch(CharacterEvent.MIC_STARTED, reason=f"microphone active ({source})")
         elif state == "transcribing":
+            self._transcribing = True
             self.s.character.dispatch(CharacterEvent.REQUEST_RECEIVED, reason="transcribing")
-        elif state in ("idle", "unavailable") and self.s.character.state is CharacterState.LISTENING:
-            self.s.character.dispatch(CharacterEvent.MIC_STOPPED, reason="microphone stopped")
+        elif state in ("idle", "unavailable"):
+            if self.s.character.state is CharacterState.LISTENING:
+                self.s.character.dispatch(CharacterEvent.MIC_STOPPED, reason="microphone stopped")
+            elif self._transcribing and self.s.character.state is CharacterState.THINKING and not self.s.tasks.active():
+                # transcription ended without producing a request (e.g. nothing was said)
+                self.s.character.dispatch(CharacterEvent.RESET, reason="nothing to process")
+            self._transcribing = False
 
     def stop_speaking(self) -> bool:
         stopped = self.s.tts.stop()
@@ -127,6 +134,7 @@ class Assistant:
 
     async def handle_text(self, text: str, source: str = "local", speak: bool | None = None) -> dict[str, Any]:
         text = text.strip()[:4000]
+        self._transcribing = False
         if not text:
             return {"ok": False, "error": "empty"}
         origin = Origin(source, speak if speak is not None else source in ("voice",))

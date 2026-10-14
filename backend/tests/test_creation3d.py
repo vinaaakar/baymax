@@ -188,3 +188,14 @@ def test_composite_validation_rejects_bad_parts():
                                                          {"name": "body", "primitive": "rounded_box", "size": [1, 1, 2], "position": [0, 1.5, 0]}], "giraffe")
     assert spec.approximation and "approximation" in spec.title
     assert validate_glb(export_glb(spec), PLAN.generator_for(spec).required(spec.params), "giraffe").ok
+
+
+def test_compound_instruction_targets_each_part():
+    spec = build("a red sports car")
+    r = MOD.parse(spec, "make the body blue and increase the wheel size")
+    s2 = MOD.apply(spec, r.operations)
+    assert s2.params["body_color"] == "#1e5bd8"
+    assert s2.params["wheel_color"] == spec.params["wheel_color"]  # wheels keep their colour
+    assert s2.params["wheel_radius"] > spec.params["wheel_radius"]
+    r = MOD.parse(spec, "paint the roof green, then frobnicate the flux")
+    assert r.operations and "Skipped" in r.message
