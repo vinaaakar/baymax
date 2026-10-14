@@ -269,8 +269,10 @@ async def test_identify_the_active_window_through_the_tool(desk, real_services):
         if before == after:
             break
     print(f"front before/after: {before}/{after} | {t.result['summary']}")
-    assert before == after, "focus kept changing while the tool ran"
-    assert t.status is TaskStatus.COMPLETED and t.result["data"]["app"] == before, t.result
+    assert before == after, f"[active-window v2] focus kept changing while the tool ran ({before} -> {after})"
+    assert t.status is TaskStatus.COMPLETED and t.result["data"]["app"] == before, (
+        f"[active-window v2] macOS front app before AND after the tool: {before}; the tool said: "
+        f"{t.result.get('data', {}).get('app')} ({t.result.get('summary', '')[:120]})")
     assert "title" in t.result["data"], t.result  # the real title, or None with the reason in the summary
     if before == "TextEdit":
         assert name in t.result["summary"] or "can't read the window title" in t.result["summary"]
