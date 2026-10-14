@@ -11,7 +11,7 @@ stands on a deep-red stage. Behind the character is a local-first assistant that
 > The character is an original procedural model inspired by the broad look of Baymax from
 > Disney's *Big Hero 6*. It is **not** an official Disney asset, and this project is not affiliated with Disney.
 
-![Character states rendered from real backend states](docs/images/character-states.png)
+![Head-and-shoulders companion rendered by the real desktop renderer at iPhone, Mac-companion and wide sizes](docs/images/bust-composition-desktop-renderer.png)
 
 ## What's in the repository
 
@@ -53,6 +53,13 @@ Day-to-day use is covered in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 Remaining gaps are listed in [docs/LIMITATIONS.md](docs/LIMITATIONS.md). How everything was checked is in
 [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md).
+
+The latest repair round is documented in [docs/FINAL_REPORT.md](docs/FINAL_REPORT.md): status of every acceptance test, plus launch,
+permission and pairing steps. Related documents:
+
+- [docs/AUDIT.md](docs/AUDIT.md): what was broken and why.
+- [docs/VISUAL_SPEC.md](docs/VISUAL_SPEC.md): the shared design system.
+- [docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md): the hardware checks only you can run.
 
 ## Design principles
 

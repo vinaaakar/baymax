@@ -241,6 +241,12 @@ extension CompanionConnection: URLSessionDelegate {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
             completionHandler(.cancelAuthenticationChallenge, nil)
+            // Never trust a different certificate silently. The Mac renews its certificate shortly before it expires
+            // (~every 2 years) or creates a new one after a reinstall; either way the user must re-pair deliberately.
+            MainActor.assumeIsolated {
+                self.fail("The Mac's security certificate doesn't match the one you paired with (it was renewed, BAYMAX was "
+                          + "reinstalled, or another device is answering). Open Settings → Forget this Mac, then scan the new QR code.")
+            }
         }
     }
 }

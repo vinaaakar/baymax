@@ -15,7 +15,14 @@ Both devices must be on the same local network for the companion link.
 | Xcode 15+ | build the iPhone app | Mac App Store |
 | XcodeGen | generates the Xcode project | `brew install xcodegen` |
 
-`scripts/setup_mac.sh` performs steps 2–4 and prints what it does. Run it from the repository root.
+`scripts/setup_mac.sh` performs steps 2–4 and prints what it does. Run it from the repository root:
+
+```bash
+cd ~/Developer/BAYMAX && ./scripts/setup_mac.sh
+```
+
+It picks a Homebrew Python ≥ 3.11. macOS's own `python3` is 3.9, which is too old. It also validates the downloaded speech model before
+BAYMAX loads it.
 
 ## 2. Backend
 
@@ -67,11 +74,23 @@ If Ollama is not running, BAYMAX says so; it never falls back to a cloud service
 
 ## 4. Speech on the Mac
 
+`brew install whisper-cpp` installs the `whisper-cli` program but **no speech model**. Download one from the official whisper.cpp
+model repository:
+
 ```bash
 mkdir -p ~/.baymax/models
-curl -L -o ~/.baymax/models/ggml-base.en.bin \
+curl -L --fail -o ~/.baymax/models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+backend/.venv/bin/python -m baymax doctor | grep -A6 '"stt"'     # should say "available": true
 ```
+
+**How BAYMAX finds whisper:**
+
+- **The program:** it searches `PATH` plus `/opt/homebrew/bin` and `/usr/local/bin`, because apps started from Finder don't have
+  Homebrew on their PATH. Set `voice.whisper_binary` to an absolute path to override.
+- **The model:** `voice.whisper_model` if it is valid, otherwise the best valid `ggml-*.bin` in `~/.baymax/models`,
+  `/opt/homebrew/share/whisper-cpp`, `~/whisper.cpp/models` and similar folders. A file counts as valid only if it has the ggml header
+  and a realistic size. Homebrew's `for-tests-*` stubs are ignored.
 
 To use another model, set `voice.whisper_model` in `config.toml`. `ggml-small.en.bin` is more accurate and slower.
 Speech output uses the built-in macOS `say` command. Piper is optional: set `voice.tts_engine = "piper"`, plus `piper_model`.
@@ -90,12 +109,19 @@ Emergency Stop, and quit.
 
 To package a `.app` / `.dmg`: `npm run dist:mac` (needs macOS; unsigned unless you configure signing).
 
-**macOS permissions**, requested only when a feature needs them:
+**macOS permissions.** Each is requested only when a feature needs it. Grant it to the app that runs the backend: **BAYMAX**
+(or **Electron** when started with `npm start`), or **Terminal** if you started the backend there.
 
-- **Microphone**: requested on first push-to-talk.
-- **Accessibility**: needed for clicking, typing and reading other apps. Grant it in System Settings → Privacy & Security → Accessibility.
-- **Automation**: prompted per app when BAYMAX controls it via AppleScript, e.g. Mail.
-- **Screen Recording**: needed only for screenshots.
+| Permission | Needed for | Where |
+|---|---|---|
+| Microphone | push-to-talk (asked on first use) | System Settings → Privacy & Security → Microphone |
+| Accessibility | reading UI elements ("look at the Run button"), pressing them, typing, window titles (to verify "open my repo in VS Code"), explaining an error shown in Terminal | Privacy & Security → Accessibility |
+| Screen & System Audio Recording | on-screen text recognition fallback when an app exposes no accessibility info; screenshots | Privacy & Security → Screen & System Audio Recording (macOS shows the prompt once) |
+| Automation | controlling apps via AppleScript (System Events, Mail) | prompted per app; Privacy & Security → Automation |
+| Local network / firewall | the iPhone connecting to port 8766 | allow incoming connections for BAYMAX/Python if the macOS firewall asks |
+
+Cursor tracking needs **no** permission. The pointer position comes from `NSEvent.mouseLocation`, via Electron.
+`backend/.venv/bin/python -m baymax doctor` prints the current Accessibility and Screen Recording state and the detected displays.
 
 BAYMAX never disables or works around these protections. If a permission is missing, the task fails with instructions.
 
@@ -108,11 +134,16 @@ xcodegen generate                   # creates BaymaxCompanion.xcodeproj
 open BaymaxCompanion.xcodeproj
 ```
 
-In Xcode:
+Install on your **physical iPhone**:
 
-1. Select the **BaymaxCompanion** target → Signing & Capabilities.
-2. Choose your team. Change the bundle id if `com.baymax.companion` is taken.
-3. Pick your iPhone or a simulator, then press **Run**.
+1. Connect the iPhone by USB, unlock it, and tap **Trust This Computer**.
+2. On the iPhone, enable **Settings → Privacy & Security → Developer Mode**. The phone restarts; confirm when asked.
+3. In Xcode, open Settings → Accounts and add your Apple ID. A free account works, but its builds expire after 7 days.
+4. Select the **BaymaxCompanion** target → Signing & Capabilities → Team: your account.
+   If Xcode reports the bundle id is taken, change `com.baymax.companion` to something unique, e.g. `com.<yourname>.baymax`.
+5. Choose your iPhone as the run destination (top bar) and press **Run** (⌘R).
+6. First launch with a free account: on the iPhone open Settings → General → VPN & Device Management → your Apple ID → **Trust**,
+   then open BAYMAX again.
 
 On first launch iOS asks for Local Network access. Allow it, or the app cannot reach the Mac.
 Microphone, Speech Recognition and Camera permissions are requested when you first use those features.
@@ -153,6 +184,10 @@ SDXL-class models are slow on a 16 GB MacBook Air; SD 1.5 or SDXL-Turbo-class mo
 ## 9. Tests
 
 ```bash
-./scripts/test_all.sh
+./scripts/test_all.sh                                   # backend, desktop, and on a Mac also BaymaxKit + iOS simulator build
 node scripts/khronos_validate.cjs ~/Developer/BAYMAX/workspace/artifacts/models   # independent GLB check
 ```
+
+The real-Electron cursor pipeline test runs on Linux with Xvfb (`xvfb-run -a -s "-screen 0 1512x982x24"
+backend/.venv/bin/python scripts/e2e/cursor_pipeline_x11.py`). On the Mac, use the manual checklist in
+[`MANUAL_CHECKLIST.md`](MANUAL_CHECKLIST.md) together with the cursor debug panels.
