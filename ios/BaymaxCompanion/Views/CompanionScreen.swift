@@ -15,7 +15,7 @@ struct CompanionScreen: View {
         ZStack {
             Theme.stage
             GeometryReader { geo in
-                CharacterView(state: model.state, level: model.speechIn.level, look: .zero)
+                CharacterView(state: model.state, level: model.speechIn.level, gaze: model.gaze)
                     .frame(width: geo.size.width, height: geo.size.height * 0.78)
                     .opacity(model.state == .disconnected || model.state == .sleeping ? 0.75 : 1)
                     .saturation(model.state == .disconnected ? 0.5 : 1)
@@ -52,6 +52,10 @@ struct CompanionScreen: View {
             .pill()
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Mac connection: \(model.connectionText)")
+            if model.display.connected && model.cursorLive && !model.sleeping {
+                Label("Following cursor", systemImage: "cursorarrow.motionlines").labelStyle(.titleAndIcon).pill()
+                    .accessibilityLabel("Following the Mac cursor")
+            }
             if model.display.connected && !model.llmReady {
                 Text("No local model").pill().foregroundStyle(.yellow)
             }

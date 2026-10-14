@@ -33,6 +33,15 @@ final class AppModel: ObservableObject {
     @Published var lastReply: ChatLine?
     @Published var speakReplies = true
 
+    let gaze = GazeSource()
+    @Published var placement: Placement = Placement(rawValue: UserDefaults.standard.string(forKey: "baymax.placement") ?? "") ?? .below {
+        didSet {
+            UserDefaults.standard.set(placement.rawValue, forKey: "baymax.placement")
+            gaze.setPlacement(placement)
+        }
+    }
+    @Published var cursorLive = false
+    @Published var lastResearch: (query: String, sources: [(title: String, url: String)])?
     let speechIn = SpeechInput()
     let speechOut = SpeechOutput()
     private let connection = CompanionConnection()
@@ -43,6 +52,7 @@ final class AppModel: ObservableObject {
     var activeTask: TaskSummary? { tasks.values.filter(\.isActive).sorted { $0.title < $1.title }.first }
 
     init() {
+        gaze.setPlacement(placement)
         // Nested ObservableObjects don't propagate changes on their own; forward them so views update.
         speechIn.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarders)
         speechOut.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarders)
@@ -160,10 +170,12 @@ final class AppModel: ObservableObject {
         switch status {
         case .connected:
             display.connected = true
+            gaze.reset()
             connectionText = "Connected to Mac"
             connectionProblem = nil
         case .connecting, .authenticating:
             display.connected = false
+            cursorLive = false
             connectionText = "Connecting…"
         case .idle:
             display.connected = false
@@ -182,6 +194,25 @@ final class AppModel: ObservableObject {
             if let s = env.string("state") { display.applyServer(s) }
         case "sleep.state":
             sleeping = env.bool("sleeping") ?? false
+            gaze.reset() // asleep: no gaze following; on wake start fresh
+        case "cursor.update":
+            // Real Mac cursor (normalised to the primary display) -> gaze direction.
+            guard !sleeping, let vx = env.double("vx") ?? env.double("x"), let vy = env.double("vy") ?? env.double("y") else { return }
+            gaze.cursor(vx: vx, vy: vy, seq: env.int("seq"))
+            if !cursorLive { cursorLive = true }
+            return // high-rate: skip the VoiceOver announcement path below
+        case "gaze.target":
+            guard !sleeping else { return }
+            if env.string("kind") == "clear" { gaze.clearPoint(); return }
+            if let vx = env.double("vx") ?? env.double("x"), let vy = env.double("vy") ?? env.double("y") {
+                gaze.point(vx: vx, vy: vy, label: env.string("label") ?? "", durationMs: Double(env.int("durationMs") ?? 4000))
+            }
+        case "research.result":
+            let sources = (env.payload["sources"] as? [[String: Any]] ?? []).compactMap { s -> (String, String)? in
+                guard let url = s["url"] as? String else { return nil }
+                return (s["title"] as? String ?? url, url)
+            }
+            lastResearch = (env.string("query") ?? "", sources.map { (title: $0.0, url: $0.1) })
         case "estop.state":
             estopEngaged = env.bool("engaged") ?? false
         case "connection.status":

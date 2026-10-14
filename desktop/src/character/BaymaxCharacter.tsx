@@ -10,6 +10,7 @@ export interface CharacterProps {
   state: CharacterState;
   level?: number;              // live audio level 0..1
   look?: { x: number; y: number } | null;
+  point?: { x: number; y: number } | null; // look at and point to a screen target
   reducedMotion?: boolean;
   quality?: "low" | "high";
   onClick?: () => void;
@@ -115,7 +116,7 @@ export default function BaymaxCharacter(props: CharacterProps) {
       const dt = (now - last) / 1000;
       last = now;
       const target = targetPose(p.state, (now - t0) / 1000, {
-        lookX: p.look?.x ?? 0, lookY: p.look?.y ?? 0, level: p.level ?? 0, reducedMotion: reduced,
+        lookX: p.look?.x ?? 0, lookY: p.look?.y ?? 0, level: p.level ?? 0, reducedMotion: reduced, point: p.point ?? null,
       });
       pose = reduced && p.state !== "IDLE" ? blend(pose, target, dt, 14) : blend(pose, target, dt, 5);
       applyPose(rig, pose);

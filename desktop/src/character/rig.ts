@@ -26,6 +26,7 @@ export interface RigInput {
   lookY: number;
   level: number;        // 0..1 audio level (mic while listening, speech envelope while speaking)
   reducedMotion: boolean;
+  point?: { x: number; y: number } | null; // screen target to look at and point to (-1..1, x right+, y up+)
 }
 
 export const REST: Pose = {
@@ -166,7 +167,28 @@ export function targetPose(state: CharacterState, t: number, input: RigInput): P
       p.bodyY = 0;
       break;
   }
+  if (input.point && state !== "SLEEPING" && state !== "DISCONNECTED") applyPoint(p, input.point, m);
   return p;
+}
+
+/** Look at a screen target and point at it with the arm on that side. */
+export function applyPoint(p: Pose, target: { x: number; y: number }, m = 1): void {
+  const tx = clamp(target.x, -1, 1);
+  const ty = clamp(target.y, -1, 1);
+  p.headYaw = tx * 0.35;
+  p.headPitch = -ty * 0.18;
+  p.eyeX = tx;
+  p.eyeY = ty;
+  const lift = 0.9 + ty * 0.45; // raise the arm forward towards the target's height
+  const spread = 0.25 + Math.abs(tx) * 0.5;
+  if (tx >= 0) {
+    p.armRFwd = lift;
+    p.armR = spread;
+  } else {
+    p.armLFwd = lift;
+    p.armL = spread;
+  }
+  p.lean = 0.03 * m;
 }
 
 /** Frame-rate independent exponential smoothing toward the target pose. */

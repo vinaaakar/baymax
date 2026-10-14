@@ -5,7 +5,7 @@ import XCTest
 private func loadSpec() throws -> [String: Any] {
     var url = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { url.deleteLastPathComponent() } // Tests/BaymaxKitTests/<file> -> repo root
-    let data = try Data(contentsOf: url.appendingPathComponent("protocol/baymax-protocol.v1.json"))
+    let data = try Data(contentsOf: url.appendingPathComponent("protocol/baymax-protocol.json"))
     return try JSONSerialization.jsonObject(with: data) as! [String: Any]
 }
 
@@ -38,13 +38,16 @@ final class ProtocolParityTests: XCTestCase {
 
     func testMessageSchemasMatchSpec() throws {
         let spec = try loadSpec()
-        let messages = spec["messages"] as! [String: [String: [String: [String: String]]]]
+        let messages = (spec["messages"] as! [String: [String: [String: Any]]]).mapValues { $0.mapValues { m in
+            m.compactMapValues { $0 as? [String: String] } } }
         for (dir, table) in [("clientToServer", BaymaxProtocol.clientToServer), ("serverToClient", BaymaxProtocol.serverToClient)] {
             XCTAssertEqual(Set(messages[dir]!.keys), Set(table.keys), dir)
             for (name, s) in messages[dir]! {
                 XCTAssertEqual(s["required"]!, table[name]!.required.mapValues(\.rawValue), name)
                 XCTAssertEqual(s["optional"] ?? [:], table[name]!.optional.mapValues(\.rawValue), name)
             }
+            let raw = (spec["messages"] as! [String: [String: [String: Any]]])[dir]!
+            for (name, s) in raw { XCTAssertEqual(s["since"] as? Int ?? 1, BaymaxProtocol.since[name] ?? 1, name) }
         }
         XCTAssertEqual(spec["version"] as? Int, BaymaxProtocol.version)
         XCTAssertEqual(spec["maxMessageBytes"] as? Int, BaymaxProtocol.maxMessageBytes)
@@ -62,7 +65,7 @@ final class MessageCodecTests: XCTestCase {
     func testRejectsMalformed() {
         let cases: [(String, String)] = [
             ("{nope", "bad_json"),
-            (#"{"v":2,"type":"pong","id":"a","payload":{}}"#, "version_unsupported"),
+            (#"{"v":3,"type":"pong","id":"a","payload":{}}"#, "version_unsupported"),
             (#"{"v":1,"type":"shell.exec","id":"a","payload":{}}"#, "unknown_type"),
             (#"{"v":1,"type":"estop.state","id":"a","payload":{"engaged":"yes"}}"#, "bad_payload"),
             (#"{"v":1,"type":"estop.state","id":"a","payload":{"engaged":1}}"#, "bad_payload"),
@@ -140,5 +143,43 @@ final class DisplayAndRigTests: XCTestCase {
         let target = CharacterRig.target(.success, t: 0, input: RigInput())
         for _ in 0..<120 { a = CharacterRig.blend(a, target, dt: 1.0 / 60) }
         XCTAssertEqual(a.armL, target.armL, accuracy: 0.01)
+    }
+}
+
+
+final class GazeTests: XCTestCase {
+    func testCursorToLookMatchesDesktopVectors() {
+        // Same vectors as desktop/tests/gaze.test.ts
+        let c = GazeConfig()
+        let center = GazeMath.cursorToLook(vx: 0.5, vy: 0.5, cfg: c)
+        XCTAssertEqual(center.x, 0, accuracy: 1e-9); XCTAssertEqual(center.y, 0.3, accuracy: 1e-9)
+        let topLeft = GazeMath.cursorToLook(vx: 0, vy: 0, cfg: c)
+        XCTAssertEqual(topLeft.x, -1, accuracy: 1e-9); XCTAssertEqual(topLeft.y, 0.72, accuracy: 1e-9)
+        let bottomRight = GazeMath.cursorToLook(vx: 1, vy: 1, cfg: c)
+        XCTAssertEqual(bottomRight.x, 1, accuracy: 1e-9); XCTAssertEqual(bottomRight.y, -0.12, accuracy: 1e-9)
+        XCTAssertEqual(GazeMath.cursorToLook(vx: 3, vy: 0.5, cfg: c).x, 1) // other monitor: clamped
+        XCTAssertEqual(GazeMath.cursorToLook(vx: .nan, vy: 0.5, cfg: c).x, 0)
+    }
+
+    func testTrackerStalenessOrderingAndPointing() {
+        var t = GazeTracker()
+        XCTAssertTrue(t.update(vx: 1, vy: 0.5, seq: 5, now: 0))
+        XCTAssertFalse(t.update(vx: 0, vy: 0.5, seq: 4, now: 10)) // out of order
+        XCTAssertEqual(t.look(now: 100).x, 1, accuracy: 1e-9)
+        XCTAssertEqual(t.look(now: 2500 + 800 + 1).x, 0, accuracy: 1e-9) // decayed to rest
+        t.pointAt(vx: 0, vy: 0.5, label: "Run", durationMs: 1000, now: 4000)
+        XCTAssertEqual(t.look(now: 4100).x, -1, accuracy: 1e-9)
+        XCTAssertNil(t.activePoint(now: 5200))
+        t.reset()
+        XCTAssertTrue(t.update(vx: 0.5, vy: 0.5, seq: 1, now: 6000))
+    }
+
+    func testPointGestureRaisesArmOnTargetSide() {
+        let right = CharacterRig.target(.idle, t: 1, input: RigInput(point: Look(x: 0.8, y: 0.2)))
+        XCTAssertGreaterThan(right.armRFwd, 0.8)
+        let left = CharacterRig.target(.idle, t: 1, input: RigInput(point: Look(x: -0.8, y: 0.2)))
+        XCTAssertGreaterThan(left.armLFwd, 0.8)
+        let asleep = CharacterRig.target(.sleeping, t: 1, input: RigInput(point: Look(x: 0.8, y: 0.2)))
+        XCTAssertLessThan(asleep.armRFwd, 0.1)
     }
 }

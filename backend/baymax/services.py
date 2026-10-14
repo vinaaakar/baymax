@@ -23,6 +23,7 @@ from .images.providers import ImageService
 from .llm.ollama import OllamaClient
 from .memory.conversation import ConversationLog
 from .memory.store import MemoryStore
+from .presence.cursor import CursorRelay
 from .research.web import WebClient
 from .security.audit import AuditLog
 from .security.estop import EmergencyStop
@@ -68,6 +69,7 @@ class Services:
     images: ImageService
     tools: ToolRegistry
     character: CharacterController = field(init=False)
+    cursor: CursorRelay = field(init=False)
     tasks: TaskManager = field(init=False)
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -104,6 +106,7 @@ def build_services(settings: Settings, *, desktop: DesktopBackend | None = None,
         web=WebClient(settings.research), images=ImageService(settings.images), tools=tools,
     )
     s.character = CharacterController(bus, active_tasks=lambda: len(s.tasks.active()))
+    s.cursor = CursorRelay(lambda payload: bus.publish("cursor", payload, record=False))
     s.tasks = TaskManager(s, character=s.character.dispatch)
 
     def on_estop(reason: str) -> None:

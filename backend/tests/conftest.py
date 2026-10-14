@@ -10,7 +10,7 @@ from baymax.hostos.desktop import DesktopBackend, DesktopPermissionError, Deskto
 from baymax.security.secrets import SecretStore
 
 REPO = Path(__file__).resolve().parents[2]
-SPEC = json.loads((REPO / "protocol" / "baymax-protocol.v1.json").read_text())
+SPEC = json.loads((REPO / "protocol" / "baymax-protocol.json").read_text())
 
 
 class FakeDesktop(DesktopBackend):

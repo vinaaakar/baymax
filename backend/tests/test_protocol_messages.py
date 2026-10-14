@@ -19,7 +19,9 @@ def test_schemas_match_shared_protocol(spec):
             req, opt = table[name]
             assert req == s["required"], name
             assert opt == s.get("optional", {}), name
+            assert proto.SINCE.get(name, 1) == s.get("since", 1), name
     assert spec["version"] == proto.PROTOCOL_VERSION
+    assert spec["minSupportedVersion"] == proto.MIN_PROTOCOL_VERSION
     assert spec["maxMessageBytes"] == proto.MAX_MESSAGE_BYTES
     assert set(spec["voiceStates"]) == proto.VOICE_STATES
 
@@ -40,6 +42,7 @@ def test_valid_message_parses_and_drops_unknown_fields():
     ("[1,2]", "bad_envelope"),
     (json.dumps({"type": "ping", "id": "a", "payload": {}}), "bad_envelope"),
     (frame("ping", v=99), "version_unsupported"),
+    (frame("ping", v=3), "version_unsupported"),
     (frame("ping", v="1"), "bad_envelope"),
     (frame("shell.exec", {"cmd": "rm -rf /"}), "unknown_type"),
     (frame("hello.ack", {"protocol": 1, "server": "x"}), "unknown_type"),  # server->client type sent by client
@@ -83,5 +86,18 @@ def test_make_validates_outbound():
 
 def test_version_error_is_fatal():
     with pytest.raises(proto.ProtocolError) as exc:
-        proto.parse(frame("ping", v=2))
+        proto.parse(frame("ping", v=3))
     assert exc.value.fatal
+
+
+def test_v1_and_v2_frames_accepted():
+    assert proto.parse(frame("ping", v=1)).v == 1
+    assert proto.parse(frame("ping", v=2)).v == 2
+
+
+def test_v2_outbound_validation():
+    proto.make("cursor.update", {"x": 0.5, "y": 0.25, "displayId": 1, "displayWidth": 1512, "displayHeight": 982, "vx": 0.5, "vy": 0.25})
+    with pytest.raises(ValueError):
+        proto.make("gaze.target", {"kind": "laser", "x": 0.1, "y": 0.1})
+    with pytest.raises(ValueError):
+        proto.make("cursor.update", {"x": "left", "y": 0, "displayId": 1, "displayWidth": 1, "displayHeight": 1})

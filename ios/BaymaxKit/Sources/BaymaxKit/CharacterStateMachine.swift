@@ -1,6 +1,6 @@
 import Foundation
 
-/// Character states — mirrors `characterStates` in protocol/baymax-protocol.v1.json.
+/// Character states — mirrors `characterStates` in protocol/baymax-protocol.json.
 public enum CharacterState: String, CaseIterable, Codable, Sendable {
     case idle = "IDLE", listening = "LISTENING", thinking = "THINKING", speaking = "SPEAKING"
     case executing = "EXECUTING", success = "SUCCESS", confused = "CONFUSED", concerned = "CONCERNED"

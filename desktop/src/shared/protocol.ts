@@ -1,6 +1,6 @@
 // Shared protocol definitions, loaded from the single source of truth in
-// ../../protocol/baymax-protocol.v1.json (also used by the Python backend and Swift app).
-import spec from "../../../protocol/baymax-protocol.v1.json";
+// ../../protocol/baymax-protocol.json (also used by the Python backend and Swift app).
+import spec from "../../../protocol/baymax-protocol.json";
 
 export const PROTOCOL = spec;
 export const PROTOCOL_VERSION: number = spec.version;

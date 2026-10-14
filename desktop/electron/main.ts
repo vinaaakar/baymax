@@ -4,6 +4,8 @@ import http from "http";
 import path from "path";
 import { startBackend, type BackendHandle } from "./backend";
 import { eyesIconPng } from "./icon";
+import { PresenceLink } from "./presence";
+import { lookFromWindow } from "./presenceLogic";
 
 type WinName = "companion" | "conversation" | "workspace";
 
@@ -20,6 +22,8 @@ let tray: Tray | null = null;
 const windows: Partial<Record<WinName, BrowserWindow>> = {};
 let cursorTimer: NodeJS.Timeout | null = null;
 let quitting = false;
+let presence: PresenceLink | null = null;
+let sleeping = false;
 
 function rendererUrl(name: WinName): string {
   if (DEV_URL) return `${DEV_URL}/#/${name}`;
@@ -88,7 +92,7 @@ function startCursorTracking(): void {
   // 15 Hz is enough for gentle eye tracking and keeps CPU use negligible.
   cursorTimer = setInterval(() => {
     const win = windows.companion;
-    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    if (sleeping || !win || win.isDestroyed() || !win.isVisible()) return; // sleep suspends cursor tracking
     const p = screen.getCursorScreenPoint();
     const b = win.getBounds();
     const cx = b.x + b.width / 2;
@@ -164,12 +168,23 @@ app.whenReady().then(async () => {
   buildTray();
   createWindow("companion");
   startCursorTracking();
+  presence = new PresenceLink(backend.apiBase, backend.token, {
+    log,
+    onSleep: (s) => (sleeping = s),
+    onGazeTarget: (t) => {
+      const win = windows.companion;
+      if (!win || win.isDestroyed()) return;
+      win.webContents.send("baymax:gaze", { ...lookFromWindow(t, win.getBounds()), label: t.label, durationMs: t.durationMs });
+    },
+  });
+  presence.start();
   if (process.env.BAYMAX_OPEN_WORKSPACE) createWindow("workspace");
 });
 
 app.on("before-quit", () => {
   quitting = true;
   if (cursorTimer) clearInterval(cursorTimer);
+  presence?.stop();
   backend?.stop();
 });
 app.on("window-all-closed", () => {

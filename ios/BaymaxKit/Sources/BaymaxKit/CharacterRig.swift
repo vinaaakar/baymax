@@ -16,8 +16,9 @@ public struct Pose: Equatable, Sendable {
 public struct RigInput: Sendable {
     public var lookX = 0.0, lookY = 0.0, level = 0.0
     public var reducedMotion = false
-    public init(lookX: Double = 0, lookY: Double = 0, level: Double = 0, reducedMotion: Bool = false) {
-        self.lookX = lookX; self.lookY = lookY; self.level = level; self.reducedMotion = reducedMotion
+    public var point: Look?  // screen target to look at and point to
+    public init(lookX: Double = 0, lookY: Double = 0, level: Double = 0, reducedMotion: Bool = false, point: Look? = nil) {
+        self.lookX = lookX; self.lookY = lookY; self.level = level; self.reducedMotion = reducedMotion; self.point = point
     }
 }
 
@@ -84,7 +85,21 @@ public enum CharacterRig {
         case .disconnected:
             p.headPitch = 0.28; p.eyeOpen = 0.35; p.armL = 0.08; p.armR = 0.08; p.dim = 0.7; p.breathe = 1; p.bodyY = 0
         }
+        if let pt = input.point, state != .sleeping, state != .disconnected { applyPoint(&p, pt, m: m) }
         return p
+    }
+
+    /// Look at a screen target and point at it with the arm on that side (matches rig.ts applyPoint).
+    public static func applyPoint(_ p: inout Pose, _ target: Look, m: Double = 1) {
+        let tx = max(-1, min(1, target.x)), ty = max(-1, min(1, target.y))
+        p.headYaw = tx * 0.35
+        p.headPitch = -ty * 0.18
+        p.eyeX = tx
+        p.eyeY = ty
+        let lift = 0.9 + ty * 0.45
+        let spread = 0.25 + abs(tx) * 0.5
+        if tx >= 0 { p.armRFwd = lift; p.armR = spread } else { p.armLFwd = lift; p.armL = spread }
+        p.lean = 0.03 * m
     }
 
     public static func blend(_ current: Pose, _ target: Pose, dt: Double, rate: Double = 6) -> Pose {

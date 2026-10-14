@@ -16,7 +16,7 @@
 | LAN device listener | `0.0.0.0:8766`, **off by default**; starts on "Pair iPhone" or `serve --lan` | TLS 1.2+ with a self-signed ECDSA P-256 certificate, pinned by the phone using the SHA-256 fingerprint delivered in the QR code. Then HMAC challenge-response with a per-device 256-bit key | Only the typed device protocol at `/v1/ws`. No HTTP API and no command execution |
 
 There is no endpoint that runs shell commands from the network. A phone can only send the protocol messages
-listed in `protocol/baymax-protocol.v1.json`. `user.text` goes through the same intent router, policy and
+listed in `protocol/baymax-protocol.json`. `user.text` goes through the same intent router, policy and
 approval flow as typing on the Mac.
 
 ## Device pairing and authentication

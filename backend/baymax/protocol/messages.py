@@ -1,4 +1,4 @@
-"""Versioned Mac <-> iPhone message protocol (v1).
+"""Versioned Mac <-> iPhone message protocol (v2; v1 clients remain supported).
 
 Envelope::
 
@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MIN_PROTOCOL_VERSION = 1
 MAX_MESSAGE_BYTES = 65536
 MAX_STRING = 8000
@@ -56,7 +56,17 @@ SERVER_TO_CLIENT: dict[str, tuple[dict[str, str], dict[str, str]]] = {
     "sleep.state": ({"sleeping": "bool"}, {}),
     "history": ({"messages": "list"}, {}),
     "pong": ({}, {"t": "int"}),
+    # --- v2 ---
+    "cursor.update": ({"x": "float", "y": "float", "displayId": "int", "displayWidth": "int", "displayHeight": "int"},
+                      {"vx": "float", "vy": "float", "scale": "float", "seq": "int"}),
+    "gaze.target": ({"kind": "str", "x": "float", "y": "float"},
+                    {"vx": "float", "vy": "float", "displayId": "int", "label": "str", "confidence": "float", "durationMs": "int"}),
+    "research.result": ({"taskId": "str", "query": "str", "summary": "str", "sources": "list"}, {}),
 }
+
+# Minimum negotiated protocol version required to receive a message type (default 1).
+SINCE: dict[str, int] = {"cursor.update": 2, "gaze.target": 2, "research.result": 2}
+GAZE_KINDS = {"element", "cursor", "clear"}
 
 VOICE_STATES = {"idle", "listening", "transcribing", "speaking", "unavailable"}
 
@@ -78,8 +88,9 @@ class Message:
     ts: int
     v: int = PROTOCOL_VERSION
 
-    def to_json(self) -> str:
-        return json.dumps({"v": self.v, "type": self.type, "id": self.id, "ts": self.ts, "payload": self.payload}, separators=(",", ":"))
+    def to_json(self, v: int | None = None) -> str:
+        """Serialise; ``v`` stamps the version negotiated with a particular client."""
+        return json.dumps({"v": v or self.v, "type": self.type, "id": self.id, "ts": self.ts, "payload": self.payload}, separators=(",", ":"))
 
 
 def now_ms() -> int:
@@ -163,6 +174,8 @@ def _validate_payload(type_: str, payload: dict[str, Any], schema: tuple[dict[st
             clean[name] = _check(name, payload[name], tname)
     if type_ == "voice.state" and clean["state"] not in VOICE_STATES:
         raise ValueError(f"voice.state: unknown state {clean['state']!r}")
+    if type_ == "gaze.target" and clean["kind"] not in GAZE_KINDS:
+        raise ValueError(f"gaze.target: unknown kind {clean['kind']!r}")
     if type_ == "user.text" and not clean["text"].strip():
         raise ValueError("user.text: empty text")
     return clean

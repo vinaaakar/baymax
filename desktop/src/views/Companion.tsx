@@ -16,6 +16,25 @@ export function useCursorLook(): { x: number; y: number } | null {
   return look;
 }
 
+/** Screen targets found by "look at the … button": the Mac companion looks and points at them for a while. */
+export function useGazeTarget(): { point: { x: number; y: number } | null; label: string } {
+  const [g, setG] = useState<{ point: { x: number; y: number } | null; label: string }>({ point: null, label: "" });
+  useEffect(() => {
+    if (!window.baymax?.onGaze) return;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const off = window.baymax.onGaze((v) => {
+      setG({ point: { x: v.x, y: v.y }, label: v.label });
+      if (t) clearTimeout(t);
+      t = setTimeout(() => setG({ point: null, label: "" }), Math.max(500, Math.min(v.durationMs, 15000)));
+    });
+    return () => {
+      off();
+      if (t) clearTimeout(t);
+    };
+  }, []);
+  return g;
+}
+
 export function useDisplayedState(): CharacterState {
   const conn = useStore((s) => s.connection);
   const character = useStore((s) => s.character);
@@ -30,6 +49,7 @@ export default function Companion() {
   const lastAssistant = useStore((s) => [...s.messages].reverse().find((m) => m.role === "assistant"));
   const voice = useVoice();
   const look = useCursorLook();
+  const gaze = useGazeTarget();
   const active = useActiveTasks();
   const [showCaption, setShowCaption] = useState(false);
 
@@ -49,7 +69,7 @@ export default function Companion() {
         <span className="spacer" />
         <button className="btn small no-drag" onClick={() => window.baymax?.openWindow("workspace")} title="Open engineering workspace" aria-label="Open engineering workspace">⌘</button>
       </div>
-      <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={look} onClick={() => sleeping && toggleSleep()} />
+      <BaymaxCharacter state={state} level={voice.listening ? voice.level : 0} look={look} point={gaze.point} onClick={() => sleeping && toggleSleep()} />
       <span className="sr-only" role="status" aria-live="polite">BAYMAX is {describeState(state)}</span>
       <div className="controls">
         {showCaption && lastAssistant && state !== "SLEEPING" && (

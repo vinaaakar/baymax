@@ -119,6 +119,14 @@ struct SettingsView: View {
                         Button("Pair") { error = model.pairManually(host: host, port: Int(port) ?? 0, fingerprint: fingerprint, code: code) }
                     }
                 }
+                Section("Where is this iPhone?") {
+                    Picker("Position relative to the Mac display", selection: $model.placement) {
+                        Text("Below the screen").tag(Placement.below)
+                        Text("Left of the screen").tag(Placement.left)
+                        Text("Right of the screen").tag(Placement.right)
+                    }
+                    Text("BAYMAX turns its head and eyes toward the real Mac cursor from this position.").font(.footnote).foregroundStyle(Theme.muted)
+                }
                 Section("Voice") {
                     Toggle("Speak replies to voice requests", isOn: $model.speakReplies)
                     Text("Speech recognition runs on this iPhone only. Audio is never uploaded; if on-device recognition is unsupported, use text input.")

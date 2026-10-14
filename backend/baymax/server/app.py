@@ -228,6 +228,7 @@ class BaymaxServer:
             "devices": {"connected": self.hub.connected(), "paired": [d.to_dict() for d in s.devices.list() if not d.revoked]},
             "activeTasks": [t.to_dict() for t in s.tasks.active()], "activeModel": self.assistant.active_model,
             "workspace": str(s.workspace.root), "hardware": {"enabled": s.settings.security.hardware_control_enabled},
+            "cursor": s.cursor.stats(),
         })
 
     async def local_ws(self, request: web.Request) -> web.WebSocketResponse:
@@ -248,11 +249,14 @@ class BaymaxServer:
         sub = self.s.bus.subscribe(maxsize=1024)
         await ws.send_json({"type": "hello", "payload": {"version": __version__, "character": self.s.character.snapshot(),
                                                          "sleeping": self.assistant.sleeping, "estop": self.s.estop.engaged,
+                                                         "devices": len(self.hub.connected()),
                                                          "recent": [e.to_dict() for e in self.s.bus.recent(30)]}})
 
         async def pump() -> None:
             while True:
                 ev = await sub.get()
+                if ev.type == "cursor":
+                    continue  # desktop windows track the cursor locally; samples are relayed to phones only
                 await ws.send_str(json.dumps(ev.to_dict(), default=str))
 
         sender = asyncio.create_task(pump())
@@ -266,7 +270,7 @@ class BaymaxServer:
                     if cmd.get("type") == "mic.state" and cmd.get("state") in ("idle", "listening", "transcribing", "unavailable"):
                         self.assistant.mic_state(cmd["state"], "mac")
                     elif cmd.get("type") == "cursor":
-                        pass  # cursor tracking is local to the desktop renderer
+                        self.s.cursor.submit(cmd)
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:

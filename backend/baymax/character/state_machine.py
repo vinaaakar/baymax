@@ -1,6 +1,6 @@
 """Typed character animation state machine.
 
-The tables here mirror ``protocol/baymax-protocol.v1.json`` (verified by
+The tables here mirror ``protocol/baymax-protocol.json`` (verified by
 ``tests/test_character_state_machine.py``). The machine is *event driven*:
 callers report what actually happened (microphone started, task verified, ...)
 and the machine decides whether the visible state may change.

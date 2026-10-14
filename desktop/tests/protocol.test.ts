@@ -1,4 +1,4 @@
-import spec from "../../protocol/baymax-protocol.v1.json";
+import spec from "../../protocol/baymax-protocol.json";
 import { CHARACTER_STATES, TASK_STATES } from "../src/shared/protocol";
 import { CharacterModel, canTransition, nextState } from "../src/shared/stateMachine";
 import type { CharacterEvent, CharacterState } from "../src/shared/protocol";

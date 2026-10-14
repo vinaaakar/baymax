@@ -114,6 +114,7 @@ class Assistant:
         if sleeping == self.sleeping:
             return
         self.sleeping = sleeping
+        self.s.cursor.sleeping = sleeping  # sleep suspends cursor relaying; wake restores it
         if sleeping:
             self.stop_speaking()
             self.s.character.dispatch(CharacterEvent.SLEEP, reason=f"put to sleep by {actor}")

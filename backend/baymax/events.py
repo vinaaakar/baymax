@@ -61,11 +61,13 @@ class EventBus:
     def unsubscribe(self, sub: Subscription) -> None:
         self._subs.discard(sub)
 
-    def publish(self, type_: str, payload: dict[str, Any] | None = None) -> Event:
+    def publish(self, type_: str, payload: dict[str, Any] | None = None, *, record: bool = True) -> Event:
+        """``record=False`` is for high-rate transient events (cursor samples) that must not flood history."""
         event = Event(type=type_, payload=dict(payload or {}), seq=next(self._seq))
-        self._history.append(event)
-        if len(self._history) > self._history_max:
-            del self._history[: len(self._history) - self._history_max]
+        if record:
+            self._history.append(event)
+            if len(self._history) > self._history_max:
+                del self._history[: len(self._history) - self._history_max]
         for sub in list(self._subs):
             sub.offer(event)
         return event

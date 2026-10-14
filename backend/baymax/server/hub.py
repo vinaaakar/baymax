@@ -42,6 +42,7 @@ class DeviceSession:
     device_id: str | None = None
     authenticated: bool = False
     hello: bool = False
+    protocol: int = 1  # negotiated in hello
     nonce: str | None = None
     auth_failures: int = 0
     strikes: int = 0
@@ -126,6 +127,14 @@ class DeviceHub:
                 return proto.make("sleep.state", {"sleeping": p["sleeping"]})
             if etype == "devices.changed":
                 return proto.make("connection.status", {"status": "connected", "devices": int(p.get("count", 0))})
+            if sess.protocol < 2:
+                return None  # v2-only events below are never sent to v1 clients
+            if etype == "cursor":
+                return proto.make("cursor.update", p)
+            if etype == "gaze.target":
+                return proto.make("gaze.target", p)
+            if etype == "research.result":
+                return proto.make("research.result", p)
         except (KeyError, ValueError, TypeError) as exc:
             log.debug("could not map event %s: %s", etype, exc)
         return None
@@ -135,7 +144,7 @@ class DeviceHub:
             return
         async with sess.send_lock:
             try:
-                await asyncio.wait_for(sess.ws.send_str(msg.to_json()), timeout=5)
+                await asyncio.wait_for(sess.ws.send_str(msg.to_json(v=sess.protocol)), timeout=5)
             except (ConnectionResetError, asyncio.TimeoutError, RuntimeError):
                 await sess.ws.close()
 
@@ -201,7 +210,8 @@ class DeviceHub:
                               f"client speaks v{p['minProtocol']}-{p['protocol']}, server v{proto.MIN_PROTOCOL_VERSION}-{proto.PROTOCOL_VERSION}")
             return
         sess.hello = True
-        await self._send(sess, proto.make("hello.ack", {"protocol": min(p["protocol"], proto.PROTOCOL_VERSION), "server": "baymax-mac",
+        sess.protocol = min(p["protocol"], proto.PROTOCOL_VERSION)
+        await self._send(sess, proto.make("hello.ack", {"protocol": sess.protocol, "server": "baymax-mac",
                                                         "serverVersion": __version__}))
         if p.get("deviceId"):
             await self._challenge(sess)

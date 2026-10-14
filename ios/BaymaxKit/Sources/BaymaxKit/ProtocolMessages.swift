@@ -1,8 +1,8 @@
 import Foundation
 
-/// Typed, versioned Mac <-> iPhone protocol (v1). Mirrors protocol/baymax-protocol.v1.json.
+/// Typed, versioned Mac <-> iPhone protocol (v2, accepts v1). Mirrors protocol/baymax-protocol.json.
 public enum BaymaxProtocol {
-    public static let version = 1
+    public static let version = 2
     public static let minVersion = 1
     public static let maxMessageBytes = 65_536
     public static let maxString = 8000
@@ -42,7 +42,16 @@ public enum BaymaxProtocol {
         "sleep.state": (["sleeping": .bool], [:]),
         "history": (["messages": .list], [:]),
         "pong": ([:], ["t": .int]),
+        // v2
+        "cursor.update": (["x": .float, "y": .float, "displayId": .int, "displayWidth": .int, "displayHeight": .int],
+                          ["vx": .float, "vy": .float, "scale": .float, "seq": .int]),
+        "gaze.target": (["kind": .str, "x": .float, "y": .float],
+                        ["vx": .float, "vy": .float, "displayId": .int, "label": .str, "confidence": .float, "durationMs": .int]),
+        "research.result": (["taskId": .str, "query": .str, "summary": .str, "sources": .list], [:]),
     ]
+
+    /// Minimum negotiated version for a message type (default 1).
+    public static let since: [String: Int] = ["cursor.update": 2, "gaze.target": 2, "research.result": 2]
 
     public static let voiceStates: Set<String> = ["idle", "listening", "transcribing", "speaking", "unavailable"]
 }

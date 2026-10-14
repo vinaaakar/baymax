@@ -6,7 +6,7 @@ import SwiftUI
 struct CharacterView: UIViewRepresentable {
     var state: CharacterState
     var level: Double
-    var look: CGPoint
+    var gaze: GazeSource
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -29,8 +29,8 @@ struct CharacterView: UIViewRepresentable {
         c.lock.lock()
         c.state = state
         c.level = level
-        c.look = look
         c.lock.unlock()
+        c.gaze = gaze
         let reduced = UIAccessibility.isReduceMotionEnabled
         view.preferredFramesPerSecond = CharacterRig.frameRate(for: state, reducedMotion: reduced, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
     }
@@ -44,7 +44,7 @@ struct CharacterView: UIViewRepresentable {
         let lock = NSLock()
         var state: CharacterState = .idle
         var level = 0.0
-        var look = CGPoint.zero
+        var gaze: GazeSource?
         private var pose = Pose()
         private var start: TimeInterval?
         private var last: TimeInterval = 0
@@ -101,11 +101,15 @@ struct CharacterView: UIViewRepresentable {
             let dt = time - last
             last = time
             lock.lock()
-            let s = state, lvl = level, lk = look
+            let s = state, lvl = level
             lock.unlock()
             let reduced = UIAccessibility.isReduceMotionEnabled
-            let target = CharacterRig.target(s, t: time - (start ?? time), input: RigInput(lookX: lk.x, lookY: lk.y, level: lvl, reducedMotion: reduced))
-            pose = CharacterRig.blend(pose, target, dt: dt, rate: reduced ? 14 : 5)
+            // Real cursor position from the Mac (or rest pose when no samples arrive).
+            let g = gaze?.current() ?? (look: Look(x: 0, y: 0.3), point: nil, live: false)
+            let input = RigInput(lookX: g.look.x, lookY: g.look.y, level: lvl, reducedMotion: reduced, point: g.point)
+            let target = CharacterRig.target(s, t: time - (start ?? time), input: input)
+            // Follow the cursor quickly (low lag) but keep body motion soft.
+            pose = CharacterRig.blend(pose, target, dt: dt, rate: reduced ? 14 : (g.live || g.point != nil ? 12 : 5))
             baymax.apply(pose)
             rim.light?.intensity = CGFloat(300 + pose.glow * 1100)
             key.light?.intensity = CGFloat(1100 * (1 - pose.dim * 0.55))
