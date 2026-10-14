@@ -20,6 +20,8 @@ final class SpeechInput: ObservableObject {
     private var silenceTimer: Timer?
     private var lastVoice = Date()
     private var heardVoice = false
+    /// Deactivating the audio session can block for a moment, so it runs off the main thread (Xcode's "hang risk").
+    nonisolated private static let sessionQueue = DispatchQueue(label: "baymax.audio-session")
 
     var isListening: Bool { state == .listening }
 
@@ -49,6 +51,7 @@ final class SpeechInput: ObservableObject {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+            Self.sessionQueue.sync {}  // let a pending deactivation finish first, so it can't cut off this recording
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             let req = SFSpeechAudioBufferRecognitionRequest()
             req.requiresOnDeviceRecognition = true // never server-side
@@ -132,7 +135,9 @@ final class SpeechInput: ObservableObject {
         request = nil
         recognition = nil
         level = 0
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) // release the mic immediately
+        Self.sessionQueue.async { // release the mic without blocking the UI
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     nonisolated static func rms(_ buffer: AVAudioPCMBuffer) -> Double {
