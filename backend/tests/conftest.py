@@ -39,6 +39,7 @@ class FakeDesktop(DesktopBackend):
                           AppInfo("Notes", "", "com.apple.Notes"), AppInfo("Xcode", "", "com.apple.dt.Xcode"),
                           AppInfo("Spotify", "", "com.spotify.client"), AppInfo("Mail", "", "com.apple.mail")]
         self.clipboard = ""
+        self.window_title: str | None = "BAYMAX — README.md"
         self.document = None
 
     def capabilities(self):
@@ -130,6 +131,13 @@ class FakeDesktop(DesktopBackend):
 
     async def front_document(self):
         return self.document
+
+    async def active_window(self):
+        from baymax.hostos.desktop import ActiveWindow
+
+        if not self.front:
+            raise DesktopUnavailable("no window is in front")
+        return ActiveWindow(self.front, self.window_title, 100, 80, 900, 600)
 
     async def target_app(self):
         if not self.front:

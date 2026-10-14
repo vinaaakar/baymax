@@ -77,6 +77,18 @@ def validate_app_name(name: Any) -> str:
     return name
 
 
+@dataclass
+class ActiveWindow:
+    """The window the user is working in (never BAYMAX's own). Frame in global points."""
+    app: str
+    title: str | None  # None when the title could not be read (reason in title_note)
+    x: float
+    y: float
+    width: float
+    height: float
+    title_note: str = ""
+
+
 class DesktopBackend:
     platform = "unknown"
 
@@ -104,6 +116,7 @@ class DesktopBackend:
     # Screen understanding (baymax.screen): real geometry only, never guessed.
     async def displays(self) -> list[Display]: raise DesktopUnavailable(self._why())
     async def target_app(self) -> str: raise DesktopUnavailable(self._why())
+    async def active_window(self) -> "ActiveWindow": raise DesktopUnavailable(self._why())
     async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
     async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
@@ -186,6 +199,12 @@ _AS_LOCATE = """on run argv
             set d to description of e
           end try
           if d is missing value then set d to ""
+          if d is "" and r is in {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"} then
+            try
+              set d to value of attribute "AXPlaceholderValue" of e
+              if d is missing value then set d to ""
+            end try
+          end if
           set v to ""
           if r is in {"AXStaticText", "AXLink", "AXCell"} then
             try
@@ -231,6 +250,23 @@ _AS_DOCUMENT = """on run argv
       on error
         return ""
       end try
+    end tell
+  end tell
+end run"""
+
+_AS_WINDOW = """on run argv
+  tell application "System Events"
+    tell process (item 1 of argv)
+      if (count of windows) = 0 then return ""
+      set w to window 1
+      set p to position of w
+      set z to size of w
+      set t to ""
+      try
+        set t to name of w
+      end try
+      if t is missing value then set t to ""
+      return t & tab & (item 1 of p) & tab & (item 2 of p) & tab & (item 1 of z) & tab & (item 2 of z)
     end tell
   end tell
 end run"""
@@ -472,6 +508,39 @@ class MacDesktop(DesktopBackend):
         if not front or front in _SELF_APPS:
             raise DesktopUnavailable("I couldn't tell which app you mean (BAYMAX itself is in front). Click the window first, or name the app.")
         return front
+
+    async def active_window(self) -> ActiveWindow:
+        """Front-most normal window that isn't BAYMAX. App and frame come from CoreGraphics (no permission needed);
+        the title needs Screen Recording (CoreGraphics) or Accessibility (System Events)."""
+        Q = self._quartz
+        if Q is not None:
+            info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionOnScreenOnly | Q.kCGWindowListExcludeDesktopElements, Q.kCGNullWindowID) or []
+            for w in info:
+                owner = str(w.get("kCGWindowOwnerName") or "")
+                if int(w.get("kCGWindowLayer", 1)) != 0 or not owner or owner in _SELF_APPS:
+                    continue
+                b = w.get("kCGWindowBounds") or {}
+                win = ActiveWindow(owner, None, float(b.get("X", 0)), float(b.get("Y", 0)), float(b.get("Width", 0)), float(b.get("Height", 0)))
+                title = str(w.get("kCGWindowName") or "")
+                if title:
+                    win.title = title
+                    return win
+                try:  # no Screen Recording: ask Accessibility for the title instead
+                    proc = await self.process_name(owner)
+                    parts = (await self._osascript(_AS_WINDOW, proc, timeout=10)).strip().split("\t")
+                    win.title = parts[0] if parts and parts[0] else ""
+                except DesktopPermissionError:
+                    win.title_note = "reading window titles needs the Accessibility permission (or Screen Recording)"
+                except DesktopUnavailable as exc:
+                    win.title_note = str(exc)
+                return win
+        app = await self.target_app()
+        proc = await self.process_name(app)
+        out = (await self._osascript(_AS_WINDOW, proc, timeout=10)).strip()
+        if not out:
+            raise DesktopUnavailable(f"{app} has no open window")
+        t, x, y, w_, h = (out.replace(",", ".").split("\t") + ["0"] * 5)[:5]
+        return ActiveWindow(app, t, float(x), float(y), float(w_), float(h))
 
     async def accessibility_elements(self, app: str, limit: int = 400) -> list[ScreenElement]:
         app = validate_app_name(app)

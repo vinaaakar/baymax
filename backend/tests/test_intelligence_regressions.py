@@ -157,6 +157,9 @@ def test_whisper_sound_tags_are_not_speech():
     for raw in ("[GUNSHOT]", "[explosion]", " (music) ", "[BLANK_AUDIO]", "♪ la la ♪", "*laughs*"):
         assert clean_transcript(raw) == ""
     assert clean_transcript("*laughs* open Safari") == "open Safari"
+    for hallucination in ("Thank you.", " you", "Thanks for watching!", "Bye.", "Um..."):
+        assert clean_transcript(hallucination) == ""  # whisper's typical output on silence/noise
+    assert clean_transcript("Thank you, open Safari") == "Thank you, open Safari"  # real requests survive
 
 
 def test_relevance_rules():

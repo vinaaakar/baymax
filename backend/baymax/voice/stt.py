@@ -34,9 +34,21 @@ class Transcript:
 _NOISE = re.compile(r"\[[^\]]{0,60}\]|\([^)]{0,40}\)|\*[^*]{0,40}\*|[♪♫]+[^♪♫]{0,80}[♪♫]*", re.I)
 
 
+# Phrases whisper is known to produce from silence, breathing or background noise (not real requests).
+_HALLUCINATIONS = {
+    "you", "thank you", "thanks", "thank you very much", "thank you for watching", "thanks for watching",
+    "please subscribe", "subscribe", "bye", "bye bye", "so", "um", "uh", "hmm", "mm", "ah", "oh",
+    "subtitles by the amara org community", "transcribed by", "the end", "music", "applause", "silence",
+}
+
+
 def clean_transcript(raw: str) -> str:
     text = " ".join(_NOISE.sub(" ", raw).split())
-    return text if re.search(r"[^\W\d_]", text) else ""  # nothing but punctuation/digits left -> no speech
+    if not re.search(r"[^\W\d_]", text):
+        return ""  # nothing but punctuation/digits left -> no speech
+    if " ".join(re.findall(r"[a-z']+", text.lower())).replace("'", "") in _HALLUCINATIONS:
+        return ""  # a typical whisper hallucination on silence/noise: never treated as a command
+    return text
 
 
 class WhisperCppRecognizer:

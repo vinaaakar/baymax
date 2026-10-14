@@ -145,5 +145,55 @@ class ClickElementTool(Tool):
                           "frontAfter": front}, verified=changed, verification=detail)
 
 
+class ActiveWindowTool(Tool):
+    name = "desktop.active_window"
+    description = "Say which app and window the user is working in (title and position)."
+    risk = Risk.LOW
+    args: dict[str, Arg] = {}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        try:
+            w = await ctx.services.desktop.active_window()
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I couldn't tell which window you're using: {exc}.", {"errorKind": "not_found"})
+        data = {"app": w.app, "title": w.title, "frame": [w.x, w.y, w.width, w.height]}
+        if w.title:
+            text = f"You're in {w.app}; the window is titled “{w.title}”."
+        elif w.title == "":
+            text = f"You're in {w.app}; its window has no title."
+        else:
+            text = f"You're in {w.app}. I can't read the window title: {w.title_note}."
+        return ToolResult(True, text, data, verified=True, verification="front-most window reported by macOS")
+
+
+class PointWindowTool(Tool):
+    name = "screen.point_window"
+    description = "Look and point toward the window the user is working in."
+    risk = Risk.LOW
+    args: dict[str, Arg] = {}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        try:
+            w = await d.active_window()
+            displays = await d.displays()
+        except DesktopPermissionError as exc:
+            raise ToolUnavailable(str(exc)) from None
+        except DesktopUnavailable as exc:
+            return ToolResult(False, f"I couldn't find the window you're using: {exc}.", {"errorKind": "not_found"})
+        if w.width <= 1 or w.height <= 1:
+            return ToolResult(False, f"{w.app}'s window has no visible frame.", {"errorKind": "not_found"})
+        el = ScreenElement("AXWindow", w.title or w.app, w.x, w.y, w.width, w.height, "ax", 1.0, w.app)
+        try:
+            gaze = to_gaze(el, displays)
+        except ValueError as exc:
+            return ToolResult(False, f"I found {w.app}'s window but {exc}.", {"errorKind": "not_found"})
+        ctx.services.bus.publish("gaze.target", gaze)
+        return ToolResult(True, f"Looking at your {w.app} window ({_where(el, displays)}).", {"app": w.app, "gaze": gaze}, verified=True,
+                          verification="window frame reported by macOS")
+
+
 def all_screen_tools() -> list[Tool]:
-    return [FindElementTool(), ClickElementTool()]
+    return [FindElementTool(), ClickElementTool(), ActiveWindowTool(), PointWindowTool()]

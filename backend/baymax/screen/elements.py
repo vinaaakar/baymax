@@ -94,7 +94,7 @@ def vision_box_to_global(box: tuple[float, float, float, float], display: Displa
 _ROLE_HINTS: dict[str, tuple[str, ...]] = {
     "button": ("AXButton", "AXPopUpButton", "AXMenuButton", "AXDisclosureTriangle"),
     "field": ("AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"),
-    "box": ("AXTextField", "AXSearchField", "AXComboBox", "AXCheckBox"),
+    "box": ("AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXCheckBox"),
     "checkbox": ("AXCheckBox",),
     "tab": ("AXTab", "AXRadioButton", "AXTabGroup"),
     "menu": ("AXMenuItem", "AXMenuBarItem", "AXMenuButton", "AXPopUpButton"),
@@ -149,6 +149,9 @@ def score(q: Query, el: ScreenElement) -> float:
         s = 0.8
     else:
         s = 0.85 * difflib.SequenceMatcher(None, target, label).ratio()
+        overlap = len(set(q.words) & set(label.split())) / len(set(q.words))
+        if overlap >= 0.5:  # e.g. "ChatGPT prompt box" vs the field labelled "Message ChatGPT"
+            s = max(s, 0.55 + 0.2 * overlap)
     if q.role_hint:
         s += 0.08 if el.role in q.role_hint else -0.12
     if el.source == "ocr":

@@ -84,9 +84,8 @@ struct CompanionScreen: View {
                     .foregroundStyle(ready ? Theme.white : .yellow)
                     .accessibilityLabel(ready ? "The Mac's local AI model is ready" : "The Mac's local AI model is not available")
             }
-            if model.display.connected && model.cursorLive && !model.sleeping {
-                Image(systemName: "cursorarrow.motionlines").pill()
-                    .accessibilityLabel("Following the Mac cursor")
+            if model.display.connected && !model.sleeping {
+                CursorLiveIndicator(gaze: model.gaze)
             }
             Spacer(minLength: 4)
             Button { showSettings = true } label: { Image(systemName: "gearshape").padding(6) }
@@ -176,6 +175,21 @@ struct CompanionScreen: View {
         .foregroundStyle(Theme.white)
         .disabled(!model.display.connected)
         .padding(.bottom, layout.landscape ? 2 : 6)
+    }
+}
+
+/// Shown only while real cursor samples are arriving (same 2.5 s freshness rule the eyes use), so it never
+/// claims "following" after the Mac stops sending, disconnects or sleeps.
+struct CursorLiveIndicator: View {
+    let gaze: GazeSource
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            if gaze.current().live {
+                Image(systemName: "cursorarrow.motionlines").pill()
+                    .accessibilityLabel("Following the Mac cursor")
+            }
+        }
     }
 }
 

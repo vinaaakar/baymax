@@ -197,6 +197,16 @@ class IntentRouter:
         m = re.match(r"^(?:press|click) (?:the )?[\"“'](.+)[\"”'] (?:button )?in (?:the )?(.+?)(?: app)?$", raw, re.I)
         if m:
             return Intent("tool", "desktop.press_element", {"app": m.group(2).strip(), "name": m.group(1)}, f"Press {m.group(1)}", raw)
+        # ---- the window the user is working in
+        if re.search(r"\b(point|look|turn|face)\b.{0,20}\b(toward|towards|at|to)\b.{0,12}\b(the |my )?(window|app)\b.{0,25}"
+                     r"(i'?m|i am|i'?m using|i am using|using|active|current|front)", t) \
+                or re.search(r"\b(point|look)\b.{0,15}\b(my|the (current|active|front))\s+(window|app)\b", t):
+            return Intent("tool", "screen.point_window", {}, "Look at your window", raw)
+        if re.search(r"\b(title of (the |my )?(active|current|front|frontmost)? ?window|(active|current) window'?s? title|"
+                     r"which (app|application|window) am i (in|using)|what (app|application|window) am i (in|using)|"
+                     r"what('?s| is) (the )?(active|current|front) (window|app))\b", t):
+            return Intent("tool", "desktop.active_window", {}, "Active window", raw)
+
         # ---- screen understanding: find / look at / point at / click a described UI element
         ui_word = r"\b(button|field|box|tab|menu|link|icon|checkbox|toolbar|toggle|switch|dropdown|slider)\b"
         m = re.match(r"^(look at|point at|point to|show me|find|where is|where's|locate|highlight)\s+(.+)$", t)

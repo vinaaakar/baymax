@@ -195,3 +195,27 @@ async def test_click_never_targets_ocr_only_text(services, assistant, fake_deskt
     t = await services.tasks.wait(r["taskId"], 5)
     assert t.status is TaskStatus.FAILED and "won't click it blindly" in t.result["summary"]
     assert not any(c[0] in ("press", "click") for c in fake_desktop.calls)
+
+
+def test_prompt_box_matches_by_partial_label():
+    els = parse_ax_dump("\n".join([ax_line("AXTextArea", "", 400, 700, 600, 40, desc="Message ChatGPT"),
+                                   ax_line("AXButton", "Send prompt", 1010, 705, 30, 30)]), "Safari")
+    r = resolve("ChatGPT prompt box", els)
+    assert r.status == "found" and r.element.role == "AXTextArea"
+
+
+async def test_active_window_title_and_pointing(services, assistant, fake_desktop):
+    fake_desktop.front = "Code"
+    sub = services.bus.subscribe()
+    r = await assistant.handle_text("Read the title of the active window.")
+    t = await services.tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED and "README.md" in t.result["summary"]
+    fake_desktop.window_title = None
+    r = await assistant.handle_text("which app am I using")
+    t = await services.tasks.wait(r["taskId"], 5)
+    assert "can't read the window title" in t.result["summary"]  # honest when the title is unavailable
+    r = await assistant.handle_text("Point toward the window I am using.")
+    t = await services.tasks.wait(r["taskId"], 5)
+    assert t.status is TaskStatus.COMPLETED and t.verified
+    g = (await _events(sub, ["gaze.target"]))["gaze.target"]
+    assert g["gx"] == 550 and g["gy"] == 380  # centre of the real window frame (100,80 900x600)

@@ -14,6 +14,7 @@ _RULES: list[tuple[str, str]] = [
     ("files.delete", r"\b(delete|remove|erase|trash)\b"),
     ("files.write", r"\b(write|save|create|make|edit|modify|change|update|append|put)\b.*\b(file|note|text|readme|config|script)\b|\bfile\b"),
     ("files.", r"\b(files?|folders?|director(y|ies)|paths?|documents?|readme|\.\w{1,5})\b|[~/][\w.-]+/"),
+    ("desktop.active_window", r"\b(window|app|application|title|using|front|active)\b"),
     ("desktop.read_window", r"\b(windows?|screen|reading|read|showing|on (the|my) (screen|display))\b"),
     ("desktop.screenshot", r"\b(screenshot|screen ?shot|capture|screen)\b"),
     ("desktop.type_text", r"\b(type|enter|write|fill)\b"),
