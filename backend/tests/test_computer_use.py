@@ -308,7 +308,7 @@ async def test_focus_reports_missing_element_no_window_unfocused_and_timeout():
     from baymax.hostos.desktop import DesktopUnavailable
 
     cases = [(_Runner("execution error: element not found (1404)"), "not found"),
-             (_Runner("execution error: no window (1406)"), "no open window"),
+             (_Runner("execution error: no window (1406)"), "no window I can see"),
              (_Runner("", ok=True, stdout="unfocused\n"), "didn't let me put the cursor"),
              (_Runner("", timed_out=True), "didn't respond within")]
     for runner, expect in cases:

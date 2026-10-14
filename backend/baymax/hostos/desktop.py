@@ -221,7 +221,14 @@ _AS_TYPE_LINES = """on run argv
 end run"""
 
 _AS_ACTIVATE = """on run argv
-  tell application "System Events" to tell process (item 1 of argv) to set frontmost to true
+  set appName to item 1 of argv
+  -- Activate like `tell application "TextEdit" to activate`: unlike System Events' frontmost flag, this also switches to
+  -- the desktop Space holding the app's windows (Accessibility only sees windows on the current Space).
+  try
+    tell application "System Events" to set bid to bundle identifier of process appName
+    tell application id bid to activate
+  end try
+  tell application "System Events" to tell process appName to set frontmost to true
 end run"""
 
 _AS_TYPE = """on run argv
@@ -385,10 +392,21 @@ _AS_FOCUS = """on run argv
   set roleName to item 2 of argv
   set tx to (item 3 of argv) as number
   set ty to (item 4 of argv) as number
+  -- Activate like `tell application "TextEdit" to activate`: unlike System Events' frontmost flag, this also switches to
+  -- the desktop Space holding the app's windows (Accessibility only sees windows on the current Space).
+  try
+    tell application "System Events" to set bid to bundle identifier of process appName
+    tell application id bid to activate
+  end try
   tell application "System Events"
     tell process appName
       set frontmost to true
-      set w to item 1 of my pickWindow(appName)
+      set w to missing value
+      repeat 15 times -- up to ~3 s for the window to become visible to Accessibility after activation
+        set w to item 1 of my pickWindow(appName)
+        if w is not missing value then exit repeat
+        delay 0.2
+      end repeat
       if w is missing value then error "no window" number 1406
       try
         perform action "AXRaise" of w
@@ -449,9 +467,20 @@ _AS_VALUE = """on run argv
   set roleName to item 2 of argv
   set tx to (item 3 of argv) as number
   set ty to (item 4 of argv) as number
+  -- Activate like `tell application "TextEdit" to activate`: unlike System Events' frontmost flag, this also switches to
+  -- the desktop Space holding the app's windows (Accessibility only sees windows on the current Space).
+  try
+    tell application "System Events" to set bid to bundle identifier of process appName
+    tell application id bid to activate
+  end try
   tell application "System Events"
     tell process appName
-      set w to item 1 of my pickWindow(appName)
+      set w to missing value
+      repeat 15 times -- up to ~3 s for the window to become visible to Accessibility after activation
+        set w to item 1 of my pickWindow(appName)
+        if w is not missing value then exit repeat
+        delay 0.2
+      end repeat
       if w is missing value then error "no window" number 1406
       repeat with e in (entire contents of w)
         try
@@ -654,8 +683,14 @@ class MacDesktop(DesktopBackend):
         if getattr(res, "timed_out", False):
             raise DesktopUnavailable(f"macOS didn't respond within {timeout:.0f} seconds (the app may be busy or showing a dialog)")
         err = res.stderr
-        if "1406" in err or "no window" in err:
-            raise DesktopUnavailable(f"{args[0] if args else 'that app'} has no open window")
+        if "syntax error" in err.lower() or re.search(r"\(-27\d\d\)", err):  # the script itself didn't compile
+            log.error("BAYMAX AppleScript did not compile: %s", err.strip()[-500:])
+            raise DesktopUnavailable("an internal macOS script failed to compile (details are in the BAYMAX log)")
+        if re.search(r"\(1406\)", err) or "no window" in err:
+            log.info("AppleScript reported no window: %s", err.strip()[-300:])
+            who = args[0] if args else "that app"
+            raise DesktopUnavailable(f"{who} has no window I can see on this desktop (its windows may be on another desktop "
+                                     "Space or in full screen)")
         # Diagnose the API that actually failed: -1743 is Automation (Apple Events to one app), -1719/-25211 are Accessibility.
         if "-1743" in err or "not authorized to send apple events" in err.lower():
             target = args[0] if args else "that app"
@@ -665,7 +700,7 @@ class MacDesktop(DesktopBackend):
         if "-1728" in err and "process" in err:
             m = re.search(r'process "([^"]*)"', err)
             raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
-        if "1404" in err or "element not found" in err:
+        if re.search(r"\(1404\)", err) or "element not found" in err:
             raise DesktopUnavailable("the requested interface element was not found (the app may not expose accessibility info)")
         log.warning("AppleScript failed: %s", err.strip()[-500:])  # full detail for developers, not the chat
         raise DesktopUnavailable("macOS couldn't complete that step (details are in the BAYMAX log)")

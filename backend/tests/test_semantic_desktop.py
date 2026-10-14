@@ -358,3 +358,38 @@ def test_applescript_variables_never_reuse_system_events_terms():
             if v.lower() in _SE_TERMS:
                 bad.append((name, v))
     assert not bad, f"AppleScript variables named like System Events terms (won't compile on macOS): {bad}"
+
+
+class _ErrRunner:
+    def __init__(self, stderr):
+        self.stderr = stderr
+
+    async def run(self, argv, timeout=20):
+        r = _Res("")
+        r.ok, r.stderr = False, self.stderr
+        return r
+
+
+@pytest.mark.parametrize("stderr,expect", [
+    ("1406:1412: syntax error: Expected expression but found command name. (-2741)", "failed to compile"),
+    ("265:269: syntax error: Expected expression but found command name. (-2741)", "failed to compile"),
+    ("execution error: no window (1406)", "another desktop Space"),
+    ("execution error: element not found (1404)", "element was not found"),
+])
+async def test_applescript_compile_errors_are_not_mistaken_for_missing_windows(stderr, expect):
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    d = MacDesktop.__new__(MacDesktop)
+    d.p = _ErrRunner(stderr)
+    with pytest.raises(DesktopUnavailable) as exc:
+        await d._osascript("script", "TextEdit")
+    assert expect in str(exc.value)
+
+
+def test_focus_read_back_and_typing_activate_the_app_so_its_space_is_shown():
+    from baymax.hostos import desktop as dk
+
+    for script in (dk._AS_FOCUS, dk._AS_VALUE, dk._AS_ACTIVATE):
+        assert "tell application id bid to activate" in script
+    for script in (dk._AS_FOCUS, dk._AS_VALUE):
+        assert "repeat 15 times" in script  # waits for the window after activation instead of failing at once

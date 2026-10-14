@@ -65,6 +65,20 @@ async def _fresh_textedit_document(desk, timeout: float = 8.0):
     pytest.fail(f"TextEdit's new document never became the inspected window with a text area: {seen}.{hint}")
 
 
+async def _focus_or_explain(desk, field):
+    """focus_element, and on failure report what macOS showed at that moment (front app, windows visible to
+    Accessibility) instead of only the error."""
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    try:
+        await desk.focus_element("TextEdit", field.role, field.x, field.y)
+    except DesktopUnavailable as exc:
+        front = await desk.frontmost_app()
+        await desk.accessibility_elements("TextEdit")
+        pytest.fail(f"focusing the text area at ({field.x:.0f}, {field.y:.0f}) failed: {exc} | frontmost now: {front} | "
+                    f"window now visible to Accessibility: {desk.last_ax_window}")
+
+
 def test_permissions_are_reported(desk):
     ax = desk.accessibility_trusted()
     print("Accessibility trusted:", ax, "| Screen Recording:", desk.screen_recording_allowed())
@@ -91,7 +105,7 @@ async def test_type_unicode_multiline_into_textedit_and_read_back(desk):
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility to the terminal running pytest first")
     _, field = await _fresh_textedit_document(desk)
-    await desk.focus_element("TextEdit", field.role, field.x, field.y)  # raises if focus is not confirmed
+    await _focus_or_explain(desk, field)  # raises if focus is not confirmed
     text = "BAYMAX test ✓ Grüße 東京 👋\nsecond line — ünïcödé\nthird line."
     await desk.type_text("TextEdit", text)
     await asyncio.sleep(0.5)
@@ -111,7 +125,7 @@ async def test_focus_on_a_missing_element_is_reported(desk):
     await asyncio.sleep(0.5)
     with pytest.raises(DesktopUnavailable) as exc:
         await desk.focus_element("TextEdit", "AXTextArea", -5000, -5000)
-    assert "not found" in str(exc.value) or "no open window" in str(exc.value)
+    assert "not found" in str(exc.value) or "no window I can see" in str(exc.value)
 
 
 async def test_pointer_moves_where_asked(desk):
@@ -157,7 +171,7 @@ async def test_typing_stops_when_input_is_cancelled(desk):
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
     _, field = await _fresh_textedit_document(desk)
-    await desk.focus_element("TextEdit", field.role, field.x, field.y)
+    await _focus_or_explain(desk, field)
     desk.typing_interval_s = 0.03
     job = asyncio.create_task(desk.type_text("TextEdit", "stop me " * 60))
     await asyncio.sleep(0.6)
