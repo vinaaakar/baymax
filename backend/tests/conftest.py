@@ -31,6 +31,9 @@ class FakeDesktop(DesktopBackend):
         self.ax_dump: dict[str, str] = {}
         self.ax_after_press: dict[str, str] = {}
         self.ocr: list[ScreenElement] = []
+        self.titles: dict[str, list[str]] = {}
+        self.clipboard = ""
+        self.document = None
 
     def capabilities(self):
         return {"platform": "fake", "available": True, "accessibilityTrusted": self.accessibility}
@@ -95,6 +98,22 @@ class FakeDesktop(DesktopBackend):
 
     async def displays(self):
         return list(self.display_list)
+
+    async def open_path_in_app(self, app, path):
+        self.calls.append(("open_path", app, str(path)))
+        self.running.add(app)
+        self.front = app
+        self.titles[app] = [f"{path.name} — {app}"]
+
+    async def window_titles(self, app):
+        self._need_ax()
+        return list(self.titles.get(app, []))
+
+    async def clipboard_text(self):
+        return self.clipboard
+
+    async def front_document(self):
+        return self.document
 
     async def target_app(self):
         return self.front

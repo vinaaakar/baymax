@@ -149,3 +149,57 @@ def write_svg(path: Path, svg: str) -> Path:
     if not svg.lstrip().startswith("<svg"):
         raise ValueError("not an SVG document")
     return _write_checked(path, svg)
+
+
+def graph_svg(title: str, layers: Sequence[Sequence[str]], edges: Sequence[tuple[str, str, str]]) -> str:
+    """Left-to-right layered component diagram (boxes per column, labelled arrows)."""
+    if not layers or not any(layers):
+        raise ValueError("graph needs nodes")
+    box_w, box_h, col_gap, row_gap, top = 230, 52, 90, 26, 60
+    rows = max(len(col) for col in layers)
+    width = 40 + len(layers) * box_w + (len(layers) - 1) * col_gap + 40
+    height = top + rows * (box_h + row_gap) + 30
+    pos: dict[str, tuple[float, float]] = {}
+    for ci, col in enumerate(layers):
+        col_h = len(col) * box_h + (len(col) - 1) * row_gap
+        y0 = top + (rows * (box_h + row_gap) - row_gap - col_h) / 2
+        for ri, name in enumerate(col):
+            pos[name] = (40 + ci * (box_w + col_gap), y0 + ri * (box_h + row_gap))
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}" font-family="system-ui, sans-serif">',
+           f'<rect width="{width}" height="{height}" fill="#120408"/>',
+           '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">'
+           '<path d="M0,0 L10,5 L0,10 z" fill="#FF334F"/></marker></defs>',
+           f'<text x="{width / 2}" y="32" fill="#f5f5f2" font-size="17" text-anchor="middle">{html.escape(title)}</text>']
+    for a, b, label in edges:
+        if a not in pos or b not in pos:
+            raise ValueError(f"edge refers to unknown node: {a if a not in pos else b}")
+        (ax, ay), (bx, by) = pos[a], pos[b]
+        if bx > ax:
+            x1, x2 = ax + box_w, bx
+        elif bx < ax:
+            x1, x2 = ax, bx + box_w
+        else:
+            x1 = x2 = ax + box_w / 2
+        y1, y2 = ay + box_h / 2, by + box_h / 2
+        if bx == ax:
+            y1, y2 = (ay + box_h, by) if by > ay else (ay, by + box_h)
+        out.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#FF334F" stroke-width="1.6" marker-end="url(#arrow)"/>')
+        if label:
+            out.append(f'<text x="{(x1 + x2) / 2}" y="{(y1 + y2) / 2 - 5}" fill="#c9a9ae" font-size="10" text-anchor="middle">{html.escape(label)}</text>')
+    for name, (x, y) in pos.items():
+        out.append(f'<rect x="{x}" y="{y}" width="{box_w}" height="{box_h}" rx="12" fill="#2a0a12" stroke="#B5122A" stroke-width="2"/>')
+        lines = name.split(" | ")
+        for li, line in enumerate(lines[:2]):
+            size = 13 if li == 0 else 10.5
+            fill = "#f5f5f2" if li == 0 else "#c9a9ae"
+            dy = box_h / 2 + (5 if len(lines) == 1 else (-3 if li == 0 else 13))
+            out.append(f'<text x="{x + box_w / 2}" y="{y + dy}" fill="{fill}" font-size="{size}" text-anchor="middle">{html.escape(line[:38])}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def mermaid_graph(layers: Sequence[Sequence[str]], edges: Sequence[tuple[str, str, str]]) -> str:
+    ids = {n: f"N{i}" for i, n in enumerate(n for col in layers for n in col)}
+    lines = ["flowchart LR"] + [f'    {ids[n]}["{n.replace(chr(34), "").replace(" | ", "<br/>")}"]' for n in ids]
+    lines += [f"    {ids[a]} -->{'|' + lab.replace('|', '/') + '|' if lab else ''} {ids[b]}" for a, b, lab in edges]
+    return "\n".join(lines) + "\n"

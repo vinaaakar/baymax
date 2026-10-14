@@ -76,6 +76,28 @@ class IntentRouter:
         if m:
             return Intent("memory_forget", args={"phrase": m.group(1)}, text=raw)
 
+        # ---- developer assistance (before generic open/create/find rules)
+        m = re.match(r"^(?:open|load)\s+(.+?)\s+in\s+(vs ?code|visual studio code|code|xcode|intellij(?: idea)?|cursor|sublime(?: text)?|pycharm|android studio|finder|terminal)$", t)
+        if m:
+            return Intent("tool", "apps.open_project", {"project": _strip_original(raw, m.group(1)), "app": m.group(2)}, f"Open {m.group(1)}", raw)
+        m = re.match(r"^(?:find|where is|where's|show me|locate|which)\s+(?:is\s+)?(?:the\s+)?(?:function|method|class|code|file)\b\s*(.*)$", t)
+        if m and m.group(1):
+            return Intent("tool", "coding.find", {"query": m.group(1)}, f"Find code: {m.group(1)}"[:120], raw)
+        m = re.match(r"^(?:explain|what does|what's|why)\b.*\b(error|exception|traceback|stack ?trace|compiler|build fail\w*|crash)\b(.*)$", t)
+        if m:
+            pasted = raw.split(":", 1)[1].strip() if ":" in raw and len(raw.split(":", 1)[1].strip()) > 10 else ""
+            return Intent("tool", "coding.explain_error", {"text": pasted}, "Explain error", raw)
+        if re.search(r"\b(create|make|write|generate)\b.*\bjava class\b", t):
+            nm = re.search(r"\b(?:called|named)\s+([A-Za-z_]\w*)", raw)
+            desc = re.split(r"\b(?:that|which|to)\b", raw, maxsplit=1)
+            return Intent("tool", "coding.java_class", {"name": nm.group(1) if nm else "", "description": desc[1].strip() if len(desc) > 1 else ""},
+                          "Create Java class", raw)
+        m = re.match(r"^(?:summari[sz]e|give me a summary of|tl;?dr)\s+(?:of\s+)?(?:this|the|that|my)?\s*(document|file|pdf|paper|page|report|doc)?\s*(.*)$", t)
+        if m and not re.search(r"\b(repo|repository|project|codebase)\b", t):
+            target = _strip_original(raw, m.group(2)) if m.group(2) else ""
+            looks_path = bool(re.search(r"[/~.]\w", target))
+            return Intent("tool", "documents.summarize", {"path": target if looks_path else ""}, "Summarize document", raw)
+
         # ---- 3D: modification of the active model
         if ctx.active_model and self._is_model_edit(t):
             return Intent("tool", "creation3d.modify", {"artifact_id": ctx.active_model, "instruction": raw}, "Modify 3D model", raw)
@@ -207,6 +229,12 @@ class IntentRouter:
         if re.search(r"\b(more|less) detail(ed)?\b|\bbigger\b|\bsmaller\b|\btaller\b|\bwider\b", t) and len(t.split()) <= 10:
             return True
         return False
+
+
+def _strip_original(raw: str, lowered: str) -> str:
+    """Recover the original-case text for a fragment matched in the lower-cased utterance."""
+    i = raw.lower().find(lowered)
+    return raw[i:i + len(lowered)] if i >= 0 else lowered
 
 
 def _split_app(phrase: str) -> tuple[str, str | None]:

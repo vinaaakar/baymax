@@ -34,6 +34,7 @@ from .security.workspace import Workspace
 from .tasks.manager import TaskManager
 from .tools.creation_tools import all_creation_tools
 from .tools.registry import ToolRegistry
+from .tools.dev_tools import all_dev_tools
 from .tools.screen_tools import all_screen_tools
 from .tools.system_tools import all_system_tools
 from .voice.stt import WhisperCppRecognizer
@@ -73,6 +74,7 @@ class Services:
     cursor: CursorRelay = field(init=False)
     tasks: TaskManager = field(init=False)
     extras: dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)  # session context, e.g. current_project
 
     async def close(self) -> None:
         self.processes.kill_all()
@@ -93,7 +95,7 @@ def build_services(settings: Settings, *, desktop: DesktopBackend | None = None,
     artifacts = ArtifactRegistry(db, settings.artifacts_dir)
     workspace = Workspace(settings.workspace_dir)
     tools = ToolRegistry()
-    for tool in all_system_tools() + all_screen_tools() + all_creation_tools(workspace.root):
+    for tool in all_system_tools() + all_screen_tools() + all_dev_tools() + all_creation_tools(workspace.root):
         tools.register(tool)
     s = Services(
         settings=settings, db=db, bus=bus, audit=AuditLog(db), estop=EmergencyStop(),

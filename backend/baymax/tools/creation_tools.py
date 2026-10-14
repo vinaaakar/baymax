@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import shutil
 import time
 from pathlib import Path
@@ -332,8 +334,7 @@ class DiagramTool(Tool):
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         steps = writer.parse_steps(args["steps"])
         if len(steps) < 2:
-            return ToolResult(False, "I need at least two steps for a diagram, e.g. 'design -> build -> test'.", {},
-                              needs_clarification="Which steps should the diagram show?")
+            return await self._graph(ctx, args)
         base = ctx.services.settings.artifacts_dir / "diagrams" / writer.slugify(args["title"])
         svg = writer.write_svg(base.with_suffix(".svg"), writer.flow_diagram_svg(steps, args["title"]))
         mmd = base.with_suffix(".mmd")
@@ -341,6 +342,48 @@ class DiagramTool(Tool):
         art = ctx.services.artifacts.add("diagram", args["title"], svg, task_id=ctx.task_id, validated=True, meta={"steps": steps, "mermaid": str(mmd)})
         return ToolResult(True, f"Created a {len(steps)}-step diagram ({svg.name}).", {"steps": steps, "path": str(svg)}, [art.to_dict()],
                           verified=True, verification="SVG written and re-read")
+
+
+    async def _graph(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        """No explicit steps: draw the real BAYMAX architecture, or let the local model propose a validated graph."""
+        from ..documents import architecture
+
+        topic = f"{args['title']} {args['steps']}".strip()
+        source = ""
+        if architecture.is_architecture_request(topic):
+            title, layers, edges = "BAYMAX system architecture", architecture.LAYERS, architecture.EDGES
+            source = "components and connections of this repository"
+        elif await _llm_available(ctx):
+            try:
+                reply = await ctx.services.llm.chat([
+                    {"role": "system", "content": "Design a clear diagram. Reply with JSON only: {\"title\": str, \"layers\": [[node, ...], ...], "
+                                                  "\"edges\": [[from, to, label], ...]}. 2-5 layers left to right, at most 4 nodes per layer, "
+                                                  "short node names, edges only between listed nodes."},
+                    {"role": "user", "content": topic}], json_mode=True, max_tokens=700, temperature=0.2)
+                data = json.loads(reply)
+                layers = [[str(n)[:60] for n in col][:4] for col in data["layers"]][:5]
+                names = {n for col in layers for n in col}
+                edges = [(str(a), str(b), str(lab)[:30]) for a, b, lab in (e + [""] * (3 - len(e)) for e in data.get("edges", []))
+                         if str(a) in names and str(b) in names]
+                title = str(data.get("title") or args["title"])[:80]
+                if len(names) < 2:
+                    raise ValueError("too few nodes")
+                source = f"structure proposed by the local model ({ctx.services.settings.llm.model})"
+            except (LLMError, LLMUnavailable, ValueError, KeyError, TypeError) as exc:
+                q = f"I couldn't work out the diagram's parts ({exc}). Which components or steps should it show?"
+                return ToolResult(False, q, {}, needs_clarification=q)
+        else:
+            q = ("Which parts should the diagram show? List them like 'client -> API -> database' "
+                 "(my local model is offline, so I won't invent the content).")
+            return ToolResult(False, q, {}, needs_clarification=q)
+        base = ctx.services.settings.artifacts_dir / "diagrams" / writer.slugify(title)
+        svg = writer.write_svg(base.with_suffix(".svg"), writer.graph_svg(title, layers, edges))
+        mmd = base.with_suffix(".mmd")
+        mmd.write_text(writer.mermaid_graph(layers, edges), encoding="utf-8")
+        art = ctx.services.artifacts.add("diagram", title, svg, task_id=ctx.task_id, validated=True, meta={"mermaid": str(mmd), "source": source})
+        n = sum(len(c) for c in layers)
+        return ToolResult(True, f"Created “{title}” ({n} components, {len(edges)} connections; {source}): {svg}", {"path": str(svg), "mermaid": str(mmd)},
+                          [art.to_dict()], verified=svg.exists(), verification="SVG written and re-read")
 
 
 # -------------------------------------------------------------- simulation

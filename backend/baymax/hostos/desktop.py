@@ -82,6 +82,10 @@ class DesktopBackend:
     async def press_element(self, app: str, role: str, name: str) -> None: raise DesktopUnavailable(self._why())
     async def read_window_text(self, app: str, limit: int = 4000) -> str: raise DesktopUnavailable(self._why())
     async def screenshot(self, path: Path) -> Path: raise DesktopUnavailable(self._why())
+    async def open_path_in_app(self, app: str, path: Path) -> None: raise DesktopUnavailable(self._why())
+    async def window_titles(self, app: str) -> list[str]: raise DesktopUnavailable(self._why())
+    async def clipboard_text(self) -> str: raise DesktopUnavailable(self._why())
+    async def front_document(self) -> Path | None: raise DesktopUnavailable(self._why())
     # Screen understanding (baymax.screen): real geometry only, never guessed.
     async def displays(self) -> list[Display]: raise DesktopUnavailable(self._why())
     async def target_app(self) -> str: raise DesktopUnavailable(self._why())
@@ -183,6 +187,40 @@ _AS_LOCATE = """on run argv
   end tell
   return out
 end run"""
+
+# Window titles of an app; matches the process by name or displayed name ("Visual Studio Code" runs as "Code").
+_AS_TITLES = """on run argv
+  set appName to item 1 of argv
+  set alt to item 2 of argv
+  set out to ""
+  tell application "System Events"
+    set ps to (every process whose name is appName or name is alt or displayed name is appName)
+    if (count of ps) = 0 then return ""
+    repeat with w in (windows of item 1 of ps)
+      try
+        set out to out & (name of w) & linefeed
+      end try
+    end repeat
+  end tell
+  return out
+end run"""
+
+# File behind the front window of the app the user is looking at (AXDocument is a file:// URL).
+_AS_DOCUMENT = """on run argv
+  set appName to item 1 of argv
+  tell application "System Events"
+    tell process appName
+      if (count of windows) = 0 then return ""
+      try
+        return value of attribute "AXDocument" of window 1
+      on error
+        return ""
+      end try
+    end tell
+  end tell
+end run"""
+
+PROCESS_ALIASES = {"Visual Studio Code": "Code", "Google Chrome": "Google Chrome", "IntelliJ IDEA": "idea"}
 
 _AS_PRESS = """on run argv
   set appName to item 1 of argv
@@ -337,6 +375,30 @@ class MacDesktop(DesktopBackend):
     async def read_window_text(self, app: str, limit: int = 4000) -> str:
         app = validate_app_name(app)
         return (await self._osascript(_AS_TEXT, app, timeout=30))[:limit]
+
+    async def open_path_in_app(self, app: str, path: Path) -> None:
+        app = validate_app_name(app)
+        res = await self.p.run(["open", "-a", app, str(path)], timeout=20)
+        if not res.ok:
+            raise DesktopUnavailable(f"could not open {path.name} in {app}: {res.stderr.strip()[-200:] or 'application not found'}")
+
+    async def window_titles(self, app: str) -> list[str]:
+        app = validate_app_name(app)
+        out = await self._osascript(_AS_TITLES, app, PROCESS_ALIASES.get(app, app), timeout=15)
+        return [line.strip() for line in out.splitlines() if line.strip()]
+
+    async def clipboard_text(self) -> str:
+        res = await self.p.run(["pbpaste"], timeout=5)
+        return res.stdout if res.ok else ""
+
+    async def front_document(self) -> Path | None:
+        from urllib.parse import unquote, urlparse
+
+        app = await self.target_app()
+        url = (await self._osascript(_AS_DOCUMENT, validate_app_name(app), timeout=10)).strip()
+        if not url.startswith("file://"):
+            return None
+        return Path(unquote(urlparse(url).path))
 
     async def displays(self) -> list[Display]:
         if self._quartz is None:
