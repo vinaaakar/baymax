@@ -452,3 +452,14 @@ def test_focus_script_never_swallows_errors_after_the_element_is_matched():
 
     assert 'perform action "AXPress"' not in dk._AS_FOCUS  # a text area has no press action: the old fallback hid the error
     assert "on error errMsg number errNum" in dk._AS_FOCUS and "nearest" in dk._AS_FOCUS
+
+
+def test_applescripts_fetch_entire_contents_once_before_iterating():
+    """`repeat with e in (entire contents of w)` iterates the *specifier*: every e becomes "item i of entire contents of
+    window …", which System Events can't resolve, so each element errors (and per-element `try` hides it). Seen on the
+    real Mac: focus reported "no AXTextArea in the window" while the locate script, which fetches the list first, found
+    it. Every script must `set els to entire contents of …` and iterate the list."""
+    import re as _re
+
+    for name, src in _applescripts().items():
+        assert not _re.search(r"repeat with \w+ in \(?\s*entire contents", src), name

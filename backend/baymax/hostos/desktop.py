@@ -419,7 +419,9 @@ _AS_FOCUS = """on run argv
       set hit to missing value
       set nearest to ""
       set bestD to 1.0E+9
-      repeat with e in (entire contents of w)
+      -- fetch the list once: iterating the specifier itself makes every item an unresolvable reference
+      set els to entire contents of w
+      repeat with e in els
         try
           if role of e is roleName then
             set p to position of e
@@ -500,7 +502,9 @@ _AS_VALUE = """on run argv
         delay 0.2
       end repeat
       if w is missing value then error "no window" number 1406
-      repeat with e in (entire contents of w)
+      -- fetch the list once: iterating the specifier itself makes every item an unresolvable reference
+      set els to entire contents of w
+      repeat with e in els
         try
           if role of e is roleName then
             set p to position of e
@@ -617,7 +621,9 @@ _AS_PRESS = """on run argv
     tell process appName
       set frontmost to true
       -- iterate: "whose" can't filter the "entire contents" list (error -1700)
-      repeat with e in (entire contents of window 1)
+      -- fetch the list once: iterating the specifier itself makes every item an unresolvable reference
+      set els to entire contents of window 1
+      repeat with e in els
         try
           if role of e is roleName then
             set nm to ""
@@ -650,7 +656,9 @@ _AS_TEXT = """on run argv
   tell application "System Events"
     tell process appName
       if (count of windows) = 0 then return ""
-      repeat with e in (entire contents of window 1)
+      -- fetch the list once: iterating the specifier itself makes every item an unresolvable reference
+      set els to entire contents of window 1
+      repeat with e in els
         try
           if role of e is in {"AXStaticText", "AXTextField", "AXTextArea"} then
             set v to value of e
