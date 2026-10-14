@@ -276,8 +276,15 @@ class WebResearchTool(Tool):
         md, js = report.save(s.settings.artifacts_dir / "research", slug)
         art = s.artifacts.add("research", f"Research: {q}", md, task_id=ctx.task_id, validated=md.exists() and js.exists(),
                               meta={"sources": [p.url for p in report.sources], "json": str(js), "analysisBy": report.analysis_by})
+        # Sync to the Mac UI and paired phones: only URLs that were actually fetched, never model-written links.
+        summary = report.analysis.strip() if report.analysis else " ".join(next(iter(report.excerpts.values()), []))
+        s.bus.publish("research.result", {"taskId": ctx.task_id or "", "query": q, "summary": summary[:1200],
+                                          "summaryKind": "local-model analysis" if report.analysis else "source excerpts",
+                                          "sources": [{"title": pg.title[:200], "url": pg.url} for pg in report.sources]})
+        cited = "\n".join(f"[{i}] {pg.title[:90]} — {pg.url}" for i, pg in enumerate(report.sources, 1))
         return ToolResult(True, f"Read {len(report.sources)} sources and saved a cited report ({md.name})."
-                                + ("" if report.analysis else " No local model was available, so the report has excerpts only."),
+                                + ("" if report.analysis else " No local model was available, so the report has excerpts only.")
+                                + f"\nSources:\n{cited}",
                           {"report": report.to_json(), "markdown": report.to_markdown()[:6000]}, [art.to_dict()],
                           verified=md.exists(), verification="report saved with source URLs", untrusted=True)
 

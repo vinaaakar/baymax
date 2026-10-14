@@ -126,6 +126,7 @@ class BaymaxServer:
         r.add_get("/api/config", self.config_get)
         r.add_patch("/api/config", self.config_patch)
         r.add_get("/api/models", self.llm_models)
+        r.add_get("/api/research/check", self.research_check)
         return app
 
     def lan_app(self) -> web.Application:
@@ -507,6 +508,10 @@ class BaymaxServer:
     async def llm_models(self, request: web.Request) -> web.Response:
         st = await self.s.llm.status()
         return web.json_response({"status": st.to_dict(), "recommended": RECOMMENDED_MODELS})
+
+    async def research_check(self, request: web.Request) -> web.Response:
+        """One real search request to the configured provider; reports the exact failure (TLS, proxy, HTTP)."""
+        return web.json_response(await self.s.web.check())
 
 
 async def run_server(services: Services, *, lan: bool | None = None) -> None:

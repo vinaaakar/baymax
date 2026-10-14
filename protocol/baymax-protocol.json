@@ -594,6 +594,9 @@
           "summary": "str",
           "sources": "list"
         },
+        "optional": {
+          "summaryKind": "str"
+        },
         "since": 2
       }
     }

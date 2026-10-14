@@ -11,6 +11,8 @@ dependencies = [
   "aiohttp>=3.9",
   "cryptography>=42",
   "numpy>=1.26",
+  "truststore>=0.9",  # verify outbound TLS against the macOS system trust store
+  "certifi>=2024.2.2",
 ]
 
 [project.optional-dependencies]

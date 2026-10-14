@@ -47,7 +47,7 @@ public enum BaymaxProtocol {
                           ["vx": .float, "vy": .float, "scale": .float, "seq": .int]),
         "gaze.target": (["kind": .str, "x": .float, "y": .float],
                         ["vx": .float, "vy": .float, "displayId": .int, "label": .str, "confidence": .float, "durationMs": .int]),
-        "research.result": (["taskId": .str, "query": .str, "summary": .str, "sources": .list], [:]),
+        "research.result": (["taskId": .str, "query": .str, "summary": .str, "sources": .list], ["summaryKind": .str]),
     ]
 
     /// Minimum negotiated version for a message type (default 1).

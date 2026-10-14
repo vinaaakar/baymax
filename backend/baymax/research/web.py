@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 import aiohttp
 
 from ..config import ResearchConfig
+from .tls import client_context, describe_tls_error
 
 USER_AGENT = "BAYMAX-research/0.1 (+local assistant)"
 
@@ -167,6 +168,28 @@ def _check_public(host: str) -> None:
             raise FetchBlocked(f"refusing to fetch non-public address {ip} ({host})")
 
 
+def _check_literal(host: str) -> None:
+    """Used when an HTTP(S) proxy resolves names for us: block local names and private IP literals."""
+    h = host.strip("[]").lower()
+    if h == "localhost" or h.endswith(".localhost") or h.endswith(".local"):
+        raise FetchBlocked(f"refusing to fetch local host {host}")
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        raise FetchBlocked(f"refusing to fetch non-public address {ip}")
+
+
+def _via_proxy(url: str) -> bool:
+    import urllib.request
+
+    scheme = urlparse(url).scheme
+    proxies = urllib.request.getproxies()
+    host = urlparse(url).hostname or ""
+    return bool(proxies.get(scheme)) and not urllib.request.proxy_bypass(host)
+
+
 def check_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -189,8 +212,30 @@ class WebClient:
 
     async def _http(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}, trust_env=True)
+            ctx, _ = client_context()
+            self._session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}, trust_env=True,
+                                                  connector=aiohttp.TCPConnector(ssl=ctx))
         return self._session
+
+    async def _guard(self, url: str, host: str) -> None:
+        """SSRF guard. Behind a proxy the proxy resolves names, so only literals/local names can be checked here."""
+        if self.config.allow_private_fetch:
+            return
+        if _via_proxy(url):
+            _check_literal(host)
+        else:
+            await asyncio.get_running_loop().run_in_executor(None, _check_public, host)
+
+    async def check(self) -> dict[str, Any]:
+        """Availability check for the configured provider (does one real request; reports, never invents)."""
+        if self.config.local_only:
+            return {"available": False, "provider": self.config.search_provider, "reason": "local-only mode"}
+        ctx, trust = client_context()
+        try:
+            results = await self.search("Baymax", limit=1)
+            return {"available": True, "provider": self.config.search_provider, "trust": trust, "results": len(results)}
+        except ResearchUnavailable as exc:
+            return {"available": False, "provider": self.config.search_provider, "trust": trust, "reason": str(exc)}
 
     async def close(self) -> None:
         if self._session and not self._session.closed:
@@ -214,20 +259,27 @@ class WebClient:
                 if r.status != 200:
                     raise ResearchUnavailable(f"search provider returned HTTP {r.status}")
                 return parse_ddg(await r.text())[:limit]
+        except aiohttp.ClientSSLError as exc:
+            raise ResearchUnavailable(describe_tls_error(exc, "the search provider")) from None
+        except aiohttp.ClientResponseError as exc:  # includes proxy CONNECT refusals
+            raise ResearchUnavailable(f"web search failed: HTTP {exc.status} {exc.message} "
+                                      f"({'via proxy ' if _via_proxy('https://x') else ''}{exc.__class__.__name__})") from None
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            raise ResearchUnavailable(f"web search failed ({exc.__class__.__name__}); check the network connection") from None
+            raise ResearchUnavailable(f"web search failed ({exc.__class__.__name__}: {str(exc)[:160]}); check the network connection") from None
 
     async def fetch(self, url: str) -> Page:
         self._ensure_enabled()
         host = check_url(url)
-        await asyncio.get_running_loop().run_in_executor(None, _check_public, host)
+        await self._guard(url, host)
         http = await self._http()
         timeout = aiohttp.ClientTimeout(total=self.config.fetch_timeout_s)
         try:
             async with http.get(url, timeout=timeout, allow_redirects=True, max_redirects=5) as r:
                 final_host = r.url.host or ""
                 if final_host != host:
-                    await asyncio.get_running_loop().run_in_executor(None, _check_public, final_host)
+                    await self._guard(str(r.url), final_host)
+                if r.status >= 400:
+                    raise ResearchUnavailable(f"could not fetch {url}: HTTP {r.status}")
                 ctype = r.headers.get("Content-Type", "")
                 if not any(t in ctype for t in ("text/html", "text/plain", "application/xhtml")):
                     raise FetchBlocked(f"unsupported content type {ctype or 'unknown'}")
@@ -238,5 +290,9 @@ class WebClient:
                 else:
                     title, desc, text = extract_text(text_raw)
                 return Page(str(r.url), title or url, text[:200_000], desc, status=r.status)
+        except aiohttp.ClientSSLError as exc:
+            raise ResearchUnavailable(describe_tls_error(exc, url)) from None
+        except aiohttp.ClientResponseError as exc:
+            raise ResearchUnavailable(f"could not fetch {url}: HTTP {exc.status} {exc.message}") from None
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            raise ResearchUnavailable(f"could not fetch {url}: {exc.__class__.__name__}") from None
+            raise ResearchUnavailable(f"could not fetch {url}: {exc.__class__.__name__}: {str(exc)[:160]}") from None

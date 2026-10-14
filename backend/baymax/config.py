@@ -72,6 +72,8 @@ class ResearchConfig:
     max_results: int = 5
     fetch_timeout_s: float = 15.0
     max_page_bytes: int = 1_500_000
+    # Tests/LAN docs only: allow fetching private addresses (SSRF guard off). Never enable for general browsing.
+    allow_private_fetch: bool = False
 
 
 @dataclass
