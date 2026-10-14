@@ -229,16 +229,18 @@ async def test_file_search_by_name_is_honest_without_spotlight(services, assista
 
 # ------------------------------------------------------------------ permission diagnosis (which API actually failed)
 class _Res:
-    def __init__(self, err):
-        self.ok, self.stdout, self.stderr = False, "", err
+    def __init__(self, err, ok=False, stdout="", timed_out=False):
+        self.ok, self.stdout, self.stderr, self.timed_out = ok, stdout, err, timed_out
 
 
 class _Runner:
-    def __init__(self, err):
-        self.err = err
+    def __init__(self, err, ok=False, stdout="", timed_out=False):
+        self.res = _Res(err, ok, stdout, timed_out)
+        self.argv = None
 
     async def run(self, argv, timeout=20):
-        return _Res(self.err)
+        self.argv = argv
+        return self.res
 
 
 @pytest.mark.parametrize("err,expect", [
@@ -290,3 +292,41 @@ def test_applescripts_never_filter_entire_contents_with_whose():
             src = getattr(dsk, name)
             code = "\n".join(line.split("--", 1)[0] for line in src.splitlines())  # ignore AppleScript comments
             assert not re.search(r"entire contents of [^\n]*\)\s*whose", code), name
+
+
+
+# ------------------------------------------------------------------ MacDesktop focus / read-back / timeouts (osascript mocked)
+def _mac(runner):
+    from baymax.hostos.desktop import MacDesktop
+
+    d = MacDesktop.__new__(MacDesktop)
+    d.p = runner
+    return d
+
+
+async def test_focus_reports_missing_element_no_window_unfocused_and_timeout():
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    cases = [(_Runner("execution error: element not found (1404)"), "not found"),
+             (_Runner("execution error: no window (1406)"), "no open window"),
+             (_Runner("", ok=True, stdout="unfocused\n"), "didn't let me put the cursor"),
+             (_Runner("", timed_out=True), "didn't respond within")]
+    for runner, expect in cases:
+        with pytest.raises(DesktopUnavailable) as exc:
+            await _mac(runner).focus_element("TextEdit", "AXTextArea", 10, 20)
+        assert expect in str(exc.value), (expect, str(exc.value))
+    ok = _Runner("", ok=True, stdout="ok\n")
+    await _mac(ok).focus_element("TextEdit", "AXTextArea", 10.4, 19.6)
+    assert ok.argv[-3:] == ["AXTextArea", "10", "20"]  # arguments passed as argv, never spliced into the script
+
+
+async def test_element_value_returns_exact_text_with_line_breaks():
+    runner = _Runner("", ok=True, stdout="Grüße 東京 👋\nsecond line\n")
+    assert await _mac(runner).element_value("TextEdit", "AXTextArea", 1, 2) == "Grüße 東京 👋\nsecond line"
+
+
+async def test_focus_refuses_non_text_roles():
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    with pytest.raises(DesktopUnavailable):
+        await _mac(_Runner("", ok=True, stdout="ok")).focus_element("TextEdit", "AXButton", 1, 2)

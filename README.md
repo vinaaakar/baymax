@@ -29,7 +29,8 @@ stands on a deep-red stage. Behind the character is a local-first assistant that
 ```bash
 git clone <this repo> ~/Developer/BAYMAX && cd ~/Developer/BAYMAX
 ./scripts/setup_mac.sh          # Python venv, npm deps, Ollama + llama3.2:3b, whisper.cpp + model
-cd desktop && npm start         # builds and launches the Mac app (it starts the backend itself)
+scripts/start_mac.sh            # from anywhere; builds and launches the Mac app (it starts the backend itself)
+# same thing from the repository root:  npm --prefix desktop start
 ```
 
 The full guide is in [docs/SETUP.md](docs/SETUP.md), including iPhone build/install and pairing.

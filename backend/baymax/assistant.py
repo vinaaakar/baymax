@@ -22,6 +22,7 @@ from .intent.router import LAST_DRAFT, Intent, IntentRouter, RouteContext, parse
 from .llm.ollama import LLMError, LLMUnavailable
 from .llm.ollama import ToolsUnsupported, tool_spec
 from .llm.prompts import NATIVE_TOOLS_HINT, claims_unperformed_action, system_prompt, tool_proposal_prompt
+from .memory.facts import Fact, fact_from_stored, find_fact, parse_remember
 from .memory.store import MemoryRejected
 from .services import Services
 from .security.policy import HIGH_IMPACT_CATEGORIES
@@ -32,6 +33,8 @@ from .voice.stt import clean_transcript
 from .voice.tts import TTSUnavailable
 
 log = logging.getLogger(__name__)
+
+DUPLICATE_WINDOW_S = 10.0  # the same action, with the same arguments, from the same source, is not started twice in this window
 
 
 @dataclass
@@ -53,6 +56,8 @@ class Assistant:
         self._transcribing = False  # set while a client transcribes; cleared once text arrives
         self.traces = rtrace.TraceLog()
         self.last_draft: str | None = None  # the latest post the user asked me to draft (for "publish it")
+        self.session_facts: list[Fact] = []  # "remember … for this conversation" (in memory only, never saved to disk)
+        self._recent_starts: dict[str, float] = {}  # duplicate-execution guard: action fingerprint -> start time
         self.s.tts.on_state = self._on_tts_state
 
     # ------------------------------------------------------------- lifecycle
@@ -242,15 +247,13 @@ class Assistant:
             work = "Nothing is running." if not active else "Running: " + "; ".join(f"{t.title} ({t.status.value.lower()})" for t in active)
             return {"ok": True, "message": self._reply(f"{phone} {work}", origin)}
         if k == "memory_add":
-            try:
-                mem = s.memory.add(intent.args["content"])
-            except MemoryRejected as exc:
-                s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="memory rejected")
-                return {"ok": False, "message": self._reply(str(exc), origin)}
-            s.audit.record(origin.source, "memory.add", "low", "ok", {"id": mem.id})
-            s.bus.publish("memory.changed", {})
+            return self._remember(intent.args.get("raw") or intent.text, intent.args["content"], origin)
+        if k == "memory_recall":
+            fact = self._recall(intent.args["label"])
+            if fact is None:  # nothing stored under that name: answer normally (the model may know from the conversation)
+                return await self._chat(Intent("chat", text=intent.text), origin)
             s.character.dispatch(CharacterEvent.RESET)
-            return {"ok": True, "message": self._reply(f"I'll remember that: “{mem.content}”. You can review or delete memories in Settings.", origin)}
+            return {"ok": True, "message": self._reply(fact.sentence()[:1].upper() + fact.sentence()[1:] + ".", origin)}
         if k == "memory_list":
             mems = s.memory.list()
             s.character.dispatch(CharacterEvent.RESET)
@@ -282,6 +285,58 @@ class Assistant:
                 intent.args = {**intent.args, "prompt": self.last_draft}
             return await self._start_tool(intent, origin)
         return await self._chat(intent, origin)
+
+    def _recall(self, label: str) -> Fact | None:
+        """Conversation facts first (most recent wins), then saved memories written as 'label: value'."""
+        fact = find_fact(label, self.session_facts)
+        if fact is None:
+            stored = [f for f in (fact_from_stored(c) for c in self.s.memory.contents()) if f is not None]
+            fact = find_fact(label, stored)
+        return fact
+
+    def _remember(self, raw: str, content: str, origin: Origin) -> dict[str, Any]:
+        s = self.s
+        req = parse_remember(raw)
+        saved: list[str] = []
+        scope = req.scope
+        note = ""
+        items = [f.stored() for f in req.facts] + ([req.other] if req.other else [])
+        if not items:
+            s.character.dispatch(CharacterEvent.CLARIFICATION_NEEDED, reason="nothing to remember")
+            return {"ok": True, "message": self._reply("What should I remember?", origin)}
+        if scope == "persistent":
+            try:
+                for item in items:
+                    mem = s.memory.add(item)
+                    saved.append(mem.content)
+                    s.audit.record(origin.source, "memory.add", "low", "ok", {"id": mem.id})
+                s.bus.publish("memory.changed", {})
+            except MemoryRejected as exc:
+                s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="memory rejected")
+                return {"ok": False, "message": self._reply(str(exc), origin)}
+            except Exception as exc:  # storage unavailable: keep it for this conversation and say so
+                log.warning("memory store unavailable: %s", exc)
+                scope, note = "conversation", " I couldn't save it permanently (memory storage is unavailable), so I'll keep it for this conversation only."
+        if scope == "conversation":
+            self.session_facts.extend(req.facts)
+            if req.other:
+                self.session_facts.append(Fact("note", req.other))
+        s.character.dispatch(CharacterEvent.RESET)
+        if req.facts:
+            what = "; ".join(f.sentence() for f in req.facts)
+            what = what[:1].upper() + what[1:] + "."
+        else:
+            what = f"I'll remember: “{req.other}”."
+        where = (" I'll keep that for this conversation only — it isn't saved." if scope == "conversation" and not note
+                 else note or " Saved — you can review or delete memories in Settings.")
+        text = f"Got it. {what}{where}"
+        if req.question:
+            from .memory.facts import asked_label
+            label = asked_label(req.question)
+            fact = self._recall(label) if label else None
+            if fact is not None:
+                text += f"\n{fact.sentence()[:1].upper() + fact.sentence()[1:]}."
+        return {"ok": True, "message": self._reply(text, origin)}
 
     async def _start_plan(self, steps: list[Intent], text: str, origin: Origin) -> dict[str, Any]:
         """Several actions in one request ('open Safari and then open Terminal'): one task, steps run in order, and the
@@ -344,6 +399,13 @@ class Assistant:
             rtrace.stage("permissions", "rejected", "Emergency Stop engaged")
             s.character.dispatch(CharacterEvent.WARNING_RAISED, reason="estop engaged")
             return {"ok": False, "message": self._reply("Emergency Stop is engaged, so I can't run actions. Reset it on the Mac first.", origin)}
+        fp = json.dumps([tool.name, clean, origin.source], sort_keys=True, default=str)
+        now = asyncio.get_running_loop().time()
+        dup = next((tk for tk in s.tasks.active() if tk.plan and tk.plan[0].tool == tool.name and tk.plan[0].args == clean), None)
+        if dup is not None and now - self._recent_starts.get(fp, -1e9) < DUPLICATE_WINDOW_S:
+            rtrace.stage("execution", "skipped", f"identical action already running ({dup.id})")
+            return {"ok": True, "taskId": dup.id, "tool": tool.name, "duplicate": True}
+        self._recent_starts[fp] = now
         try:
             task = s.tasks.submit(intent.tool.split(".")[0], intent.title or tool.description[:60], intent.text or intent.title,
                                   [PlanStep(intent.title or tool.name, tool.name, intent.args)], source=origin.source)
@@ -363,7 +425,7 @@ class Assistant:
             s.character.dispatch(CharacterEvent.RESET)
             return {"ok": True, "message": self._reply(intent.reply, origin)}
         history = s.conversation.model_messages(12)
-        memories = s.memory.contents()
+        memories = s.memory.contents() + [f"(this conversation) {f.stored()}" for f in self.session_facts]
         # Constrained tool selection: the model only sees tools whose purpose matches this request. Ordinary
         # questions ("what is Newton's third law?") are answered with no tools offered at all.
         tools = {t.name: t for t in s.tools.model_tools() if tool_is_relevant(t.name, intent.text)}

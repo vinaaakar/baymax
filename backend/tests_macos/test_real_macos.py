@@ -60,14 +60,30 @@ async def test_type_unicode_multiline_into_textedit_and_read_back(desk):
     await desk.press_keys("TextEdit", "n", ("command",))  # new, empty document
     await asyncio.sleep(1.0)
     els = await desk.accessibility_elements("TextEdit")
-    field = next(e for e in els if e.role == "AXTextArea")
-    await desk.focus_element("TextEdit", field.role, field.x, field.y)
-    text = "BAYMAX test ✓ Grüße 東京\nsecond line"
+    areas = [e for e in els if e.role == "AXTextArea"]
+    assert areas, f"no AXTextArea in TextEdit's front window (found roles: {sorted({e.role for e in els})})"
+    field = areas[0]
+    await desk.focus_element("TextEdit", field.role, field.x, field.y)  # raises if focus is not confirmed
+    text = "BAYMAX test ✓ Grüße 東京 👋\nsecond line — ünïcödé\nthird line."
     await desk.type_text("TextEdit", text)
     await asyncio.sleep(0.5)
-    after = next(e for e in await desk.accessibility_elements("TextEdit") if e.role == "AXTextArea")
-    assert "Grüße 東京" in after.value and "second line" in after.value, after.value
-    print("Typed and read back. Close the TextEdit window WITHOUT saving.")
+    got = await desk.element_value("TextEdit", field.role, field.x, field.y)
+    # Cocoa may store Shift+Return as U+2028 (line separator); everything else must match exactly.
+    normalised = got.replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    assert normalised == text, f"read back {got!r}"
+    print("Typed and read back exactly. Close the TextEdit window WITHOUT saving.")
+
+
+async def test_focus_on_a_missing_element_is_reported(desk):
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    await desk.open_app("TextEdit")
+    await asyncio.sleep(0.5)
+    with pytest.raises(DesktopUnavailable) as exc:
+        await desk.focus_element("TextEdit", "AXTextArea", -5000, -5000)
+    assert "not found" in str(exc.value) or "no open window" in str(exc.value)
 
 
 async def test_pointer_moves_where_asked(desk):

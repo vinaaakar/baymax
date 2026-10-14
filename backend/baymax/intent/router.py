@@ -168,9 +168,13 @@ class IntentRouter:
             return Intent("status", text=raw)
 
         # ---- memory (explicit only)
-        if re.match(r"^remember(?: that)? (.+)$", t):
-            m = re.search(r"\bremember(?: that)? (.+)$", raw, re.I)
-            return Intent("memory_add", args={"content": (m.group(1) if m else t).rstrip(".!")}, text=raw)
+        if re.match(r"^(?:please )?remember(?: that| this)?\b(.+)$", t):
+            m = re.search(r"\bremember(?: that| this)?\b[\s:,-]*(.+)$", raw, re.I)
+            return Intent("memory_add", args={"content": (m.group(1) if m else t).rstrip(".!"), "raw": raw}, text=raw)
+        from ..memory.facts import asked_label
+        label = asked_label(raw.strip().rstrip("."))
+        if label:  # "what is my project called?" — answered from stored facts (falls back to chat if nothing stored)
+            return Intent("memory_recall", args={"label": label}, text=raw)
         if re.search(r"\b(what do you remember|what do you know about me|list (your |my )?memories|show (me )?(your |my )?memories)\b", t):
             return Intent("memory_list", text=raw)
         if re.match(r"^forget (all|everything)( (memories|you know))?$", t):

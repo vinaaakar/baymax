@@ -29,6 +29,34 @@ Chat = Callable[[list[dict[str, str]]], Awaitable[str]]
 Progress = Callable[[float | None, str], None]
 
 
+def wants_code_change(goal: str) -> bool:
+    """A goal asks for edits only when it says so; suggestions, plans, reviews and test runs never change files."""
+    g = " ".join((goal or "").lower().split())
+    if not g or re.fullmatch(r"(inspect|summari[sz]e|run (the )?tests?|test)\b.*", g):
+        return False
+    if re.search(r"\b(suggest\w*|ideas?|brainstorm\w*|recommend\w*|propos\w+|review|explain|describe|plan|outline|list)\b", g) and \
+            not re.search(r"\b(implement|apply|add|fix|change|modify|edit|refactor|update|create|write)\b", g):
+        return False
+    return True
+
+
+def parse_test_counts(output: str) -> dict[str, int]:
+    """Counts from the runner's own summary (pytest, Maven/Gradle surefire, Jest/Vitest, Go). Empty if none found."""
+    out: dict[str, int] = {}
+    for kind in ("passed", "failed", "skipped", "errors?", "xfailed", "deselected"):
+        m = re.findall(rf"(\d+) {kind}\b", output)
+        if m and "Tests run" not in output:
+            out[kind.rstrip("s?") if kind == "errors?" else kind] = int(m[-1])
+    runs = re.findall(r"Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)", output)
+    if runs:
+        total, fail, err, skip = (int(x) for x in runs[-1])
+        out = {"passed": total - fail - err - skip, "failed": fail, "error": err, "skipped": skip}
+    m = re.search(r"Tests:\s+(?:(\d+) failed, )?(?:(\d+) skipped, )?(\d+) passed", output)  # Jest
+    if m and not out:
+        out = {"failed": int(m.group(1) or 0), "skipped": int(m.group(2) or 0), "passed": int(m.group(3))}
+    return out
+
+
 @dataclass
 class TestRun:
     command: str
@@ -37,9 +65,20 @@ class TestRun:
     timed_out: bool
     output_tail: str
 
+    @property
+    def counts(self) -> dict[str, int]:
+        return parse_test_counts(self.output_tail)
+
+    def describe(self) -> str:
+        if self.timed_out:
+            return f"`{self.command}` timed out (tests did not finish)"
+        c = self.counts
+        detail = ", ".join(f"{v} {k}" for k, v in c.items() if v) if c else ("passed" if self.passed else f"failed (exit {self.returncode})")
+        return f"`{self.command}`: {detail}"
+
     def to_dict(self) -> dict[str, Any]:
         return {"command": self.command, "returncode": self.returncode, "passed": self.passed, "timedOut": self.timed_out,
-                "outputTail": self.output_tail}
+                "counts": self.counts, "outputTail": self.output_tail}
 
 
 @dataclass
@@ -60,13 +99,17 @@ class AgentReport:
     def summary(self) -> str:
         parts = [f"Repository: {self.project.summary()}."]
         if self.baseline:
-            parts.append(f"Baseline `{self.baseline.command}`: {'passed' if self.baseline.passed else 'FAILED'} (exit {self.baseline.returncode}).")
+            parts.append(f"Baseline tests {self.baseline.describe()}.")
+        else:
+            parts.append("Tests: not run (no test command detected).")
         if self.attempts:
             parts.append(f"Repair attempts: {len(self.attempts)}.")
         if self.changes:
             parts.append("Changed files: " + ", ".join(f"{c['path']} ({c['action']}, +{c['added']}/-{c['removed']})" for c in self.changes) + ".")
         if self.final and self.final is not self.baseline:
-            parts.append(f"Final `{self.final.command}`: {'passed' if self.final.passed else 'FAILED'} (exit {self.final.returncode}).")
+            parts.append(f"Final tests {self.final.describe()}.")
+        if self.changes and self.status not in ("tests_passed", "fixed"):
+            parts.insert(0, "UNVERIFIED CHANGES:")
         parts += self.notes
         return " ".join(parts)
 
@@ -111,7 +154,7 @@ class CodingAgent:
         else:
             report.status = "no_tests"
             report.notes.append("No test command was detected, so nothing was executed.")
-        wants_change = bool(goal.strip()) and not re.fullmatch(r"\s*(inspect|summari[sz]e|run (the )?tests?|test)\b.*", goal.lower())
+        wants_change = wants_code_change(goal)
         needs_fix = report.baseline is not None and not report.baseline.passed
         if not (wants_change or needs_fix):
             return report

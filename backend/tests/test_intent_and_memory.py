@@ -57,7 +57,7 @@ def test_args_extracted():
     assert R.route("simulate a pendulum").args["request"] == "simulate a pendulum"
     m = R.route("send an email to bob@example.com subject \"Status\" saying all good")
     assert m.args == {"to": "bob@example.com", "subject": "Status", "body": "all good"}
-    assert R.route("remember that I prefer Celsius").args == {"content": "I prefer Celsius"}
+    assert R.route("remember that I prefer Celsius").args["content"] == "I prefer Celsius"
 
 
 def test_model_edits_need_active_model():

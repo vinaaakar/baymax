@@ -471,6 +471,12 @@ class InspectRepoTool(_RepoTool):
         return ToolResult(True, info.summary(), info.to_dict(), verified=True, verification="repository scanned")
 
 
+def _changes_code(goal: str) -> bool:
+    from ..coding.agent import wants_code_change
+
+    return wants_code_change(goal)
+
+
 class CodingAgentTool(_RepoTool):
     name = "coding.agent"
     description = "Run tests in a repository and, with a goal, make bounded edits to reach it (backed up, re-tested)."
@@ -478,7 +484,16 @@ class CodingAgentTool(_RepoTool):
     args = {"repo": Arg("str", False, default="."), "goal": Arg("str", False, default="", max_len=2000)}
 
     def describe(self, args):
-        return f"coding agent in {args.get('repo', '.')}: {args.get('goal') or 'run tests'}"
+        goal = args.get("goal") or ""
+        if _changes_code(goal):
+            return f"Let the coding agent EDIT files in {args.get('repo', '.')} to: {goal[:300]} (backups kept, tests re-run)"
+        return f"coding agent in {args.get('repo', '.')}: {goal or 'run tests'}"
+
+    def classify(self, args):
+        # Running tests is routine; changing a repository's files is high-impact and needs your approval first.
+        if _changes_code(args.get("goal") or ""):
+            return Risk.HIGH, frozenset({"modify_repository"})
+        return self.risk, self.categories
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         s = ctx.services
@@ -493,6 +508,8 @@ class CodingAgentTool(_RepoTool):
         report = await agent.run(ws.root, files, args.get("goal", ""), chat, ctx.progress, ctx.checkpoint)
         ok = report.status in ("tests_passed", "fixed", "inspected", "no_tests", "changed_untested")  # environment_error is a failure
         verified = report.status in ("tests_passed", "fixed")
+        if report.changes and not verified:
+            ok = report.status == "changed_untested"  # changes exist but nothing proved them: reported as unverified, never "done"
         doc = s.settings.artifacts_dir / "code" / f"{time.strftime('%Y%m%d-%H%M%S')}-{ctx.task_id}-report.json"
         writer.write_json(doc, report.to_dict())
         art = s.artifacts.add("code", f"Coding report: {ws.root.name}", doc, task_id=ctx.task_id, validated=True, meta={"status": report.status})

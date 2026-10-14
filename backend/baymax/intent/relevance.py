@@ -14,7 +14,8 @@ _RULES: list[tuple[str, str]] = [
     ("files.delete", r"\b(delete|remove|erase|trash)\b"),
     ("files.write", r"\b(write|save|create|make|edit|modify|change|update|append|put)\b.*\b(file|note|text|readme|config|script)\b|\bfile\b"),
     ("files.", r"\b(files?|folders?|director(y|ies)|paths?|documents?|readme|\.\w{1,5})\b|[~/][\w.-]+/"),
-    ("desktop.active_window", r"\b(window|app|application|title|using|front|active)\b"),
+    ("desktop.running_apps", r"\b(apps?|applications?|programs?)\b.*\b(open|running)\b|\b(open|running)\s+(apps?|applications?)\b"),
+    ("desktop.active_window", r"\b(window|app|application|title|front ?most|in front)\b"),
     ("desktop.read_window", r"\b(windows?|screen|reading|read|showing|on (the|my) (screen|display))\b"),
     ("desktop.screenshot", r"\b(screenshot|screen ?shot|capture|screen)\b"),
     ("desktop.type_text", r"\b(type|enter|write|fill)\b"),
@@ -44,8 +45,52 @@ _RULES: list[tuple[str, str]] = [
 ]
 
 
+# ---------------------------------------------------------------- request mode
+# Questions and requests for advice are answered in words. Desktop tools need something on *this* computer to look at
+# or act on; repository-changing tools need an explicit request to change something.
+_QUESTION = re.compile(r"^(?:please\s+|can you\s+|could you\s+)?(?:explain|describe|define|what|what's|whats|why|how|when|who|which|"
+                       r"is|are|does|do|should|would|tell me (?:about|what|how|why)|give me (?:an? )?(?:example|overview|summary|ideas?|"
+                       r"suggestions?)|compare|difference between)\b")
+_ADVICE = re.compile(r"\b(suggest\w*|ideas?|brainstorm\w*|recommend\w*|propos\w+|advice|advise|plan(?:ning)?|outline|"
+                     r"what (?:features|improvements)|pros and cons|options for|should i)\b")
+_IMPLEMENT = re.compile(r"\b(implement|add|create|make|build|write|generate|fix|change|modify|edit|refactor|update|apply|"
+                        r"delete|remove|rename|install|run|execute|scaffold|set up|setup)\b")
+_DESKTOP_REFERENT = re.compile(r"\b(?:my|this|the current|current|the front(?:most)?|front(?:most)?|active|open|focused)\s+"
+                               r"(?:screen|window|windows|desktop|tab|tabs|browser|page)\b"
+                               r"|\b(?:this|the current|current|the front(?:most)?|front(?:most)?|active|focused)\s+(?:app|application)\b"
+                               r"|\b(?:apps?|applications?)\s+(?:are\s+)?(?:open|running|in front)\b"
+                               r"|\bon (?:my|the) (?:screen|display|mac)\b|\b(?:click|press|scroll|tap|type into|point at|look at|"
+                               r"read the|which (?:app|application)|what apps?|what applications?)\b|^(?:please\s+)?(?:open|launch|start|"
+                               r"switch to|go to|visit)\s+\S")
+# Reading local code/files for a question or advice needs an explicit pointer to them.
+_LOCAL_REFERENT = re.compile(r"[~/][\w.-]+/|\b\w+\.(?:py|java|ts|tsx|js|swift|md|xml|json|yml|yaml|properties|gradle|txt)\b"
+                             r"|\b(?:this|the|my)\s+(?:file|repo|repository|codebase|code|readme)\b|\b(?:look at|read|check|based on|"
+                             r"in)\s+(?:my|the|this)\s+(?:code|project|repo|repository|files?)\b")
+# Tools that change files or a repository (never offered for questions or advice).
+WRITE_TOOLS = ("files.write", "files.delete", "coding.agent", "coding.java_class", "shell.run")
+
+
+def request_mode(text: str) -> str:
+    """'advice' (suggest/plan/brainstorm), 'question' (explain/what/how), or 'action'."""
+    t = " ".join(text.lower().split())
+    t = re.sub(r"^(?:hey |hi |ok |okay )?(?:baymax|bay max)[ ,!]*", "", t)
+    if _ADVICE.search(t) and not re.search(r"\b(implement|apply|make|create|add) (?:it|them|these|those|that|this|the (?:first|second|third))\b", t):
+        return "advice"
+    if _QUESTION.match(t) and not _IMPLEMENT.match(t):
+        return "question"
+    return "action"
+
+
 def tool_is_relevant(tool: str, text: str) -> bool:
     t = text.lower()
+    mode = request_mode(text)
+    if mode in ("advice", "question"):
+        if tool in WRITE_TOOLS or (mode == "advice" and tool.startswith(("creation3d.", "image.", "documents.write", "mail.", "hardware."))):
+            return False  # suggestions and explanations never change files
+        if tool.startswith(("desktop.", "screen.", "apps.", "ai.")) and not _DESKTOP_REFERENT.search(t):
+            return False  # nothing on this computer was referred to: answer in words
+        if tool.startswith(("files.", "coding.", "documents.summarize")) and not _LOCAL_REFERENT.search(t):
+            return False  # a general question or advice: no need to read local files
     for prefix, pattern in _RULES:
         if tool == prefix or (prefix.endswith(".") and tool.startswith(prefix)):
             return bool(re.search(pattern, t))

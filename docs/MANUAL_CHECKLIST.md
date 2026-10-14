@@ -2,7 +2,7 @@
 
 ## Quick check (10 minutes)
 
-1. **Mac:** quit BAYMAX, then run `cd ~/Developer/BAYMAX/desktop && npm start`. If an older backend is still running, the app now
+1. **Mac:** quit BAYMAX, then run `~/Developer/BAYMAX/scripts/start_mac.sh` (works from any folder). If an older backend is still running, the app now
    replaces it automatically ("stopping stale backend" in the log).
    - **Pass:** only Baymax's head on a small rounded neck, on dark red, with no torso and no arms. Resize the window: the head stays
      whole and centred.
@@ -35,7 +35,7 @@ backend/.venv/bin/python -m baymax doctor  # llm.available, stt.available should
 
 ## 1. Launch and appearance
 
-1. Run `cd desktop && npm start`.
+1. Run `~/Developer/BAYMAX/scripts/start_mac.sh`.
 2. The floating companion appears bottom-right:
    - dark crimson background (#180509);
    - Baymax's **head and shoulders only**, with no legs, belly or floor;

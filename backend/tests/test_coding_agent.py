@@ -68,7 +68,7 @@ async def test_agent_fixes_failing_tests_with_bounded_loop(repo, tmp_path):
     assert report.status == "fixed" and report.final.passed and len(report.attempts) == 2
     assert (repo / "calc.py").read_text() == "def add(a, b):\n    return a + b\n"
     assert report.changes[0]["path"] == "calc.py" and report.changes[0]["backup"]
-    assert "Final `python3 -m pytest -q`: passed" in report.summary()
+    assert "Final tests `python3 -m pytest -q`: 1 passed" in report.summary()  # real counts from pytest's own summary
     assert "assert" in report.baseline.output_tail  # the baseline really failed on the assertion
 
 

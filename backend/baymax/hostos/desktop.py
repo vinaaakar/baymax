@@ -127,6 +127,7 @@ class DesktopBackend:
     async def focus_element(self, app: str, role: str, x: float, y: float) -> None: raise DesktopUnavailable(self._why())
     async def press_return(self, app: str) -> None: raise DesktopUnavailable(self._why())
     async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None: raise DesktopUnavailable(self._why())
+    async def element_value(self, app: str, role: str, x: float, y: float) -> str: raise DesktopUnavailable(self._why())
     async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
     def _why(self) -> str:
@@ -305,6 +306,11 @@ _AS_FOCUS = """on run argv
   tell application "System Events"
     tell process appName
       set frontmost to true
+      if (count of windows) = 0 then error "no window" number 1406
+      try
+        perform action "AXRaise" of window 1
+      end try
+      delay 0.1
       -- "entire contents" is a plain list: it can't be filtered with "whose" (error -1700), so check each element.
       repeat with e in (entire contents of window 1)
         try
@@ -316,7 +322,39 @@ _AS_FOCUS = """on run argv
               on error
                 perform action "AXPress" of e
               end try
-              return "ok"
+              delay 0.1
+              set wasFocused to false
+              try
+                set wasFocused to (focused of e)
+              end try
+              if wasFocused is true then return "ok"
+              return "unfocused"
+            end if
+          end if
+        end try
+      end repeat
+    end tell
+  end tell
+  error "element not found" number 1404
+end run"""
+
+# Exact text of one element (line breaks preserved) — used to verify what was typed.
+_AS_VALUE = """on run argv
+  set appName to item 1 of argv
+  set roleName to item 2 of argv
+  set tx to (item 3 of argv) as number
+  set ty to (item 4 of argv) as number
+  tell application "System Events"
+    tell process appName
+      if (count of windows) = 0 then error "no window" number 1406
+      repeat with e in (entire contents of window 1)
+        try
+          if role of e is roleName then
+            set p to position of e
+            if (((item 1 of p) - tx) ^ 2 + ((item 2 of p) - ty) ^ 2) < 36 then
+              set v to value of e
+              if v is missing value then return ""
+              return v as text
             end if
           end if
         end try
@@ -485,7 +523,11 @@ class MacDesktop(DesktopBackend):
         res = await self.p.run(["osascript", "-e", script, *args], timeout=timeout)
         if res.ok:
             return res.stdout
+        if getattr(res, "timed_out", False):
+            raise DesktopUnavailable(f"macOS didn't respond within {timeout:.0f} seconds (the app may be busy or showing a dialog)")
         err = res.stderr
+        if "1406" in err or "no window" in err:
+            raise DesktopUnavailable(f"{args[0] if args else 'that app'} has no open window")
         # Diagnose the API that actually failed: -1743 is Automation (Apple Events to one app), -1719/-25211 are Accessibility.
         if "-1743" in err or "not authorized to send apple events" in err.lower():
             target = args[0] if args else "that app"
@@ -734,7 +776,15 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         if role not in ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"):
             raise DesktopUnavailable("only text inputs can be focused for typing")
-        await self._osascript(_AS_FOCUS, app, role, str(round(x)), str(round(y)), timeout=20)
+        out = await self._osascript(_AS_FOCUS, app, role, str(round(x)), str(round(y)), timeout=20)
+        if out.strip() != "ok":  # the element exists but macOS didn't give it keyboard focus: never type blind
+            raise DesktopUnavailable(f"{app} didn't let me put the cursor in that field")
+
+    async def element_value(self, app: str, role: str, x: float, y: float) -> str:
+        """Exact text of the element at (x, y) with this role, line breaks included (for verifying typed text)."""
+        app = validate_app_name(app)
+        out = await self._osascript(_AS_VALUE, app, role, str(round(x)), str(round(y)), timeout=20)
+        return out[:-1] if out.endswith("\n") else out  # osascript adds one trailing newline
 
     async def press_return(self, app: str) -> None:
         app = validate_app_name(app)

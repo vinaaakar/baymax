@@ -50,4 +50,4 @@ command -v xcodegen >/dev/null || brew install xcodegen || true
 echo
 "$ROOT/backend/.venv/bin/python" -m baymax doctor
 echo
-echo "Done. Start the app with:  cd desktop && npm start"
+echo "Done. Start the app with:  $ROOT/scripts/start_mac.sh"

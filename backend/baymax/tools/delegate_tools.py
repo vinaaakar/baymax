@@ -174,7 +174,14 @@ class DelegateToAITool(Tool):
             entered = False
             for _ in range(6):
                 await asyncio.sleep(0.3)
-                after = await d.accessibility_elements(target)
+                try:  # exact read-back of the field we typed into (line breaks kept)
+                    raw = (await d.element_value(target, field.role, field.x, field.y)).replace("\u2028", "\n").replace("\r", "\n")
+                    if prompt.replace("\r\n", "\n") in raw:
+                        entered = True
+                        break
+                except DesktopUnavailable:
+                    pass
+                after = await d.accessibility_elements(target)  # fallback: the (flattened) accessibility dump
                 now = pick_prompt_field(after)
                 if now is not None and _norm(prompt)[:60] in _norm(now.value):
                     entered = True

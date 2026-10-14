@@ -101,6 +101,7 @@ Speech output uses the built-in macOS `say` command. Piper is optional: set `voi
 cd desktop
 npm install
 npm start            # type-checks, builds, then launches Electron
+# or, from anywhere:  ~/Developer/BAYMAX/scripts/start_mac.sh
 ```
 
 The app starts the backend if it isn't already running, shows the floating companion, and adds a menu-bar

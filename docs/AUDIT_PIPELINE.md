@@ -27,3 +27,14 @@ requests (`backend/baymax/intent/trace.py`).
 
 **Not runnable here (Linux cloud container):** everything that calls macOS APIs. These are covered by the opt-in suite
 `backend/tests_macos/test_real_macos.py` and by `docs/MANUAL_CHECKLIST.md`.
+
+## Oct 15 failures reported from the real Mac
+
+| Failure | Responsible component (evidence) | Fix | Tests |
+|---|---|---|---|
+| TextEdit typing test: `-1700 Can't make every UI element of entire contents … whose role …` | `_AS_FOCUS` / `_AS_PRESS` in `hostos/desktop.py`: System Events can't filter the `entire contents` *list* with `whose` | Iterate the list (c9e1461); now also raises the window, confirms keyboard focus (`unfocused` → error), reports no-window/not-found/timeouts distinctly; new `element_value()` reads the field back exactly (line breaks kept) | `tests_macos/…read_back` (real Mac, exact compare), `test_focus_reports_missing_element_no_window_unfocused_and_timeout`, `test_element_value_returns_exact_text_with_line_breaks` |
+| "Explain what an API is … using a real-world example" called `desktop.active_window` | `intent/relevance.py`: the word **"using"** made the tool eligible; the 3B model then called it | Request modes (question / advice / action); desktop tools need a reference to something on this computer; dropped "using"/"active" | `test_api_question_is_answered_without_any_tool`, `test_explanations_and_advice_offer_no_desktop_or_write_tools` |
+| Same action twice | nothing prevented an identical concurrent start | identical tool+args+source within 10 s while running → the existing task is returned | `test_the_same_action_is_not_started_twice` |
+| "Suggest three Spring Boot features" edited pom.xml etc. | relevance: "project" made `coding.agent` eligible; `CodingAgent.run` treated any goal as a change request; `coding.agent` was MEDIUM risk (no approval); `changed_untested` reported as success | advice/questions never get write tools; `wants_code_change()`; edits need approval (HIGH, "modify_repository"); summaries start with "UNVERIFIED CHANGES" and give passed/failed/skipped counts or "not run" | `test_feature_suggestions_change_no_files`, `test_explicit_implementation_waits_for_approval…`, `test_test_reports_distinguish…` |
+| "Remember this for our current conversation: my test project is called Project Phoenix. What is my project called?" echoed back | `router` stored the whole sentence; no fact extraction, no conversation scope, question ignored | `memory/facts.py`: extract "test project name: Project Phoenix", conversation vs persistent scope, answer the question, recall later; honest fallback if storage fails | `test_fact_is_extracted_scoped_and_the_question_answered` and 3 more |
+| `cd desktop: no such file` | instructions assumed the repository root | `scripts/start_mac.sh` (works from any folder); `npm --prefix desktop start` from the root | launcher run from `/tmp` built and launched Electron |

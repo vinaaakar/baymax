@@ -45,6 +45,7 @@ class FakeDesktop(DesktopBackend):
         self.redirects: dict[str, str] = {}  # requested URL -> where the browser actually lands
         self.automation = True  # macOS Automation permission for reading the browser's address bar
         self.focused: dict[str, tuple] = {}
+        self.field_raw: dict[tuple, str] = {}  # exact text typed into each field (line breaks preserved)
         self.after_open = None  # test hook, e.g. engage Emergency Stop while a plan is running
         self.ax_after_submit: dict[str, str] = {}
 
@@ -102,6 +103,7 @@ class FakeDesktop(DesktopBackend):
         self.front = app
         if app in self.focused:  # typing goes into the focused field: its value changes in the accessibility tree
             role, fx, fy = self.focused[app]
+            self.field_raw[(app, role, fx, fy)] = self.field_raw.get((app, role, fx, fy), "") + text
             lines = self.ax_dump.get(app, "").split("\n")
             for i, line in enumerate(lines):
                 p = line.split("\t")
@@ -109,6 +111,10 @@ class FakeDesktop(DesktopBackend):
                     p[3] = p[3] + " ".join(text.replace("\t", " ").splitlines())  # the macOS dumper flattens line breaks
                     lines[i] = "\t".join(p)
             self.ax_dump[app] = "\n".join(lines)
+
+    async def element_value(self, app, role, x, y):
+        self._need_ax()
+        return self.field_raw.get((app, role, round(x), round(y)), "")
 
     async def focus_element(self, app, role, x, y):
         self._need_ax()
