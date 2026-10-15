@@ -341,6 +341,71 @@ async def test_window_listing_without_accessibility_is_a_permission_failure(env)
     assert t.status is TaskStatus.FAILED and "Accessibility" in (t.error or "")
 
 
+def _textedit_tabs(env):
+    desk = env["desk"]
+    desk.running.add("TextEdit")
+    desk.windows["TextEdit"] = [{"index": 1, "title": "Untitled 2", "subrole": "AXStandardWindow", "identifier": "",
+                                 "main": True, "minimized": False}]
+    desk.tabs["TextEdit"] = ["Untitled"]  # a background tab of the same window
+    return desk
+
+
+async def test_background_tab_is_chosen_through_the_window_menu_and_verified(env):
+    desk = _textedit_tabs(env)
+    t = await _submit(env, [("desktop.focus_window", {"app": "TextEdit", "title": "Untitled"})])
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+    assert ("select_window_menu_item", "TextEdit", "Untitled") in desk.calls  # exact tab, not the partial "Untitled 2"
+    assert not [c for c in desk.calls if c[0] == "raise_window"]
+
+
+async def test_visible_window_still_wins_over_the_window_menu(env):
+    desk = _textedit_tabs(env)
+    t = await _submit(env, [("desktop.focus_window", {"app": "TextEdit", "title": "Untitled 2"})])
+    assert t.status is TaskStatus.COMPLETED and ("raise_window", "TextEdit", 1, "Untitled 2") in desk.calls
+    assert not [c for c in desk.calls if c[0] in ("window_menu_titles", "select_window_menu_item")]
+
+
+async def test_partial_title_matching_a_window_and_a_tab_asks(env):
+    desk = _textedit_tabs(env)
+    desk.tabs["TextEdit"] = ["Untitled 3"]
+    t = await _submit(env, [("desktop.focus_window", {"app": "TextEdit", "title": "untitled"})])
+    assert t.status is TaskStatus.FAILED and "Which one" in t.result["summary"]
+    assert not [c for c in desk.calls if c[0] in ("raise_window", "select_window_menu_item")]
+
+
+async def test_tab_switch_not_confirmed_is_reported_unverified(env):
+    desk = _textedit_tabs(env)
+
+    async def select_but_nothing_changes(app, title):
+        desk.calls.append(("select_window_menu_item", app, title))
+
+    desk.select_window_menu_item = select_but_nothing_changes
+    t = await _submit(env, [("desktop.focus_window", {"app": "TextEdit", "title": "Untitled"})])
+    assert not t.verified and "couldn't confirm" in t.result["summary"]
+
+
+def test_window_menu_entries_count_only_if_they_are_real_windows():
+    from baymax.hostos import desktop as dk
+
+    class Q:
+        kCGWindowListOptionAll, kCGNullWindowID = 0, 0
+
+        @staticmethod
+        def CGWindowListCopyWindowInfo(_o, _w):
+            return [{"kCGWindowOwnerName": "TextEdit", "kCGWindowLayer": 0, "kCGWindowName": n}
+                    for n in ("Untitled", "Untitled 2")] + [{"kCGWindowOwnerName": "Notes", "kCGWindowLayer": 0, "kCGWindowName": "Zoom"}]
+
+    d = dk.MacDesktop.__new__(dk.MacDesktop)
+    d._quartz = Q()
+
+    async def osa(script, *a, **k):
+        assert script is dk._AS_WINDOW_MENU
+        return "Minimize\nZoom\nBring All to Front\nUntitled\nUntitled 2\n"
+
+    d._osascript = osa
+    assert asyncio.run(d.window_menu_titles("TextEdit")) == ["Untitled", "Untitled 2"]  # commands never count
+
+
 def test_window_routing_and_parsing():
     from baymax.creation3d.classifier import RequestClassifier
     from baymax.creation3d.registry import GeneratorRegistry

@@ -55,6 +55,8 @@ class FakeDesktop(DesktopBackend):
         self.after_wake = {"state": "available", "detail": "display woke"}
         self.modals: list[dict] | Exception = []
         self.windows: dict[str, list[dict]] = {}
+        self.tabs: dict[str, list[str]] = {}
+        self.focused_labels: dict[str, str] = {}  # placeholder/description of the focused element  # background tabs: listed in the Window menu, not as Accessibility windows
 
     def capabilities(self):
         return {"platform": "fake", "available": True, "accessibilityTrusted": self.accessibility}
@@ -154,6 +156,23 @@ class FakeDesktop(DesktopBackend):
         self.calls.append(("list_windows", app))
         return [dict(w) for w in self.windows.get(app, [])]
 
+    async def window_menu_titles(self, app):
+        self._need_ax()
+        self.calls.append(("window_menu_titles", app))
+        return [w["title"] for w in self.windows.get(app, [])] + list(self.tabs.get(app, []))
+
+    async def select_window_menu_item(self, app, title):
+        self._need_ax()
+        self.calls.append(("select_window_menu_item", app, title))
+        tabs = self.tabs.get(app, [])
+        if title not in tabs:
+            raise DesktopUnavailable("the requested interface element was not found")
+        wins = self.windows[app]
+        shown = next(w for w in wins if w["main"])  # the tab that was showing goes to the background
+        tabs[tabs.index(title)] = shown["title"]
+        shown["title"] = title
+        self.front, self.window_title = app, title
+
     async def raise_window(self, app, index, title):
         self._need_ax()
         self.calls.append(("raise_window", app, index, title))
@@ -170,6 +189,16 @@ class FakeDesktop(DesktopBackend):
             raise DesktopUnavailable("element not found: nothing has keyboard focus")
         role, fx, fy = self.focused[app]
         return role, self.field_raw.get((app, role, fx, fy), "")
+
+    async def focused_element(self, app):
+        self._need_ax()
+        if app not in self.focused:
+            raise DesktopUnavailable("element not found: nothing has keyboard focus")
+        role, fx, fy = self.focused[app]
+        from baymax.screen.elements import ScreenElement
+
+        label = self.focused_labels.get(app, "")
+        return ScreenElement(role, label, fx, fy, 600, 40, app=app)
 
     async def focus_element(self, app, role, x, y):
         self._need_ax()

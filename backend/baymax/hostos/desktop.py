@@ -144,6 +144,8 @@ class DesktopBackend:
     async def modal_dialogs(self, app: str) -> list[dict[str, str]]: raise DesktopUnavailable(self._why())
     async def list_windows(self, app: str) -> list[dict[str, Any]]: raise DesktopUnavailable(self._why())
     async def raise_window(self, app: str, index: int, title: str) -> None: raise DesktopUnavailable(self._why())
+    async def window_menu_titles(self, app: str) -> list[str]: raise DesktopUnavailable(self._why())
+    async def select_window_menu_item(self, app: str, title: str) -> None: raise DesktopUnavailable(self._why())
     async def clipboard_text(self) -> str: raise DesktopUnavailable(self._why())
     async def front_document(self) -> Path | None: raise DesktopUnavailable(self._why())
     # Screen understanding (baymax.screen): real geometry only, never guessed.
@@ -156,6 +158,7 @@ class DesktopBackend:
     async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None: raise DesktopUnavailable(self._why())
     async def element_value(self, app: str, role: str, x: float, y: float) -> str: raise DesktopUnavailable(self._why())
     async def focused_text(self, app: str) -> tuple[str, str]: raise DesktopUnavailable(self._why())
+    async def focused_element(self, app: str) -> ScreenElement: raise DesktopUnavailable(self._why())
     async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
     def _why(self) -> str:
@@ -665,6 +668,46 @@ on pickWindow(appName)
 end pickWindow"""
 
 # Role and exact value of the element that has keyboard focus in an app (to read typed text back).
+# Role, description, placeholder and frame of the element that has keyboard focus in an app (one query, no tree walk).
+_AS_FOCUSED_ELEMENT = """on run argv
+  tell application "System Events"
+    tell process (item 1 of argv)
+      set f to value of attribute "AXFocusedUIElement"
+      if f is missing value then error "element not found: nothing has keyboard focus" number 1404
+      set r to role of f
+      set fd to ""
+      set ph to ""
+      set fp to {0, 0}
+      set fs to {0, 0}
+      try
+        set fd to description of f
+      end try
+      try
+        set ph to value of attribute "AXPlaceholderValue" of f
+      end try
+      try
+        set fp to position of f
+      end try
+      try
+        set fs to size of f
+      end try
+      if fd is missing value then set fd to ""
+      if ph is missing value then set ph to ""
+      return r & tab & my oneLine(fd as text) & tab & my oneLine(ph as text) & tab & (item 1 of fp) & tab & (item 2 of fp) & tab & (item 1 of fs) & tab & (item 2 of fs)
+    end tell
+  end tell
+end run
+
+on oneLine(t)
+  set AppleScript's text item delimiters to {tab, return, linefeed}
+  set parts to text items of t
+  set AppleScript's text item delimiters to " "
+  set t to parts as text
+  set AppleScript's text item delimiters to ""
+  if length of t > 200 then set t to text 1 thru 200 of t
+  return t
+end oneLine"""
+
 _AS_FOCUSED_TEXT = """on run argv
   tell application "System Events"
     tell process (item 1 of argv)
@@ -795,6 +838,48 @@ on oneLine(t)
   if length of t > 300 then set t to text 1 thru 300 of t
   return t
 end oneLine"""
+
+# Names in an app's Window menu. Document apps list every window there - including tabs, which Accessibility doesn't
+# list as windows while they are in the background.
+_AS_WINDOW_MENU = """on run argv
+  set appName to item 1 of argv
+  set out to ""
+  tell application "System Events"
+    tell process appName
+      set mis to {}
+      try
+        set mis to menu items of menu 1 of (first menu bar item of menu bar 1 whose name is "Window")
+      end try
+      repeat with mi in mis
+        try
+          set mn to name of mi
+          if mn is not missing value then set out to out & (mn as text) & linefeed
+        end try
+      end repeat
+    end tell
+  end tell
+  return out
+end run"""
+
+# Choose the Window-menu entry with exactly this name (the same as clicking it by hand); 1404 unless exactly one exists.
+_AS_WINDOW_MENU_SELECT = """on run argv
+  set appName to item 1 of argv
+  set wanted to item 2 of argv
+  try
+    tell application "System Events" to set bid to bundle identifier of process appName
+    tell application id bid to activate
+  end try
+  tell application "System Events"
+    tell process appName
+      set frontmost to true
+      set wm to menu 1 of (first menu bar item of menu bar 1 whose name is "Window")
+      set hits to (menu items of wm whose name is wanted)
+      if (count of hits) is not 1 then error "element not found: window menu item" number 1404
+      click item 1 of hits
+    end tell
+  end tell
+  return "ok"
+end run"""
 
 # Raise window i of an app if (and only if) it still has the expected title; un-minimise it first.
 _AS_RAISE_WINDOW = """on run argv
@@ -1312,6 +1397,29 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         await self._osascript(_AS_RAISE_WINDOW, app, str(int(index)), title, timeout=12)
 
+    async def window_menu_titles(self, app: str) -> list[str]:
+        """Windows (including background tabs) listed in the app's Window menu. Only entries that are also real windows
+        of that app in the window server count, so menu commands ("Zoom", "Minimize" …) are never treated as windows.
+        Empty when that can't be confirmed (no PyObjC, or no Screen Recording permission to read window titles)."""
+        app = validate_app_name(app)
+        Q = self._quartz
+        if Q is None or not hasattr(Q, "CGWindowListCopyWindowInfo"):
+            return []
+        names = [n.strip() for n in (await self._osascript(_AS_WINDOW_MENU, app, timeout=12)).splitlines() if n.strip()]
+        info = Q.CGWindowListCopyWindowInfo(Q.kCGWindowListOptionAll, Q.kCGNullWindowID) or []
+        real = {str(w.get("kCGWindowName") or "") for w in info
+                if w.get("kCGWindowOwnerName") == app and w.get("kCGWindowLayer") == 0}
+        real.discard("")
+        out: list[str] = []
+        for n in names:
+            if n in real and n not in out:
+                out.append(n)
+        return out
+
+    async def select_window_menu_item(self, app: str, title: str) -> None:
+        app = validate_app_name(app)
+        await self._osascript(_AS_WINDOW_MENU_SELECT, app, title[:300], timeout=12)
+
     async def find_files(self, name: str, root: Path) -> list[str]:
         """Spotlight file-name search limited to `root` (read-only)."""
         if not shutil.which("mdfind"):
@@ -1474,6 +1582,20 @@ class MacDesktop(DesktopBackend):
         out = (await self._osascript(_AS_FOCUSED_TEXT, app, timeout=10)).removesuffix("\n")  # osascript adds one newline
         role, _, value = out.partition("\t")
         return role.strip(), value
+
+    async def focused_element(self, app: str) -> ScreenElement:
+        """The element of `app` that has keyboard focus, with its frame; DesktopUnavailable when nothing has focus."""
+        app = validate_app_name(app)
+        out = (await self._osascript(_AS_FOCUSED_ELEMENT, app, timeout=10)).strip("\n")
+        parts = out.split("\t")
+        if len(parts) < 7:
+            raise DesktopUnavailable("the focused element couldn't be read")
+        try:
+            x, y, w, h = (float(v.replace(",", ".")) for v in parts[3:7])
+        except ValueError:
+            raise DesktopUnavailable("the focused element reported no frame") from None
+        return ScreenElement(role=parts[0].strip(), label=parts[2].strip() or parts[1].strip(), x=x, y=y, width=w, height=h,
+                             app=app, description=parts[1].strip())
 
     async def press_return(self, app: str) -> None:
         app = validate_app_name(app)

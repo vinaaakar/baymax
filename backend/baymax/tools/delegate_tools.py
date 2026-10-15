@@ -73,6 +73,24 @@ def pick_prompt_field(els: list[ScreenElement]) -> ScreenElement | None:
     return max(pool, key=lambda e: (e.y + e.height, e.width))  # chat boxes sit at the bottom of the window
 
 
+_NOT_A_PROMPT = re.compile(r"\b(search|find|filter|rename|title|url|address)\b", re.I)
+
+
+async def _focused_prompt_field(d: Any, target: str) -> ScreenElement | None:
+    """The focused element, if it is plausibly the message box: an editable text area or field, wide enough, and not a
+    search/rename box. None when nothing suitable has focus (the caller then searches the window)."""
+    try:
+        el = await d.focused_element(target)
+    except (DesktopUnavailable, AttributeError):
+        return None
+    words = f"{el.label} {el.description}"
+    if el.role not in TEXT_INPUT_ROLES or el.role == "AXSearchField" or el.width < 120 or _NOT_A_PROMPT.search(words):
+        return None
+    if el.role != "AXTextArea" and not _PROMPT_HINT.search(words):
+        return None  # a plain one-line field counts only when it is labelled like a prompt box
+    return el
+
+
 class DelegateToAITool(Tool):
     name = "ai.delegate"
     description = ("Enter a prompt into another AI app or website (ChatGPT, Claude, Gemini, Perplexity), e.g. 'ask ChatGPT to "
@@ -170,6 +188,12 @@ class DelegateToAITool(Tool):
             while True:
                 ctx.checkpoint()
                 attempts += 1
+                # Fast path: chat apps put keyboard focus in their message box. Reading the focused element is one query;
+                # walking a large window (ChatGPT's) can't reach the box in time.
+                field = await _focused_prompt_field(d, target)
+                if field is not None:
+                    data["fieldFrom"] = "keyboard focus"
+                    break
                 els = await d.accessibility_elements(target)
                 win = getattr(d, "last_ax_window", None) or {}
                 data["window"] = {k: win.get(k) for k in ("name", "windows", "truncated") if k in win}
@@ -203,12 +227,23 @@ class DelegateToAITool(Tool):
         # 6-7: type the prompt into that field and read it back.
         ctx.checkpoint()
         ctx.progress(0.55, "entering the prompt")
+        from_focus = data.get("fieldFrom") == "keyboard focus"
         try:
-            await d.focus_element(target, field.role, field.x, field.y)
+            if not from_focus:  # a field found by searching the window gets focus first; a focused one already has it
+                await d.focus_element(target, field.role, field.x, field.y)
             await d.type_text(target, prompt)
             entered = False
             for _ in range(6):
                 await asyncio.sleep(0.3)
+                if from_focus:  # read back the focused field itself (searching a huge window again would time out)
+                    try:
+                        role, raw = await d.focused_text(target)
+                        if role == field.role and prompt.replace("\r\n", "\n") in raw.replace("\u2028", "\n").replace("\r", "\n"):
+                            entered = True
+                            break
+                    except DesktopUnavailable:
+                        pass
+                    continue
                 try:  # exact read-back of the field we typed into (line breaks kept)
                     raw = (await d.element_value(target, field.role, field.x, field.y)).replace("\u2028", "\n").replace("\r", "\n")
                     if prompt.replace("\r\n", "\n") in raw:
@@ -245,9 +280,20 @@ class DelegateToAITool(Tool):
             await d.press_return(target)
         for _ in range(10):
             await asyncio.sleep(0.4)
-            after = await d.accessibility_elements(target)
-            now = pick_prompt_field(after)
-            if now is None or _norm(prompt)[:60] not in _norm(now.value):
+            if from_focus:
+                # Sent = the message box still has focus and no longer holds the prompt. If it can't be read, that is
+                # not proof of sending (a box that can't be found is not an empty box).
+                try:
+                    role, raw = await d.focused_text(target)
+                except DesktopUnavailable:
+                    continue
+                if role != field.role or _norm(prompt)[:60] in _norm(raw):
+                    continue
+                after = []
+            else:
+                after = await d.accessibility_elements(target)
+                now = pick_prompt_field(after)
+            if from_focus or now is None or _norm(prompt)[:60] not in _norm(now.value):
                 data["submitted"] = True
                 shown = any(_norm(prompt)[:40] in _norm(f"{e.label} {e.value}") for e in after if e.role not in TEXT_INPUT_ROLES)
                 if svc.key == "x":

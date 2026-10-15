@@ -175,14 +175,29 @@ class FocusWindowTool(Tool):
             q = f"Which {app.name} window? Tell me its title."
             return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
         wins = await _desktop(d.list_windows(proc))
-        if not wins:
-            return ToolResult(False, f"{app.name} has no window I can see on this desktop.", {"errorKind": "not_found", "app": app.name})
+        tabs: list[str] = []
         if want_id:
             matches = [w for w in wins if w["identifier"] and w["identifier"] == want_id]
         else:
             key = want_title.casefold()
-            matches = [w for w in wins if w["title"].casefold() == key] or [w for w in wins if key in w["title"].casefold()]
-        titles = [w["title"] or "(untitled)" for w in wins]
+            matches = [w for w in wins if w["title"].casefold() == key]
+            if not matches:
+                # Background tabs aren't listed as windows by Accessibility; the app's Window menu lists them.
+                # Exact titles (windows and tabs) win over partial ones, so "Untitled" never picks "Untitled 2".
+                try:
+                    tabs = [t for t in await d.window_menu_titles(proc) if t not in {w["title"] for w in wins}]
+                except DesktopUnavailable:
+                    tabs = []
+                exact_tabs = [t for t in tabs if t.casefold() == key]
+                partial = ([w for w in wins if key in w["title"].casefold()]
+                           + [{"title": t, "index": 0, "identifier": "", "tab": True} for t in tabs if key in t.casefold()])
+                choice = ([{"title": t, "index": 0, "identifier": "", "tab": True} for t in exact_tabs] if exact_tabs else partial)
+                if len(choice) == 1 and choice[0].get("tab"):
+                    return await self._select_tab(ctx, app, proc, choice[0]["title"])
+                matches = choice
+        titles = [w["title"] or "(untitled)" for w in wins] + tabs
+        if not titles:
+            return ToolResult(False, f"{app.name} has no window I can see on this desktop.", {"errorKind": "not_found", "app": app.name})
         if not matches:
             return ToolResult(False, f"{app.name} has no window matching “{want_title or want_id}”. Its windows: "
                                      + "; ".join(f"“{t}”" for t in titles[:8]) + ".",
@@ -201,14 +216,30 @@ class FocusWindowTool(Tool):
             now = await d.list_windows(proc)
         except DesktopUnavailable:
             front, now = "", []
-        main = next((x for x in now if x["main"]), now[0] if now else None)
-        ok = front.lower() in (proc.lower(), app.name.lower()) and main is not None and main["title"] == w["title"]
-        data = {"app": app.name, "title": w["title"], "identifier": w["identifier"]}
-        if ok:
-            return ToolResult(True, f"Switched to the {app.name} window “{w['title']}”.", data, verified=True,
-                              verification="the app is frontmost and its main window has the requested title")
-        return ToolResult(True, f"I asked {app.name} to bring “{w['title']}” to the front, but I couldn't confirm it is the front window.",
-                          data, verified=False, verification="front window not confirmed after raising")
+        return _confirm_front(app, proc, w["title"], {"app": app.name, "title": w["title"], "identifier": w["identifier"]},
+                              front, now)
+
+    async def _select_tab(self, ctx: ToolContext, app: Any, proc: str, title: str) -> ToolResult:
+        d = ctx.services.desktop
+        ctx.checkpoint()
+        await _desktop(d.select_window_menu_item(proc, title))
+        try:
+            front = await d.frontmost_app()
+            now = await d.list_windows(proc)
+        except DesktopUnavailable:
+            front, now = "", []
+        return _confirm_front(app, proc, title, {"app": app.name, "title": title, "identifier": "", "via": "window menu"},
+                              front, now)
+
+
+def _confirm_front(app: Any, proc: str, title: str, data: dict[str, Any], front: str, now: list[dict[str, Any]]) -> ToolResult:
+    """Verified only if the app is frontmost and its main window now has the requested title."""
+    main = next((x for x in now if x["main"]), now[0] if now else None)
+    if front.lower() in (proc.lower(), app.name.lower()) and main is not None and main["title"] == title:
+        return ToolResult(True, f"Switched to the {app.name} window “{title}”.", data, verified=True,
+                          verification="the app is frontmost and its main window has the requested title")
+    return ToolResult(True, f"I asked {app.name} to bring “{title}” to the front, but I couldn't confirm it is the front window.",
+                      data, verified=False, verification="front window not confirmed after raising")
 
 
 class NewDocumentTool(Tool):

@@ -452,7 +452,8 @@ async def test_type_a_prompt_into_the_chatgpt_app_without_sending(desk, real_ser
 
     t = await _run(real_services, ("ai.delegate", {"service": "chatgpt", "prompt": "BAYMAX test prompt - do not send", "via": "app"}),
                    timeout=90)
-    print(t.result["summary"], "| window:", t.result.get("data", {}).get("window"), "| elements:",
+    print(t.result["summary"], "| field from:", t.result.get("data", {}).get("fieldFrom", "window search"),
+          "| window:", t.result.get("data", {}).get("window"), "| elements:",
           t.result.get("data", {}).get("elementsRead"))
     assert t.status is TaskStatus.COMPLETED and t.result["data"].get("entered"), t.result
     assert t.result["data"].get("submitted") is False
@@ -482,7 +483,8 @@ async def test_session_state_is_available_while_you_are_using_the_mac(desk):
 
 
 async def test_focus_a_textedit_window_by_title(desk, real_services):
-    """Two new TextEdit documents; the tool brings the first one back to the front by its title. Close both WITHOUT saving."""
+    """Two new TextEdit documents; the tool brings the first one back to the front by its title - also when macOS opened
+    them as tabs of one window (then only the Window menu lists the background one)."""
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility first")
     from baymax.tasks.models import TaskStatus
@@ -490,10 +492,11 @@ async def test_focus_a_textedit_window_by_title(desk, real_services):
     first, _, _ = await _fresh_textedit_document(desk)
     second, _, _ = await _fresh_textedit_document(desk)
     wins = await desk.list_windows("TextEdit")
-    print("TextEdit windows:", [w["title"] for w in wins])
-    titles = [w["title"] for w in wins]
-    assert first in titles and second in titles, (f"list_windows saw {titles}, expected {first!r} and {second!r}; front app: "
-                                                  f"{await desk.frontmost_app()}")
+    tabs = await desk.window_menu_titles("TextEdit")
+    print("TextEdit windows (Accessibility):", [w["title"] for w in wins], "| Window menu:", tabs)
+    titles = [w["title"] for w in wins] + tabs
+    assert first in titles and second in titles, (f"neither Accessibility nor the Window menu shows both: {titles}, "
+                                                  f"expected {first!r} and {second!r}")
     t = await _run(real_services, ("desktop.focus_window", {"app": "TextEdit", "title": first}))
     print(t.result["summary"])
     assert t.status is TaskStatus.COMPLETED and t.verified, t.result
