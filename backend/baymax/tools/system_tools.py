@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from ..coding.files import EditError, FileOps
@@ -12,6 +13,7 @@ from ..hostos.apps import AppInfo, resolve_app
 from ..hostos.sites import BROWSERS, resolve_destination, same_site
 from ..hostos.desktop import DesktopPermissionError, DesktopUnavailable
 from ..security.commands import CommandRejected, validate_command
+from ..security.user_files import check_user_file, user_files_root
 from ..security.policy import Risk
 from ..security.workspace import WorkspaceViolation
 from .base import Arg, Tool, ToolContext, ToolError, ToolResult, ToolUnavailable
@@ -152,6 +154,61 @@ def _spot(dp: Any, spot: str) -> tuple[float, float]:
     x = dp.x + CORNER_INSET if h == "left" else dp.x + dp.width - 1 - CORNER_INSET
     y = dp.y + CORNER_INSET if v == "top" else dp.y + dp.height - 1 - CORNER_INSET
     return x, y
+
+
+class FocusWindowTool(Tool):
+    name = "desktop.focus_window"
+    description = ("Bring one specific window of an app to the front, chosen by its title (or accessibility identifier). "
+                   "Asks when several windows match; never guesses.")
+    risk = Risk.MEDIUM
+    args = {"app": Arg("str", max_len=80), "title": Arg("str", False, default="", max_len=300),
+            "identifier": Arg("str", False, default="", max_len=200)}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        app, problem = await resolve_app_arg(ctx, args["app"], must_run=True)
+        if problem or app is None:
+            return problem or ToolResult(False, "Which app's window?", {"errorKind": "invalid_arguments"}, needs_clarification="Which app?")
+        proc = app.process or app.name
+        want_title, want_id = args.get("title", "").strip(), args.get("identifier", "").strip()
+        if not want_title and not want_id:
+            q = f"Which {app.name} window? Tell me its title."
+            return ToolResult(False, q, {"errorKind": "invalid_arguments"}, needs_clarification=q)
+        wins = await _desktop(d.list_windows(proc))
+        if not wins:
+            return ToolResult(False, f"{app.name} has no window I can see on this desktop.", {"errorKind": "not_found", "app": app.name})
+        if want_id:
+            matches = [w for w in wins if w["identifier"] and w["identifier"] == want_id]
+        else:
+            key = want_title.casefold()
+            matches = [w for w in wins if w["title"].casefold() == key] or [w for w in wins if key in w["title"].casefold()]
+        titles = [w["title"] or "(untitled)" for w in wins]
+        if not matches:
+            return ToolResult(False, f"{app.name} has no window matching “{want_title or want_id}”. Its windows: "
+                                     + "; ".join(f"“{t}”" for t in titles[:8]) + ".",
+                              {"errorKind": "not_found", "app": app.name, "windows": titles[:20]})
+        if len(matches) > 1:
+            listing = "; ".join(f"{n}. “{w['title'] or '(untitled)'}”" for n, w in enumerate(matches[:8], 1))
+            q = f"Several {app.name} windows match “{want_title or want_id}”: {listing}. Which one? Say its full title."
+            return ToolResult(False, q, {"errorKind": "ambiguous", "app": app.name, "windows": [w["title"] for w in matches[:8]]},
+                              needs_clarification=q)
+        w = matches[0]
+        ctx.checkpoint()
+        await _desktop(d.raise_window(proc, w["index"], w["title"]))  # refuses if that window's title changed meanwhile
+        # Re-check: the app is in front and its front window is the one asked for.
+        try:
+            front = await d.frontmost_app()
+            now = await d.list_windows(proc)
+        except DesktopUnavailable:
+            front, now = "", []
+        main = next((x for x in now if x["main"]), now[0] if now else None)
+        ok = front.lower() in (proc.lower(), app.name.lower()) and main is not None and main["title"] == w["title"]
+        data = {"app": app.name, "title": w["title"], "identifier": w["identifier"]}
+        if ok:
+            return ToolResult(True, f"Switched to the {app.name} window “{w['title']}”.", data, verified=True,
+                              verification="the app is frontmost and its main window has the requested title")
+        return ToolResult(True, f"I asked {app.name} to bring “{w['title']}” to the front, but I couldn't confirm it is the front window.",
+                          data, verified=False, verification="front window not confirmed after raising")
 
 
 class NewDocumentTool(Tool):
@@ -677,40 +734,83 @@ class ShortcutTool(Tool):
 
 class FindFileByNameTool(Tool):
     name = "files.find_by_name"
-    description = "Find files on this Mac by name with Spotlight (read-only), e.g. 'find the file named report.pdf'."
+    description = "Find files in your home folder by name with Spotlight (read-only), e.g. 'find the file named report.pdf'."
     risk = Risk.LOW
     args = {"name": Arg("str", max_len=200)}
+    outputs = {"path": "path"}  # only when exactly one file matches
 
     async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-        import os
-        import shutil
-
         name = args["name"].strip().strip("\"'“”")
         if not name or "/" in name or "\x00" in name:
             return ToolResult(False, "Which file name should I look for?", {"errorKind": "invalid_arguments"},
                               needs_clarification="Which file name should I look for?")
-        if shutil.which("mdfind") is None:
-            raise ToolUnavailable("file search by name uses macOS Spotlight (mdfind), which isn't available here")
-        proc = await asyncio.create_subprocess_exec("mdfind", "-name", name, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE)
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), 20)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise ToolError("Spotlight took too long") from None
-        paths = [p for p in out.decode(errors="replace").splitlines() if p and os.path.exists(p)][:20]
-        if not paths:
-            return ToolResult(False, f"Spotlight found no file named “{name}”.", {"errorKind": "not_found", "name": name})
-        exact = [p for p in paths if os.path.basename(p).lower() == name.lower()]
-        best = exact or paths
-        listing = "\n".join(best[:8])
-        return ToolResult(True, f"Found {len(best)} file{'s' if len(best) != 1 else ''} named “{name}”:\n{listing}",
-                          {"paths": best}, verified=True, verification="paths returned by Spotlight and checked to exist")
+        root = user_files_root()
+        found = await _desktop(ctx.services.desktop.find_files(name, root))
+        allowed = []
+        for p in found:  # existing regular files inside the permitted scope only (no ~/Library, no hidden folders)
+            resolved, _, _ = check_user_file(p)
+            if resolved is not None and str(resolved) not in allowed:
+                allowed.append(str(resolved))
+        if not allowed:
+            return ToolResult(False, f"I found no file named “{name}” in your home folder.", {"errorKind": "not_found", "name": name})
+        exact = [p for p in allowed if Path(p).name.lower() == name.lower()]
+        best = (exact or allowed)[:20]
+        data: dict[str, Any] = {"name": name, "paths": best}
+        if len(best) == 1:
+            data["path"] = best[0]
+            return ToolResult(True, f"Found one file named “{name}”: {best[0]}", data, verified=True,
+                              verification="path returned by Spotlight, resolved, and checked to exist in your home folder")
+        listing = "\n".join(f"{i}. {p}" for i, p in enumerate(best[:8], 1))
+        return ToolResult(True, f"Found {len(best)} files named “{name}”:\n{listing}", data, verified=True,
+                          verification="paths returned by Spotlight, resolved, and checked to exist in your home folder")
+
+
+class OpenFileTool(Tool):
+    name = "files.open"
+    description = "Open a file from your home folder (by full path) in its default app or a named app, and confirm it opened."
+    risk = Risk.MEDIUM
+    args = {"path": Arg("str", max_len=1024), "app": Arg("str", False, default="", max_len=80)}
+
+    async def run(self, ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+        d = ctx.services.desktop
+        path, kind, reason = check_user_file(args["path"])  # re-checked here: it may have moved since it was found
+        if path is None:
+            return ToolResult(False, f"I didn't open it: {reason}.", {"errorKind": {"stale": "not_found", "permission": "permission_denied"}
+                                                                      .get(kind, "invalid_arguments"), "path": args["path"]})
+        app_name = ""
+        if args.get("app"):
+            app, problem = await resolve_app_arg(ctx, args["app"], must_run=False)
+            if problem or app is None:
+                return problem or ToolResult(False, "Which app should open it?", {"errorKind": "invalid_arguments"})
+            app_name = app.name
+            await _desktop(d.open_path_in_app(app_name, path))
+        else:
+            await _desktop(d.open_path(path))
+        # Verify: the front window's document is this file, or a window titled with its name exists.
+        for _ in range(12):
+            await asyncio.sleep(0.25)
+            try:
+                doc = await d.front_document()
+            except DesktopUnavailable:
+                doc = None
+            if doc is not None and Path(doc).resolve() == path:
+                return ToolResult(True, f"Opened {path.name}.", {"path": str(path), "app": app_name}, verified=True,
+                                  verification="the front window's document is this file")
+            if app_name:
+                try:
+                    titles = await d.window_titles(app_name)
+                except DesktopUnavailable:
+                    titles = []
+                if any(t == path.name or t.startswith((path.name + " ", path.stem + " ")) for t in titles):
+                    return ToolResult(True, f"Opened {path.name} in {app_name}.", {"path": str(path), "app": app_name}, verified=True,
+                                      verification="a window titled with the file's name is open")
+        return ToolResult(True, f"Asked macOS to open {path.name}, but I couldn't confirm which window shows it.",
+                          {"path": str(path), "app": app_name}, verified=False, verification="no window confirmed showing the file")
 
 
 def all_system_tools() -> list[Tool]:
-    return [OpenAppTool(), OpenUrlTool(), NewDocumentTool(), MoveCursorTool(), ClickTool(), ScrollTool(), TypeTextTool(), ListElementsTool(), PressElementTool(),
-            RunningAppsTool(), ShortcutTool(), FindFileByNameTool(),
+    return [OpenAppTool(), OpenUrlTool(), NewDocumentTool(), FocusWindowTool(), MoveCursorTool(), ClickTool(), ScrollTool(), TypeTextTool(), ListElementsTool(), PressElementTool(),
+            RunningAppsTool(), ShortcutTool(), FindFileByNameTool(), OpenFileTool(),
             ReadWindowTool(), ScreenshotTool(), ListFilesTool(), ReadFileTool(), WriteFileTool(), SearchFilesTool(), DeleteFileTool(),
             RunCommandTool(), SendMailTool(), HardwareStatusTool(), FlashFirmwareTool()]
 

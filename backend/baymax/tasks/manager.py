@@ -19,7 +19,9 @@ from ..character.state_machine import CharacterEvent
 from ..security.estop import EmergencyStopEngaged
 from ..security.policy import ActionRequest, Decision, Policy, Risk
 from ..tools.base import ArgumentError, ToolContext, ToolError, ToolResult
+from . import preflight
 from .models import PlanStep, Task, TaskStatus
+from .refs import RefFailure, refs_in, resolve
 
 MAX_ATTEMPTS = 2  # one retry for transient failures; identical failures are never repeated more than this
 RETRY_DELAY_S = 1.0
@@ -174,7 +176,19 @@ class TaskManager:
                         self._event(task, "stopped", {"step": step.title, "reason": stop.summary[:300]})
                         self._finish(task, TaskStatus.FAILED, stop, error=stop.summary)
                         return
-                    result = await self._run_step(task, step)
+                    args: dict[str, Any] | None = None
+                    if refs_in(step.args):
+                        got = resolve(step.args, results, [st.title for st in task.plan], self.s.tools, [st.tool for st in task.plan])
+                        if isinstance(got, RefFailure):
+                            step.status = "skipped"
+                            task.error_kind = got.kind
+                            stop = got.result()
+                            self._event(task, "stopped", {"step": step.title, "reason": got.message[:300]})
+                            self._finish(task, TaskStatus.FAILED, stop, error=stop.needs_clarification or stop.summary,
+                                         char=CharacterEvent.CLARIFICATION_NEEDED if stop.needs_clarification else None)
+                            return
+                        args = got
+                    result = await self._run_step(task, step, args)
                     attempts = 1
                     # Bounded recovery: only results the tool marked as transient, at most MAX_ATTEMPTS, never for
                     # actions that need approval (an approval covers one execution).
@@ -185,7 +199,7 @@ class TaskManager:
                             raise asyncio.CancelledError()
                         attempts += 1
                         self._event(task, "retry", {"step": step.title, "attempt": attempts, "reason": result.summary[:200]})
-                        result = await self._run_step(task, step)
+                        result = await self._run_step(task, step, args)
                     results.append(result)
                     if not result.ok:
                         step.status = "failed"
@@ -220,11 +234,11 @@ class TaskManager:
         finally:
             self._runners.pop(task.id, None)
 
-    async def _run_step(self, task: Task, step: PlanStep) -> ToolResult:
+    async def _run_step(self, task: Task, step: PlanStep, resolved: dict[str, Any] | None = None) -> ToolResult:
         tool = self.s.tools.get(step.tool)
         if tool is None:
             raise ToolError(f"unknown tool {step.tool!r}")
-        args = tool.validate(step.args)
+        args = tool.validate(resolved if resolved is not None else step.args)  # references already substituted + re-checked
         risk, cats = tool.classify(args)
         req = ActionRequest(tool=tool.name, args=args, risk=risk, categories=cats, source=task.source)
         decision = self.s.policy.evaluate(req)
@@ -255,6 +269,12 @@ class TaskManager:
         ctx = ToolContext(services=self.s, task_id=task.id, source=task.source,
                           progress=lambda frac, text: self._progress(task, frac, text),
                           is_cancelled=lambda: task.cancel_requested)
+        # Right before acting: is the Mac unlocked and awake, and is the target app free of blocking dialogs?
+        blocked = await preflight.check(self.s, tool, args, step_title=step.title,
+                                        progress=lambda text: self._progress(task, None, text), checkpoint=ctx.checkpoint)
+        if blocked is not None:
+            self._event(task, "preflight", {"step": step.title, "reason": blocked.summary[:300]})
+            return blocked
         timeout = tool.timeout_s or 300.0
         try:
             result = await asyncio.wait_for(tool.run(ctx, args), timeout)

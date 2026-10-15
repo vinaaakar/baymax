@@ -136,6 +136,13 @@ class DesktopBackend:
     async def open_path_in_app(self, app: str, path: Path) -> None: raise DesktopUnavailable(self._why())
     async def window_titles(self, app: str) -> list[str]: raise DesktopUnavailable(self._why())
     async def new_document(self, app: str) -> str: raise DesktopUnavailable(self._why())
+    async def find_files(self, name: str, root: Path) -> list[str]: raise DesktopUnavailable(self._why())
+    async def open_path(self, path: Path) -> None: raise DesktopUnavailable(self._why())
+    async def session_state(self) -> dict[str, str]: raise DesktopUnavailable(self._why())
+    async def wake_display(self) -> None: raise DesktopUnavailable(self._why())
+    async def modal_dialogs(self, app: str) -> list[dict[str, str]]: raise DesktopUnavailable(self._why())
+    async def list_windows(self, app: str) -> list[dict[str, Any]]: raise DesktopUnavailable(self._why())
+    async def raise_window(self, app: str, index: int, title: str) -> None: raise DesktopUnavailable(self._why())
     async def clipboard_text(self) -> str: raise DesktopUnavailable(self._why())
     async def front_document(self) -> Path | None: raise DesktopUnavailable(self._why())
     # Screen understanding (baymax.screen): real geometry only, never guessed.
@@ -162,6 +169,41 @@ class UnsupportedDesktop(DesktopBackend):
 def drop_inside(elements: list[ScreenElement], frames: list[tuple[float, float, float, float]]) -> list[ScreenElement]:
     """Elements whose centre is not inside any of the frames (x, y, w, h) - used to ignore BAYMAX's own windows."""
     return [e for e in elements if not any(x <= e.center[0] <= x + w and y <= e.center[1] <= y + h for x, y, w, h in frames)]
+
+
+_SYSTEM_PROMPT_KIND = {"SecurityAgent": "authentication", "UserNotificationCenter": "system_prompt",
+                       "CoreServicesUIAgent": "system_prompt"}
+
+
+def parse_modal_line(line: str) -> dict[str, str] | None:
+    """One _AS_MODALS line -> {kind, app, window, title, buttons}. kind: sheet | dialog | save_dialog | open_dialog |
+    authentication | system_prompt (save/open guessed from the panel's own button names, never clicked)."""
+    parts = line.split("\t")
+    if len(parts) < 5 or parts[0] not in ("sheet", "dialog", "system"):
+        return None
+    raw, app, window, title, buttons = (p.strip() for p in parts[:5])
+    names = [b for b in buttons.split("|") if b]
+    if raw == "system":
+        kind = _SYSTEM_PROMPT_KIND.get(app, "system_prompt")
+    elif any(b.lower() in ("save", "export") for b in names):
+        kind = "save_dialog"
+    elif any(b.lower() in ("open", "choose") for b in names):
+        kind = "open_dialog"
+    else:
+        kind = raw
+    return {"kind": kind, "app": app, "window": window, "title": title, "buttons": ", ".join(names[:6])}
+
+
+def parse_window_lines(out: str) -> list[dict[str, Any]]:
+    wins = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6 or not parts[0].strip().isdigit():
+            continue
+        wins.append({"index": int(parts[0]), "title": parts[1].strip(), "subrole": parts[2].strip(),
+                     "identifier": "" if parts[3].strip() == "missing value" else parts[3].strip(),
+                     "main": parts[4].strip() == "true", "minimized": parts[5].strip() == "true"})
+    return wins
 
 
 def parse_window_header(dump: str) -> dict[str, Any] | None:
@@ -623,6 +665,145 @@ _AS_FOCUSED_TEXT = """on run argv
   end tell
 end run"""
 
+# Sheets / dialogs of one app plus system prompt processes. Line: kind TAB process TAB window TAB title TAB buttons.
+_AS_MODALS = """on run argv
+  set appName to item 1 of argv
+  set out to ""
+  tell application "System Events"
+    set procNames to {appName, "SecurityAgent", "UserNotificationCenter", "CoreServicesUIAgent"}
+    repeat with pn in procNames
+      set pname to contents of pn
+      if exists process pname then
+        set ws to {}
+        try
+          set ws to windows of process pname
+        end try
+        repeat with w in ws
+          set wt to ""
+          set sr to ""
+          try
+            set wt to my oneLine(name of w as text)
+          end try
+          try
+            set sr to subrole of w as text
+          end try
+          if pname is not appName then
+            set out to out & "system" & tab & pname & tab & wt & tab & wt & tab & my buttonNames(w) & linefeed
+          else if sr is in {"AXDialog", "AXSystemDialog"} then
+            set out to out & "dialog" & tab & pname & tab & wt & tab & wt & tab & my buttonNames(w) & linefeed
+          end if
+          set shs to {}
+          try
+            set shs to sheets of w
+          end try
+          repeat with sh in shs
+            set st to ""
+            try
+              set st to my oneLine(description of sh as text)
+            end try
+            set out to out & "sheet" & tab & pname & tab & wt & tab & st & tab & my buttonNames(sh) & linefeed
+          end repeat
+        end repeat
+      end if
+    end repeat
+  end tell
+  return out
+end run
+
+on buttonNames(el)
+  set names to ""
+  tell application "System Events"
+    try
+      set bs to buttons of el
+      repeat with b in bs
+        try
+          set names to names & (name of b as text) & "|"
+        end try
+      end repeat
+    end try
+  end tell
+  return my oneLine(names)
+end buttonNames
+
+on oneLine(t)
+  set AppleScript's text item delimiters to {tab, return, linefeed}
+  set parts to text items of t
+  set AppleScript's text item delimiters to " "
+  set t to parts as text
+  set AppleScript's text item delimiters to ""
+  if length of t > 200 then set t to text 1 thru 200 of t
+  return t
+end oneLine"""
+
+# Windows of an app. Line: index TAB title TAB subrole TAB identifier TAB main TAB minimized.
+_AS_WINDOWS = """on run argv
+  set out to ""
+  tell application "System Events"
+    tell process (item 1 of argv)
+      set n to count of windows
+      repeat with i from 1 to n
+        set w to window i
+        set wt to ""
+        set sr to ""
+        set idt to ""
+        set mn to ""
+        set mi to ""
+        try
+          set wt to my oneLine(name of w as text)
+        end try
+        try
+          set sr to subrole of w as text
+        end try
+        try
+          set idt to my oneLine(value of attribute "AXIdentifier" of w as text)
+        end try
+        try
+          set mn to (value of attribute "AXMain" of w) as text
+        end try
+        try
+          set mi to (value of attribute "AXMinimized" of w) as text
+        end try
+        set out to out & i & tab & wt & tab & sr & tab & idt & tab & mn & tab & mi & linefeed
+      end repeat
+    end tell
+  end tell
+  return out
+end run
+
+on oneLine(t)
+  set AppleScript's text item delimiters to {tab, return, linefeed}
+  set parts to text items of t
+  set AppleScript's text item delimiters to " "
+  set t to parts as text
+  set AppleScript's text item delimiters to ""
+  if length of t > 300 then set t to text 1 thru 300 of t
+  return t
+end oneLine"""
+
+# Raise window i of an app if (and only if) it still has the expected title; un-minimise it first.
+_AS_RAISE_WINDOW = """on run argv
+  set appName to item 1 of argv
+  set idx to (item 2 of argv) as integer
+  set expected to item 3 of argv
+  try
+    tell application "System Events" to set bid to bundle identifier of process appName
+    tell application id bid to activate
+  end try
+  tell application "System Events"
+    tell process appName
+      if (count of windows) < idx then error "element not found: window gone" number 1404
+      set w to window idx
+      if (name of w as text) is not expected then error "window changed" number 1405
+      try
+        if (value of attribute "AXMinimized" of w) is true then set value of attribute "AXMinimized" of w to false
+      end try
+      perform action "AXRaise" of w
+      set frontmost to true
+    end tell
+  end tell
+  return "ok"
+end run"""
+
 _AS_RETURN = """on run argv
   set appName to item 1 of argv
   tell application "System Events"
@@ -854,6 +1035,8 @@ class MacDesktop(DesktopBackend):
             if "-1728" in err and "process" in err:
                 m = re.search(r'process "([^"]*)"', err)
                 raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
+            if re.search(r"\(1405\)", err) or "window changed" in err:
+                raise DesktopUnavailable("that window changed (its title is now different), so I didn't switch to it")
             if re.search(r"\(1404\)", err) or "element not found" in err:
                 raise DesktopUnavailable("the requested interface element was not found (the app may not expose accessibility info)")
             log.warning("AppleScript failed: %s", err.strip()[-500:])  # full detail for developers, not the chat
@@ -1021,6 +1204,65 @@ class MacDesktop(DesktopBackend):
         res = await self.p.run(["open", "-a", app, str(path)], timeout=20)
         if not res.ok:
             raise DesktopUnavailable(f"could not open {path.name} in {app}: {res.stderr.strip()[-200:] or 'application not found'}")
+
+    async def session_state(self) -> dict[str, str]:
+        """Login-session and display state from the window server (CGSessionCopyCurrentDictionary, CGDisplayIsAsleep).
+        state: available | locked | display_asleep | unknown. Read-only; nothing is unlocked or bypassed."""
+        Q = self._quartz
+        if Q is None or not hasattr(Q, "CGSessionCopyCurrentDictionary"):
+            return {"state": "unknown", "detail": "PyObjC Quartz is missing, so I can't tell whether the Mac is locked"}
+        info = Q.CGSessionCopyCurrentDictionary()
+        if info is None:
+            return {"state": "unknown", "detail": "no login session is visible to BAYMAX (is it running outside your user session?)"}
+        if not bool(info.get("kCGSSessionOnConsoleKey", True)):
+            return {"state": "locked", "detail": "another user's session is on screen"}
+        if bool(info.get("CGSSessionScreenIsLocked", False)):
+            return {"state": "locked", "detail": "the lock screen is showing"}
+        try:
+            asleep = bool(Q.CGDisplayIsAsleep(Q.CGMainDisplayID()))
+        except Exception as exc:  # noqa: BLE001 - report, don't guess
+            return {"state": "unknown", "detail": f"couldn't read whether the display is asleep ({exc.__class__.__name__})"}
+        if asleep:
+            return {"state": "display_asleep", "detail": "the display is asleep"}
+        return {"state": "available", "detail": "session unlocked and display awake"}
+
+    async def wake_display(self) -> None:
+        """A normal user-activity assertion (`caffeinate -u -t 2`): turns a sleeping display on. It cannot unlock."""
+        res = await self.p.run(["caffeinate", "-u", "-t", "2"], timeout=6)
+        if not res.ok:
+            raise DesktopUnavailable("macOS didn't accept the wake signal")
+
+    async def modal_dialogs(self, app: str) -> list[dict[str, str]]:
+        """Blocking UI: sheets and dialog windows of `app`, plus windows of macOS's authentication / system-prompt
+        processes. Each: kind, app, window, title, buttons (button names, for the user's information only)."""
+        app = validate_app_name(app)
+        out = await self._osascript(_AS_MODALS, app, timeout=12)
+        return [m for m in (parse_modal_line(ln) for ln in out.splitlines()) if m]
+
+    async def list_windows(self, app: str) -> list[dict[str, Any]]:
+        app = validate_app_name(app)
+        out = await self._osascript(_AS_WINDOWS, app, timeout=12)
+        return parse_window_lines(out)
+
+    async def raise_window(self, app: str, index: int, title: str) -> None:
+        """Bring window `index` of `app` to the front - only if it still has `title` (it may have changed)."""
+        app = validate_app_name(app)
+        await self._osascript(_AS_RAISE_WINDOW, app, str(int(index)), title, timeout=12)
+
+    async def find_files(self, name: str, root: Path) -> list[str]:
+        """Spotlight file-name search limited to `root` (read-only)."""
+        if not shutil.which("mdfind"):
+            raise DesktopUnavailable("file search by name uses macOS Spotlight (mdfind), which isn't available here")
+        res = await self.p.run(["mdfind", "-onlyin", str(root), "-name", name], timeout=20)
+        if not res.ok:
+            raise DesktopUnavailable(f"Spotlight search failed: {res.stderr.strip()[-200:] or 'unknown error'}")
+        return [ln for ln in res.stdout.splitlines() if ln][:50]
+
+    async def open_path(self, path: Path) -> None:
+        """Open a file with its default app (`open <path>`; the path is an argument, never shell text)."""
+        res = await self.p.run(["open", str(path)], timeout=20)
+        if not res.ok:
+            raise DesktopUnavailable(f"macOS could not open {path.name}: {res.stderr.strip()[-200:] or 'no app for this file'}")
 
     async def new_document(self, app: str) -> str:
         app = validate_app_name(app)

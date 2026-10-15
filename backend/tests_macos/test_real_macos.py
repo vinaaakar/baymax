@@ -372,3 +372,71 @@ async def test_type_text_tool_is_verified_only_by_reading_the_field_back(desk, r
     print(t.result["summary"], "|", t.result.get("verification"))
     assert t.status is TaskStatus.COMPLETED and t.verified, t.result
     assert t.result["verification"] == "typed text read back from the focused field"
+
+
+# ------------------------------------------------------------------ Phase 2 (real Mac)
+async def test_session_state_is_available_while_you_are_using_the_mac(desk):
+    st = await desk.session_state()
+    print("session state:", st)
+    assert st["state"] == "available", st
+
+
+async def test_focus_a_textedit_window_by_title(desk, real_services):
+    """Two new TextEdit documents; the tool brings the first one back to the front by its title. Close both WITHOUT saving."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    first, _, _ = await _fresh_textedit_document(desk)
+    second, _, _ = await _fresh_textedit_document(desk)
+    wins = await desk.list_windows("TextEdit")
+    print("TextEdit windows:", [w["title"] for w in wins])
+    assert any(w["title"] == first for w in wins) and any(w["title"] == second for w in wins)
+    t = await _run(real_services, ("desktop.focus_window", {"app": "TextEdit", "title": first}))
+    print(t.result["summary"])
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+
+
+async def test_a_real_save_sheet_is_detected_and_left_alone(desk):
+    """⌘S on a new TextEdit document opens the Save sheet; BAYMAX must report it (it never clicks it). The test then
+    presses Escape itself to close the sheet. Close the document WITHOUT saving afterwards."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    await _fresh_textedit_document(desk)
+    await desk.press_keys("TextEdit", "s", ("command",))
+    modals = []
+    for _ in range(10):
+        await asyncio.sleep(0.5)
+        modals = await desk.modal_dialogs("TextEdit")
+        if modals:
+            break
+    print("dialogs:", modals)
+    await desk.press_keys("TextEdit", "escape")  # test clean-up (not BAYMAX acting on the dialog)
+    assert modals and modals[0]["kind"] in ("save_dialog", "sheet"), modals
+
+
+async def test_find_a_unique_file_and_open_it_through_a_reference(desk, real_services):
+    """A temporary file in ~/Documents is found by Spotlight and opened by the plan's second step through a verified
+    reference. Spotlight may need a few seconds to index it. The file is deleted afterwards."""
+    import uuid
+    from pathlib import Path
+
+    from baymax.tasks.models import PlanStep, TaskStatus
+
+    name = f"baymax-phase2-{uuid.uuid4().hex[:8]}.txt"
+    path = Path.home() / "Documents" / name
+    path.write_text("BAYMAX phase 2 reference test\n")
+    try:
+        for _ in range(30):  # wait for Spotlight to index the new file
+            if await desk.find_files(name, Path.home()):
+                break
+            await asyncio.sleep(1)
+        task = real_services.tasks.submit("t", "t", "t", [PlanStep("find", "files.find_by_name", {"name": name}),
+                                                          PlanStep("open", "files.open", {"path": {"$from": 0, "output": "path"},
+                                                                                          "app": "TextEdit"})])
+        t = await real_services.tasks.wait(task.id, 60)
+        print([s.status for s in t.plan], t.result["summary"] if t.result else t.error)
+        assert t.status is TaskStatus.COMPLETED, t.result or t.error
+        assert t.plan[0].status == "done" and t.plan[1].status == "done"
+    finally:
+        path.unlink(missing_ok=True)

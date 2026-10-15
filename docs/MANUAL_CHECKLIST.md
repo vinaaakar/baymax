@@ -164,3 +164,20 @@ Then type these into BAYMAX and check the result:
 | Ask twice quickly for two different buttons | the phone shows the second one (older events arriving late are dropped) |
 | Turn Wi-Fi off on the phone, ask BAYMAX to point, then turn Wi-Fi back on after 10 s | the phone does NOT replay the old point after reconnecting |
 | Press STOP while pointing | the indicator clears on both screens |
+
+### Phase 2 — workflows and desktop state (real Mac + iPhone)
+
+Run first: `cd backend && BAYMAX_MACOS_INTEGRATION=1 .venv/bin/python -m pytest -v tests_macos` (20 tests; close TextEdit test
+documents without saving). Then, from the iPhone with BAYMAX running the current build (Settings → Mac → Backend build):
+
+| # | Do | Expect |
+|---|---|---|
+| 1 | Put one file `phase2-check.txt` in ~/Documents; say `Find the file named phase2-check.txt and open it` | found, then opened; result verified |
+| 2 | Copy it to ~/Desktop too; say the same | “Several files match … Which one?” with both paths; nothing opens. Reply `number 2` → the Desktop copy opens |
+| 3 | Say `find the file named phase2-check.txt and open it`, then delete the file before step 2 is reached (or use a name that doesn't exist) | stops; open never runs; the reason is on the phone |
+| 4 | Lock the Mac (⌃⌘Q), then from the iPhone say `open Safari` | phone shows “Waiting for you to unlock the Mac…”; unlock within 60 s → Safari opens; stay locked → “Your Mac is locked … Unlock it yourself” |
+| 5 | Let the display sleep (`pmset displaysleepnow` in Terminal), then `open Safari` from the iPhone | display wakes; if the lock screen appears, the task waits / stops as in 4. It never unlocks |
+| 6 | Open two TextEdit documents; say `switch to the Untitled window in TextEdit` | asks which one when titles match several; with the full title, that window comes to the front |
+| 7 | In TextEdit press ⌘S (Save sheet open), then say `type "hi" into the text area in TextEdit` | “TextEdit is showing a Save dialog … I don't click dialog buttons”; cancel the sheet within 60 s → typing continues |
+| 8 | Check the iPhone for each of the above | the same reason the Mac shows; final status matches |
+| 9 | Press STOP while step 4 is waiting | task cancelled; nothing runs |

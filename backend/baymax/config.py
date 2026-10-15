@@ -95,6 +95,10 @@ class SecurityConfig:
     hardware_control_enabled: bool = False
     # Pause between typed chunks of up to 10 characters (typing cadence). 0 = as fast as macOS accepts.
     typing_interval_ms: int = 12
+    # Before a desktop step: wake a sleeping display with a normal user-activity signal (caffeinate -u). Never unlocks.
+    wake_display_for_tasks: bool = True
+    # How long a desktop step waits for you to unlock the Mac or handle a blocking dialog before stopping.
+    desktop_wait_s: int = 60
 
 
 @dataclass

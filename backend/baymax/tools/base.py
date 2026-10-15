@@ -106,6 +106,10 @@ class Tool:
     timeout_s: float = 0.0
     verification: str = ""
     recovery: str = ""
+    # Structured result fields a later plan step may reference ({"$from": step, "output": name}); name -> type.
+    # Types: "path" (an absolute file path, re-checked before use) | "str". Present in ToolResult.data only when the
+    # tool actually established them (e.g. exactly one file matched).
+    outputs: dict[str, str] = {}
 
     def validate(self, args: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(args, dict):

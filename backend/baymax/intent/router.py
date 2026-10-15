@@ -138,6 +138,9 @@ class IntentRouter:
             return Intent("tool", "desktop.shortcut", {"action": action, "app": _title(m.group(2)) if m.group(2) else ""},
                           f"Press ⌘{m.group(1).upper()}", raw)
 
+        # ---- "find the file named X and open it": a two-step plan (split_compound wires the found path into the open step)
+        if re.match(r"^(?:find|locate|search for)\s+.+?\s+(?:and\s+then|and|then)\s+open\s+(?:it|that|the file|that file)\b", t):
+            return Intent("chat", text=raw)
         # ---- files by name (Spotlight) and documentation lookups (web research)
         m = re.match(r"^(?:find|locate|where is|search for)\s+(?:the\s+|my\s+)?file\s+(?:named|called)\s+[\"“']?(.+?)[\"”']?$", t) \
             or re.match(r"^(?:find|locate|where is)\s+(?:the\s+|my\s+)?([\w .-]+\.(?:pdf|docx?|xlsx?|pptx?|txt|md|csv|zip|png|jpe?g|key|pages|numbers|swift|py|java|js|ts))$", t)
@@ -357,6 +360,14 @@ class IntentRouter:
                 and not re.search(r"\bscreenshot\b", t):
             return Intent("tool", "desktop.read_window", {}, "Read the current window", raw)
 
+        # ---- a specific window of an app: "switch to the Budget window in Numbers", "bring up the window called X in Safari"
+        m = re.match(r"^(?:switch to|go to|bring up|bring forward|show|focus(?: on)?|open)\s+(?:the\s+)?(?:window\s+(?:called|named|titled)\s+"
+                     r"[\"“']?(?P<a>.+?)[\"”']?|[\"“']?(?P<b>.+?)[\"”']?\s+window)\s+(?:in|of|from)\s+(?:the\s+)?(?P<app>.+?)(?:\s+app)?$", t)
+        if m:
+            title = _exact_tail(raw, (m.group("a") or m.group("b")).strip()).strip("\"“”'")
+            return Intent("tool", "desktop.focus_window", {"app": _title(m.group("app")), "title": title},
+                          f"Switch to the {title} window"[:120], raw)
+
         # ---- switch apps; "read it" reads the window in front
         m = re.match(r"^(?:switch|go back|change|swap|flip)\s+(?:over\s+|back\s+)?to\s+(?:the\s+)?(.+?)(?:\s+(?:app|application|window))?$", t)
         if m and len(m.group(1)) <= 40:
@@ -479,7 +490,15 @@ def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" 
     parts = [p for p in parts if p]
     if not 2 <= len(parts) <= 4:
         return None
-    intents = [router.route(p, ctx) for p in parts]
+    intents = [_open_found_file(p) or router.route(p, ctx) for p in parts]
+    for n in range(1, len(intents)):  # "find the file named X and open it": the path found in the previous step
+        if intents[n].tool == "files.open" and intents[n].args.get("path") == _PREVIOUS:
+            if intents[n - 1].tool != "files.find_by_name":
+                return None
+            intents[n].args = {**intents[n].args, "path": {"$from": n - 1, "output": "path"}}
+            intents[n].depends_on_previous = True
+    if any(i.tool == "files.open" and i.args.get("path") == _PREVIOUS for i in intents):
+        return None
     if all(i.kind == "tool" and i.tool for i in intents):
         for prev, cur in zip(intents, intents[1:]):  # "switch to TextEdit and read it": "it" is the app just opened
             if cur.tool in ("desktop.read_window", "screen.type_into") and not cur.args.get("app") \
@@ -488,6 +507,21 @@ def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" 
                 cur.depends_on_previous = True  # "it" = what the previous step opened or created
         return intents
     return None
+
+
+_PREVIOUS = "\u0000previous-result\u0000"
+
+
+def _open_found_file(part: str) -> Intent | None:
+    """"open it" / "open it in Preview" right after a file search: open the file that search found (wired up by
+    split_compound as a reference to the previous step's verified path)."""
+    m = re.match(r"^(?:and\s+)?(?:then\s+)?open\s+(?:it|that|the file|that file)(?:\s+(?:in|with)\s+(.+?))?\s*[.!]?$", part.strip(), re.IGNORECASE)
+    if not m:
+        return None
+    args: dict[str, Any] = {"path": _PREVIOUS}
+    if m.group(1):
+        args["app"] = _title(m.group(1).strip())
+    return Intent("tool", "files.open", args, "Open the file found", part)
 
 
 # Words that make an "open …" phrase a task rather than an app name.

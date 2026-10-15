@@ -49,6 +49,12 @@ class FakeDesktop(DesktopBackend):
         self.field_raw: dict[tuple, str] = {}  # exact text typed into each field (line breaks preserved)
         self.after_open = None  # test hook, e.g. engage Emergency Stop while a plan is running
         self.ax_after_submit: dict[str, str] = {}
+        self.files: list[str] | None = None  # Spotlight results (None: Spotlight unavailable, like Linux)
+        self.open_shows_document = True
+        self.session = {"state": "available", "detail": "session active, display awake"}
+        self.after_wake = {"state": "available", "detail": "display woke"}
+        self.modals: list[dict] | Exception = []
+        self.windows: dict[str, list[dict]] = {}
 
     def capabilities(self):
         return {"platform": "fake", "available": True, "accessibilityTrusted": self.accessibility}
@@ -117,6 +123,47 @@ class FakeDesktop(DesktopBackend):
         self._need_ax()
         return self.field_raw.get((app, role, round(x), round(y)), "")
 
+    async def find_files(self, name, root):
+        self.calls.append(("find_files", name))
+        if self.files is None:
+            raise DesktopUnavailable("file search by name uses macOS Spotlight (mdfind), which isn't available here")
+        return [p for p in self.files if name.lower() in p.rsplit("/", 1)[-1].lower()]
+
+    async def open_path(self, path):
+        self.calls.append(("open_path", "default", str(path)))
+        if self.open_shows_document:
+            self.document = path
+
+    async def session_state(self):
+        self.calls.append(("session_state",))
+        return dict(self.session)
+
+    async def wake_display(self):
+        self.calls.append(("wake_display",))
+        if self.session.get("state") == "display_asleep":
+            self.session = dict(self.after_wake)
+
+    async def modal_dialogs(self, app):
+        self.calls.append(("modal_dialogs", app))
+        if isinstance(self.modals, Exception):
+            raise self.modals
+        return [m for m in self.modals if m.get("app") == app or m.get("kind") in ("authentication", "system_prompt")]
+
+    async def list_windows(self, app):
+        self._need_ax()
+        self.calls.append(("list_windows", app))
+        return [dict(w) for w in self.windows.get(app, [])]
+
+    async def raise_window(self, app, index, title):
+        self._need_ax()
+        self.calls.append(("raise_window", app, index, title))
+        wins = self.windows.get(app, [])
+        if index > len(wins):
+            raise DesktopUnavailable("the requested interface element was not found")
+        if wins[index - 1]["title"] != title:
+            raise DesktopUnavailable("that window changed (its title is now different), so I didn't switch to it")
+        self.front, self.window_title = app, title
+
     async def focused_text(self, app):
         self._need_ax()
         if app not in self.focused:
@@ -175,6 +222,8 @@ class FakeDesktop(DesktopBackend):
 
     async def open_path_in_app(self, app, path):
         self.calls.append(("open_path", app, str(path)))
+        if self.open_shows_document:
+            self.document = path
         self.running.add(app)
         self.front = app
         self.titles[app] = [f"{path.name} — {app}"]

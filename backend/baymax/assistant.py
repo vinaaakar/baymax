@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,7 @@ from .capabilities import capability_report, capability_text
 from .intent import trace as rtrace
 from .hostos.sites import browser_named_in, ground_destination
 from .buildinfo import build_status
+from .tasks.refs import check_plan, is_ref, literal_path
 from .intent.relevance import request_mode, tool_is_relevant
 from .intent.router import LAST_DRAFT, Intent, IntentRouter, RouteContext, parse_model_proposal, split_compound
 from .llm.ollama import LLMError, LLMUnavailable
@@ -152,6 +154,63 @@ class Assistant:
             self._speak(text)  # phones speak locally with their own TTS
         return msg
 
+    # ---------------------------------------------------------- "which file?" follow-ups
+    def _remember_file_choice(self, task: Any, origin: Origin) -> None:
+        """A plan stopped because several files matched: keep the remaining steps and the candidates (5 minutes) so the
+        user's answer ("number 2") resumes them with that file. Never guessed; the answer is re-checked."""
+        res = (task.result or {}) if task else {}
+        data = res.get("data") or {}
+        if data.get("errorKind") != "ambiguous_reference" or not data.get("candidates"):
+            return
+        k = next((n for n, st in enumerate(task.plan) if st.status == "skipped"), None)
+        j = data.get("fromStep")
+        if k is None or not isinstance(j, int):
+            return
+        rest = [(st.title, st.tool, dict(st.args)) for st in task.plan[k:]]
+        for _, _, args in rest:  # only references to the ambiguous step (or to later steps) can be carried over
+            if any(is_ref(v) and v.get("$from") != j and v.get("$from", -1) < k for v in args.values()):
+                return
+        self._file_choice = {"candidates": list(data["candidates"]), "from": j, "start": k, "steps": rest,
+                             "expires": time.monotonic() + 300, "source": origin.source}
+
+    async def _answer_file_choice(self, text: str, origin: Origin) -> dict[str, Any] | None:
+        pending = getattr(self, "_file_choice", None)
+        if not pending or time.monotonic() > pending["expires"] or origin.source != pending["source"]:
+            return None
+        t = " ".join(text.lower().split()).strip(" .!?")
+        if t in ("cancel", "none", "neither", "never mind", "nevermind", "stop"):
+            self._file_choice = None
+            return {"ok": True, "message": self._reply("OK, I won't use any of those files.", origin)}
+        words = {"one": 1, "first": 1, "two": 2, "second": 2, "three": 3, "third": 3, "four": 4, "fourth": 4, "five": 5,
+                 "fifth": 5, "six": 6, "sixth": 6, "seven": 7, "seventh": 7, "eight": 8, "eighth": 8}
+        cands = pending["candidates"]
+        m = re.fullmatch(r"(?:(?:use|open|pick|choose)\s+)?(?:the\s+)?(?:number\s+|no\.?\s*|#)?(\d+|[a-z]+)(?:\s+(?:one|file))?", t)
+        n = None
+        if m:
+            g = m.group(1)
+            n = int(g) if g.isdigit() else words.get(g)
+        chosen = cands[n - 1] if n and 1 <= n <= len(cands) else next((c for c in cands if c.lower() == text.strip().lower()), None)
+        if chosen is None:
+            return None  # not an answer to the question: handle as a new request
+        self._file_choice = None
+        path = literal_path(chosen)  # re-checked: it may have moved or changed since it was listed
+        if path is None:
+            return {"ok": False, "message": self._reply("That file is no longer available (moved, deleted or outside your home "
+                                                        "folder), so I didn't use it.", origin)}
+        j, k = pending["from"], pending["start"]
+        steps = []
+        for title, tool, args in pending["steps"]:
+            new = {}
+            for key, v in args.items():
+                if is_ref(v) and v.get("$from") == j:
+                    new[key] = path
+                elif is_ref(v):
+                    new[key] = {**v, "$from": v["$from"] - k}
+                else:
+                    new[key] = v
+            steps.append(Intent("tool", tool, new, title, text=text))
+        return await self._start_plan(steps, text, origin)
+
     def _warn_if_outdated(self) -> None:
         """Tell the user (Mac and iPhone) once per outdated build that this backend runs older code than what is on
         disk, so test results are not mistaken for the current version."""
@@ -195,6 +254,9 @@ class Assistant:
         if not text:
             return {"ok": False, "error": "empty"}
         origin = Origin(source, speak if speak is not None else source in ("voice",))
+        choice = await self._answer_file_choice(text, origin)
+        if choice is not None:
+            return choice
         intent = self.router.route(text, RouteContext(active_model=self.active_model))
         plan = None
         if intent.kind == "chat" and not intent.reply or (intent.tool == "apps.open" and re.search(r"\b(and|then)\b", str(intent.args.get("app", "")).lower())):
@@ -361,17 +423,16 @@ class Assistant:
         task stops at the first step that fails (later steps never run on a broken state)."""
         s = self.s
         rtrace.stage("tool_selection", "ok", "plan: " + " → ".join(i.tool or "" for i in steps))
-        plan: list[PlanStep] = []
-        for i in steps:
-            tool = s.tools.get(i.tool or "")
-            try:
-                clean = tool.validate(i.args) if tool else None
-            except ArgumentError as exc:
-                rtrace.stage("argument_validation", "rejected", str(exc))
-                return {"ok": True, "message": self._reply(friendly_argument_error(tool, exc), origin)}
-            if tool is None:
-                return {"ok": False, "message": self._reply("I can't do one of those steps yet.", origin)}
-            plan.append(PlanStep(i.title or tool.name, tool.name, clean, depends_on_previous=i.depends_on_previous))
+        if any(s.tools.get(i.tool or "") is None for i in steps):
+            return {"ok": False, "message": self._reply("I can't do one of those steps yet.", origin)}
+        try:  # every step's arguments, including references to earlier steps' outputs (tasks/refs.py)
+            cleaned = check_plan([(i.tool or "", i.args) for i in steps], s.tools)
+        except ArgumentError as exc:
+            rtrace.stage("argument_validation", "rejected", str(exc))
+            bad = next((s.tools.get(i.tool or "") for i in steps), None)
+            return {"ok": True, "message": self._reply(friendly_argument_error(bad, exc), origin)}
+        plan = [PlanStep(i.title or i.tool or "", i.tool or "", clean, depends_on_previous=i.depends_on_previous)
+                for i, clean in zip(steps, cleaned)]
         rtrace.stage("argument_validation", "ok", f"{len(plan)} steps")
         if s.estop.engaged:
             rtrace.stage("permissions", "rejected", "Emergency Stop engaged")
@@ -562,6 +623,7 @@ class Assistant:
                 p = ev.payload
                 origin = self._origins.pop(p["taskId"], Origin("local", False))
                 task = self.s.tasks.get(p["taskId"])
+                self._remember_file_choice(task, origin)
                 self._track_model(task)
                 text = self._dedupe_permission_help(self._result_text(p, task))
                 t = self.traces.for_task(p["taskId"])
