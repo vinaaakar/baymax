@@ -301,6 +301,10 @@ _AS_ACTIVATE = """on run argv
   tell application "System Events" to tell process appName to set frontmost to true
 end run"""
 
+_AS_PID = """on run argv
+  tell application "System Events" to return (unix id of process (item 1 of argv)) as text
+end run"""
+
 # _AS_ACTIVATE, then print the target's process id (argv: app name, System Events process name).
 _AS_ACTIVATE_PID = """on run argv
   set appName to item 2 of argv
@@ -1543,14 +1547,71 @@ class MacDesktop(DesktopBackend):
 
     async def accessibility_elements(self, app: str, limit: int = 400, budget_s: int = 12) -> list[ScreenElement]:
         app = validate_app_name(app)
-        # The script stops walking after `budget` seconds (and says so in its header) well inside the hard timeout.
-        argv = (app, str(max(1, min(limit, 1500))), str(budget_s))
-        out = await self._osascript(_AS_LOCATE, *argv, timeout=budget_s + 13)
+        limit = max(1, min(limit, 1500))
+
+        async def read() -> str:
+            out = await self._ax_dump_inprocess(app, limit)  # fast path: the Accessibility API in-process
+            if out is None:  # no PyObjC / no process id: the AppleScript walk, which stops after `budget_s` seconds
+                out = (await self._osascript(_AS_LOCATE, app, str(limit), str(budget_s), timeout=budget_s + 13)).replace(",", ".")
+            return out
+
+        out = await read()
         self.last_ax_window = parse_window_header(out)  # which window was read (diagnostics)
         if (self.last_ax_window or {}).get("windows") == 0 and await self._reveal_windows(app):
-            out = await self._osascript(_AS_LOCATE, *argv, timeout=budget_s + 13)
+            out = await read()
             self.last_ax_window = parse_window_header(out)
-        return parse_ax_dump(out.replace(",", "."), app)  # some locales print decimal commas
+        return parse_ax_dump(out, app)
+
+    # ------------------------------------------------------------------ in-process Accessibility (fast path)
+    def _ax_api(self) -> Any:
+        if self.accessibility_trusted() is not True:
+            return None
+        try:
+            import ApplicationServices as AS  # type: ignore
+
+            return AS
+        except Exception:
+            return None
+
+    async def _pid_of(self, app: str) -> int | None:
+        """Process id of a running app by its name (NSWorkspace; System Events as a fallback, e.g. Safari web apps)."""
+        try:
+            from AppKit import NSWorkspace  # type: ignore
+
+            for a in NSWorkspace.sharedWorkspace().runningApplications():
+                exe = str(a.executableURL().lastPathComponent()) if a.executableURL() else ""
+                if app in (str(a.localizedName() or ""), exe):
+                    return int(a.processIdentifier())
+        except Exception:
+            pass
+        try:
+            out = (await self._osascript(_AS_PID, app, timeout=8)).strip()
+        except DesktopUnavailable:
+            return None
+        return int(out) if out.isdigit() else None
+
+    async def _ax_app(self, app: str) -> tuple[Any, Any] | None:
+        AS = self._ax_api()
+        if AS is None:
+            return None
+        pid = await self._pid_of(app)
+        if pid is None:
+            return None
+        from . import ax_inprocess
+
+        return AS, ax_inprocess.app_element(AS, pid)
+
+    async def _ax_dump_inprocess(self, app: str, limit: int) -> str | None:
+        got = await self._ax_app(app)
+        if got is None:
+            return None
+        from . import ax_inprocess
+
+        try:
+            return await asyncio.to_thread(ax_inprocess.dump, got[0], got[1], limit)
+        except Exception as exc:  # never worse than before: fall back to AppleScript
+            log.info("in-process accessibility read failed for %s: %s", app, exc)
+            return None
 
     REVEAL_WAIT_S = 1.5  # Space switch animation (measured on the Mac: windows visible 1.5 s after activating)
 
@@ -1569,6 +1630,13 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         if role not in ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"):
             raise DesktopUnavailable("only text inputs can be focused for typing")
+        got = await self._ax_app(app)
+        if got is not None:  # fast path: find the same element (role + position) in-process and focus it
+            from . import ax_inprocess
+
+            el = await asyncio.to_thread(ax_inprocess.find, got[0], got[1], role, x, y)
+            if el is not None and await asyncio.to_thread(ax_inprocess.focus, got[0], el):
+                return
         argv = (app, role, str(round(x)), str(round(y)))
         out = (await self._osascript(_AS_FOCUS, *argv, timeout=20)).strip()
         if out == "ok":
@@ -1595,6 +1663,13 @@ class MacDesktop(DesktopBackend):
     async def element_value(self, app: str, role: str, x: float, y: float) -> str:
         """Exact text of the element at (x, y) with this role, line breaks included (for verifying typed text)."""
         app = validate_app_name(app)
+        got = await self._ax_app(app)
+        if got is not None:
+            from . import ax_inprocess
+
+            el = await asyncio.to_thread(ax_inprocess.find, got[0], got[1], role, x, y)
+            if el is not None:
+                return await asyncio.to_thread(ax_inprocess.value_text, got[0], el)
         out = await self._osascript(_AS_VALUE, app, role, str(round(x)), str(round(y)), timeout=20)
         return out[:-1] if out.endswith("\n") else out  # osascript adds one trailing newline
 
