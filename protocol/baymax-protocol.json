@@ -474,7 +474,9 @@
         "optional": {
           "devices": "int",
           "llm": "str",
-          "model": "str"
+          "model": "str",
+          "build": "str",
+          "buildStale": "bool"
         }
       },
       "voice.state": {

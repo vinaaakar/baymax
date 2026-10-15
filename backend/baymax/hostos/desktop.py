@@ -147,6 +147,7 @@ class DesktopBackend:
     async def press_return(self, app: str) -> None: raise DesktopUnavailable(self._why())
     async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None: raise DesktopUnavailable(self._why())
     async def element_value(self, app: str, role: str, x: float, y: float) -> str: raise DesktopUnavailable(self._why())
+    async def focused_text(self, app: str) -> tuple[str, str]: raise DesktopUnavailable(self._why())
     async def ocr_elements(self) -> list[ScreenElement]: raise DesktopUnavailable(self._why())
 
     def _why(self) -> str:
@@ -604,6 +605,23 @@ on pickWindow(appName)
     end tell
   end tell
 end pickWindow"""
+
+# Role and exact value of the element that has keyboard focus in an app (to read typed text back).
+_AS_FOCUSED_TEXT = """on run argv
+  tell application "System Events"
+    tell process (item 1 of argv)
+      set f to value of attribute "AXFocusedUIElement"
+      if f is missing value then error "element not found: nothing has keyboard focus" number 1404
+      set r to role of f
+      set v to ""
+      try
+        set v to value of f
+      end try
+      if v is missing value then set v to ""
+      return r & tab & (v as text)
+    end tell
+  end tell
+end run"""
 
 _AS_RETURN = """on run argv
   set appName to item 1 of argv
@@ -1144,6 +1162,13 @@ class MacDesktop(DesktopBackend):
         app = validate_app_name(app)
         out = await self._osascript(_AS_VALUE, app, role, str(round(x)), str(round(y)), timeout=20)
         return out[:-1] if out.endswith("\n") else out  # osascript adds one trailing newline
+
+    async def focused_text(self, app: str) -> tuple[str, str]:
+        """(role, exact value) of the focused element of `app`; DesktopUnavailable when nothing readable has focus."""
+        app = validate_app_name(app)
+        out = (await self._osascript(_AS_FOCUSED_TEXT, app, timeout=10)).removesuffix("\n")  # osascript adds one newline
+        role, _, value = out.partition("\t")
+        return role.strip(), value
 
     async def press_return(self, app: str) -> None:
         app = validate_app_name(app)

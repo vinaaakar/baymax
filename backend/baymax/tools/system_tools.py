@@ -268,15 +268,44 @@ class TypeTextTool(Tool):
             return problem or ToolResult(False, "Which app should I type into?", {"errorKind": "invalid_arguments"},
                                          needs_clarification="Which app should I type into?")
         args = {**args, "app": app.process or app.name}
-        await _desktop(d.type_text(args["app"], args["text"]))
-        front = ""
-        try:
-            front = await d.frontmost_app()
-        except DesktopUnavailable:
-            pass
-        ok = front.lower() in (args["app"].lower(), app.name.lower())
-        return ToolResult(True, f"Typed into {args['app']}.", {"app": args["app"], "frontmost": front}, verified=ok,
-                          verification=f"{front or 'unknown app'} was frontmost after typing" + ("" if ok else " (not the requested app)"))
+        target, text = args["app"], args["text"]
+        before = await _focused_text(d, target)  # the field that will receive the keystrokes, as it is now
+        await _desktop(d.type_text(target, text))
+        # Proof of insertion is the typed text appearing in the focused field - an app being in front is not.
+        after = None
+        for _ in range(4):
+            await asyncio.sleep(0.25)
+            after = await _focused_text(d, target)
+            if after is not None and _norm_typed(text) in _norm_typed(after[1]):
+                break
+        data = {"app": target}
+        if before is None or after is None or after[0] not in _TEXT_ROLES:
+            return ToolResult(True, f"Typed into {target}, but {target} doesn't let me read the field back, so I can't confirm the "
+                                    "text arrived.", {**data, "readBack": None}, verified=False,
+                              verification="focused field not readable: insertion not confirmed")
+        want, was, now = _norm_typed(text), _norm_typed(before[1]), _norm_typed(after[1])
+        if now.count(want) > was.count(want):
+            return ToolResult(True, f"Typed into {target}; the text is in the field.", {**data, "readBack": now[-2000:]}, verified=True,
+                              verification="typed text read back from the focused field")
+        return ToolResult(False, f"I typed into {target}, but the focused field doesn't contain what I typed (it reads "
+                                 f"“{now[-80:]}”).", {**data, "readBack": now[-2000:], "errorKind": "not_verified"})
+
+
+_TEXT_ROLES = ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField")
+
+
+def _norm_typed(t: str) -> str:
+    """Line breaks as macOS text views may store them (U+2028 / CR) compared as \\n; everything else exactly."""
+    return t.replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n")
+
+
+async def _focused_text(d: Any, app: str) -> tuple[str, str] | None:
+    try:
+        return await d.focused_text(app)
+    except DesktopPermissionError as exc:
+        raise ToolUnavailable(str(exc)) from None  # same handling as _desktop(): the missing permission is named
+    except DesktopUnavailable:
+        return None
 
 
 class ListElementsTool(Tool):

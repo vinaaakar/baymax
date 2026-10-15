@@ -33,6 +33,9 @@ final class AppModel: ObservableObject {
     /// nil = not reported yet (never shown as "unavailable" before the Mac says so).
     @Published var macModelReady: Bool?
     @Published var macModelName = ""
+    /// Backend build the phone is talking to, and whether that process runs older code than what is on the Mac's disk.
+    @Published var macBuild = ""
+    @Published var macBuildStale = false
     @Published var lastReply: ChatLine?
     @Published var speakReplies = true
 
@@ -263,6 +266,8 @@ final class AppModel: ObservableObject {
             // Only messages that carry model status change it (device-count updates don't).
             if let llm = env.string("llm") { macModelReady = (llm == "ready") }
             if let name = env.string("model"), !name.isEmpty { macModelName = name }
+            if let build = env.string("build"), !build.isEmpty { macBuild = build }
+            if let stale = env.bool("buildStale") { macBuildStale = stale }
         case "assistant.message":
             let line = ChatLine(id: env.string("messageId") ?? UUID().uuidString, role: env.string("role") ?? "assistant", text: env.string("text") ?? "")
             if !messages.contains(where: { $0.id == line.id }) { messages.append(line) }

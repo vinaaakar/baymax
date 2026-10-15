@@ -38,7 +38,9 @@ export function sourceHash(pkgDir: string): string {
   return h.digest("hex").slice(0, 12);
 }
 
-function healthInfo(): Promise<{ build?: string; pid?: number } | null> {
+export interface HealthInfo { build?: string; diskBuild?: string; stale?: boolean; pid?: number }
+
+export function healthInfo(): Promise<HealthInfo | null> {
   return new Promise((resolve) => {
     const req = http.get({ host: "127.0.0.1", port: PORT, path: "/api/health", timeout: 800 }, (res) => {
       let body = "";
@@ -170,4 +172,20 @@ export async function startBackend(resourcesPath: string, appPath: string, log: 
       if (child && child.exitCode === null) child.kill("SIGTERM");
     },
   };
+}
+
+/** Restart the backend through the same safe lifecycle as start-up: stop our own child, or a process whose command
+ *  line is verifiably `-m baymax serve` (stopStaleBackend), then start the current code. Never a different program. */
+export async function restartBackend(current: BackendHandle | null, resourcesPath: string, appPath: string, log: (m: string) => void): Promise<BackendHandle> {
+  if (current?.child && current.child.exitCode === null) {
+    log("restarting backend (own process)");
+    current.child.kill("SIGTERM");
+    if (!(await waitFor(async () => !(await health()), 8000))) throw new Error("the backend did not stop within 8 seconds");
+  } else {
+    const info = await healthInfo();
+    if (info && !(await stopStaleBackend(info.pid, log))) {
+      throw new Error(`The backend on port ${PORT} could not be stopped safely. Quit it (Terminal: pkill -f "baymax serve") and start BAYMAX again.`);
+    }
+  }
+  return startBackend(resourcesPath, appPath, log);
 }

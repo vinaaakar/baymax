@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import WSMsgType, web
 
 from .. import __version__
+from ..buildinfo import build_status
 from ..protocol import messages as proto
 from ..security.pairing import PairingError
 
@@ -85,6 +86,12 @@ class DeviceHub:
             return {}
         return {"llm": "ready" if st.available else "unavailable", "model": st.model[:80]}
 
+    @staticmethod
+    def _build_fields() -> dict[str, Any]:
+        """The backend build this phone is talking to, and whether that process runs outdated code (see buildinfo)."""
+        b = build_status()
+        return {"build": str(b["build"]), "buildStale": bool(b["stale"])}
+
     def connected(self) -> list[dict[str, Any]]:
         return [{"deviceId": s.device_id, "remote": s.remote} for s in self.sessions if s.authenticated]
 
@@ -136,11 +143,11 @@ class DeviceHub:
                 return proto.make("sleep.state", {"sleeping": p["sleeping"]})
             if etype == "devices.changed":
                 return proto.make("connection.status", {"status": "connected", "devices": int(p.get("count", 0)),
-                                                        **self._llm_fields(self.s.llm.last_status)})
+                                                        **self._llm_fields(self.s.llm.last_status), **self._build_fields()})
             if etype == "llm.status":  # Ollama came up or went away on the Mac
                 return proto.make("connection.status", {"status": "connected", "devices": len(self.connected()),
                                                         "llm": "ready" if p.get("available") else "unavailable",
-                                                        "model": str(p.get("model", ""))[:80]})
+                                                        "model": str(p.get("model", ""))[:80], **self._build_fields()})
             if sess.protocol < 2:
                 return None  # v2-only events below are never sent to v1 clients
             if etype == "cursor":
@@ -281,7 +288,7 @@ class DeviceHub:
         await self._send(sess, proto.make("estop.state", {"engaged": s.estop.engaged, "reason": s.estop.reason}))
         st = await s.llm.status()  # fresh check: the cached value may not exist yet right after start-up
         await self._send(sess, proto.make("connection.status", {"status": "connected", "devices": len(self.connected()) + 1,
-                                                                **self._llm_fields(st)}))
+                                                                **self._llm_fields(st), **self._build_fields()}))
         for t in s.tasks.active():
             await self._send(sess, proto.make("task.update", {"taskId": t.id, "status": t.status.value, "title": t.title}))
         for a in s.tasks.pending_approvals():

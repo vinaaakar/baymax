@@ -46,7 +46,7 @@ SERVER_TO_CLIENT: dict[str, tuple[dict[str, str], dict[str, str]]] = {
     "pair.ok": ({"deviceId": "str", "deviceKey": "str"}, {}),
     "error": ({"code": "str", "message": "str"}, {"replyTo": "str", "fatal": "bool"}),
     "character.state": ({"state": "str"}, {"reason": "str", "taskId": "str"}),
-    "connection.status": ({"status": "str"}, {"devices": "int", "llm": "str", "model": "str"}),
+    "connection.status": ({"status": "str"}, {"devices": "int", "llm": "str", "model": "str", "build": "str", "buildStale": "bool"}),
     "voice.state": ({"state": "str"}, {"level": "float", "source": "str"}),
     "assistant.message": ({"text": "str", "messageId": "str"}, {"speak": "bool", "taskId": "str", "role": "str"}),
     "task.update": ({"taskId": "str", "status": "str", "title": "str"}, {"kind": "str", "step": "str", "progress": "float", "detail": "str"}),

@@ -24,7 +24,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from .. import PROTOCOL_VERSION, __version__
-from ..buildinfo import running_build
+from ..buildinfo import build_status
 from ..assistant import Assistant
 from ..character.state_machine import CharacterEvent
 from ..config import MUTABLE_FIELDS, save_settings, update_setting
@@ -234,7 +234,7 @@ class BaymaxServer:
     # ------------------------------------------------------------- handlers
     async def health(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "name": "baymax", "version": __version__, "protocol": PROTOCOL_VERSION,
-                                  "build": running_build(), "pid": os.getpid()})
+                                  **build_status(), "pid": os.getpid()})
 
     async def status(self, request: web.Request) -> web.Response:
         s = self.s

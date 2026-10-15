@@ -117,6 +117,13 @@ class FakeDesktop(DesktopBackend):
         self._need_ax()
         return self.field_raw.get((app, role, round(x), round(y)), "")
 
+    async def focused_text(self, app):
+        self._need_ax()
+        if app not in self.focused:
+            raise DesktopUnavailable("element not found: nothing has keyboard focus")
+        role, fx, fy = self.focused[app]
+        return role, self.field_raw.get((app, role, fx, fy), "")
+
     async def focus_element(self, app, role, x, y):
         self._need_ax()
         self.calls.append(("focus", app, role, round(x), round(y)))

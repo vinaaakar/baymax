@@ -18,6 +18,7 @@ from .character.state_machine import CharacterEvent, CharacterState
 from .capabilities import capability_report, capability_text
 from .intent import trace as rtrace
 from .hostos.sites import browser_named_in, ground_destination
+from .buildinfo import build_status
 from .intent.relevance import request_mode, tool_is_relevant
 from .intent.router import LAST_DRAFT, Intent, IntentRouter, RouteContext, parse_model_proposal, split_compound
 from .llm.ollama import LLMError, LLMUnavailable
@@ -48,6 +49,7 @@ class Assistant:
     def __init__(self, services: Services) -> None:
         self.s = services
         self._native_tools_unsupported = False
+        self._outdated_warned = ""  # build pair already announced as outdated
         self.router = IntentRouter(services.classifier)
         self.active_model: str | None = None
         self.sleeping = False
@@ -150,6 +152,20 @@ class Assistant:
             self._speak(text)  # phones speak locally with their own TTS
         return msg
 
+    def _warn_if_outdated(self) -> None:
+        """Tell the user (Mac and iPhone) once per outdated build that this backend runs older code than what is on
+        disk, so test results are not mistaken for the current version."""
+        b = build_status()
+        key = f"{b['build']}->{b['diskBuild']}"
+        if not b["stale"] or key == self._outdated_warned:
+            return
+        self._outdated_warned = key
+        log.warning("backend is running outdated code: running %s, on disk %s", b["build"], b["diskBuild"])
+        self.s.bus.publish("assistant.message", {
+            "text": (f"Heads-up: I'm running older code (build {b['build']}) than what's on disk (build {b['diskBuild']}). "
+                     "Restart BAYMAX (menu bar → Restart Backend) so the update takes effect; until then results reflect the old version."),
+            "messageId": f"outdated-{key}", "speak": False, "role": "system", "taskId": ""})
+
     async def handle_text(self, text: str, source: str = "local", speak: bool | None = None, voice: bool | None = None) -> dict[str, Any]:
         text = text.strip()[:4000]
         self._transcribing = False
@@ -161,6 +177,7 @@ class Assistant:
             self.traces.end(token)
 
     async def _handle(self, trace: rtrace.RequestTrace, text: str, source: str, speak: bool | None, voice: bool) -> dict[str, Any]:
+        self._warn_if_outdated()
         trace.stage("input", "ok" if text else "rejected", source)
         if voice:
             # Spoken input (Mac whisper or the iPhone's on-device recognizer): sound tags and silence hallucinations
@@ -354,7 +371,7 @@ class Assistant:
                 return {"ok": True, "message": self._reply(friendly_argument_error(tool, exc), origin)}
             if tool is None:
                 return {"ok": False, "message": self._reply("I can't do one of those steps yet.", origin)}
-            plan.append(PlanStep(i.title or tool.name, tool.name, clean))
+            plan.append(PlanStep(i.title or tool.name, tool.name, clean, depends_on_previous=i.depends_on_previous))
         rtrace.stage("argument_validation", "ok", f"{len(plan)} steps")
         if s.estop.engaged:
             rtrace.stage("permissions", "rejected", "Emergency Stop engaged")

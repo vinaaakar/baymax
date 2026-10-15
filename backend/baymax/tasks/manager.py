@@ -160,6 +160,20 @@ class TaskManager:
                     self.s.estop.ensure_clear()
                     if task.cancel_requested:
                         raise asyncio.CancelledError()
+                    if step.depends_on_previous and results and not results[-1].verified:
+                        # The previous step ran but its outcome is unconfirmed: never act on it (e.g. type into a
+                        # document whose window was not seen). Distinct from that step having failed.
+                        prev = task.plan[index - 1]
+                        why = results[-1].verification or "its outcome could not be confirmed"
+                        stop = ToolResult(False, f"I stopped before “{step.title}”: it depends on “{prev.title}”, which ran but "
+                                                 f"couldn't be verified ({why}).",
+                                          {"errorKind": "unverified_prerequisite", "stoppedBefore": step.title,
+                                           "prerequisite": prev.title, "prerequisiteOutcome": results[-1].outcome})
+                        step.status = "skipped"
+                        task.error_kind = "unverified_prerequisite"
+                        self._event(task, "stopped", {"step": step.title, "reason": stop.summary[:300]})
+                        self._finish(task, TaskStatus.FAILED, stop, error=stop.summary)
+                        return
                     result = await self._run_step(task, step)
                     attempts = 1
                     # Bounded recovery: only results the tool marked as transient, at most MAX_ATTEMPTS, never for

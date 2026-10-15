@@ -53,6 +53,9 @@ class PlanStep:
     args: dict[str, Any] = field(default_factory=dict)
     status: str = "pending"  # pending | awaiting_approval | running | done | failed | skipped | cancelled
     summary: str = ""
+    # This step acts on what the previous step produced ("create a document and type into it"): it only runs when
+    # that step's result was verified. Independent steps leave this False (an unverified step doesn't stop them).
+    depends_on_previous: bool = False
 
 
 @dataclass

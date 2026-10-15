@@ -126,6 +126,13 @@ struct SettingsView: View {
                     if let mac = model.paired {
                         LabeledContent("Address", value: "\(mac.host):\(mac.port)")
                         LabeledContent("Status", value: model.connectionText)
+                        if !model.macBuild.isEmpty {
+                            LabeledContent("Backend build", value: model.macBuild + (model.macBuildStale ? " (outdated)" : ""))
+                        }
+                        if model.macBuildStale {
+                            Text("The Mac is running older BAYMAX code than it has installed. Restart BAYMAX on the Mac (menu bar → Restart Backend) before testing.")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
                         LabeledContent("Certificate", value: String(mac.fingerprint.prefix(16)) + "…")
                         Button("Forget this Mac", role: .destructive) { model.unpair() }
                     } else {

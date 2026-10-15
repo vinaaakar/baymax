@@ -27,6 +27,7 @@ class Intent:
     text: str = ""
     reply: str = ""
     source: str = "rule"  # rule | model
+    depends_on_previous: bool = False  # in a plan: acts on the previous step's result (see PlanStep)
 
 
 @dataclass
@@ -484,6 +485,7 @@ def split_compound(router: "IntentRouter", raw: str, ctx: "RouteContext | None" 
             if cur.tool in ("desktop.read_window", "screen.type_into") and not cur.args.get("app") \
                     and prev.tool in ("apps.open", "desktop.new_document") and prev.args.get("app"):
                 cur.args = {**cur.args, "app": prev.args["app"]}
+                cur.depends_on_previous = True  # "it" = what the previous step opened or created
         return intents
     return None
 

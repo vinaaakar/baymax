@@ -2,7 +2,7 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import http from "http";
 import path from "path";
-import { startBackend, type BackendHandle } from "./backend";
+import { healthInfo, restartBackend, startBackend, type BackendHandle } from "./backend";
 import { eyesIconPng } from "./icon";
 import { PresenceLink } from "./presence";
 import { lookFromWindow } from "./presenceLogic";
@@ -129,6 +129,7 @@ function buildTray(): void {
     { label: "Reset Emergency Stop", click: () => apiPost("/api/estop", { engaged: false }) },
     { type: "separator" },
     { label: "Show Backend Log", click: () => dialog.showMessageBox({ message: "Backend log (latest)", detail: logs.slice(-40).join("\n") }) },
+    { label: "Restart Backend", click: () => void doRestartBackend() },
     { label: "Quit BAYMAX", accelerator: "CmdOrCtrl+Q", click: () => { quitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);
@@ -163,6 +164,57 @@ ipcMain.handle("baymax:mic", async () => {
   return systemPreferences.askForMediaAccess("microphone");
 });
 
+// ---- runtime version guard: the backend reports the build it loaded at start-up and the build on disk now; when they
+// differ it runs outdated code. Warn once per outdated build and offer a restart; never restart on our own (no loops).
+let warnedBuild = "";
+let restarting = false;
+
+async function checkBackendBuild(): Promise<void> {
+  const info = await healthInfo();
+  if (!info?.build) return;
+  tray?.setToolTip(`BAYMAX — backend build ${info.build}${info.stale ? ` (outdated: ${info.diskBuild} on disk)` : ""}`);
+  if (!info.stale || restarting || warnedBuild === `${info.build}->${info.diskBuild}`) return;
+  warnedBuild = `${info.build}->${info.diskBuild}`;
+  log(`backend build ${info.build} is outdated (disk ${info.diskBuild})`);
+  const { response } = await dialog.showMessageBox({
+    type: "warning", buttons: ["Restart Backend", "Later"], defaultId: 0, cancelId: 1,
+    message: "BAYMAX's backend is running outdated code",
+    detail: `Running build ${info.build}, but the code on disk is build ${info.diskBuild}. Until the backend restarts, ` +
+      "commands (including ones from your iPhone) use the old code.",
+  });
+  if (response === 0) await doRestartBackend();
+}
+
+async function doRestartBackend(): Promise<void> {
+  if (restarting) return;
+  restarting = true;
+  try {
+    presence?.stop();
+    backend = await restartBackend(backend, process.resourcesPath, app.getAppPath(), log);
+    presence = makePresence(backend);
+    presence.start();
+    const info = await healthInfo();
+    log(`backend restarted: build ${info?.build ?? "unknown"}${info?.stale ? " (still outdated)" : ""}`);
+    tray?.setToolTip(`BAYMAX — backend build ${info?.build ?? "unknown"}`);
+  } catch (e) {
+    dialog.showErrorBox("BAYMAX could not restart its backend", (e as Error).message);
+  } finally {
+    restarting = false;
+  }
+}
+
+function makePresence(b: BackendHandle): PresenceLink {
+  return new PresenceLink(b.apiBase, b.token, {
+    log,
+    onSleep: (s) => (sleeping = s),
+    onGazeTarget: (t) => {
+      const win = windows.companion;
+      if (!win || win.isDestroyed()) return;
+      win.webContents.send("baymax:gaze", { ...lookFromWindow(t, win.getBounds()), label: t.label, durationMs: t.durationMs });
+    },
+  });
+}
+
 app.whenReady().then(async () => {
   // Only the microphone may be requested, and only by our own pages.
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
@@ -184,16 +236,10 @@ app.whenReady().then(async () => {
   app.on("will-quit", () => globalShortcut.unregisterAll());
   createWindow("companion");
   startCursorTracking();
-  presence = new PresenceLink(backend.apiBase, backend.token, {
-    log,
-    onSleep: (s) => (sleeping = s),
-    onGazeTarget: (t) => {
-      const win = windows.companion;
-      if (!win || win.isDestroyed()) return;
-      win.webContents.send("baymax:gaze", { ...lookFromWindow(t, win.getBounds()), label: t.label, durationMs: t.durationMs });
-    },
-  });
+  presence = makePresence(backend);
   presence.start();
+  void checkBackendBuild();
+  setInterval(() => void checkBackendBuild(), 60_000);
   if (process.env.BAYMAX_OPEN_WORKSPACE) createWindow("workspace");
 });
 

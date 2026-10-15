@@ -356,3 +356,19 @@ async def test_type_a_prompt_into_the_chatgpt_app_without_sending(desk, real_ser
           t.result.get("data", {}).get("elementsRead"))
     assert t.status is TaskStatus.COMPLETED and t.result["data"].get("entered"), t.result
     assert t.result["data"].get("submitted") is False
+
+
+async def test_type_text_tool_is_verified_only_by_reading_the_field_back(desk, real_services):
+    """desktop.type_text into a new TextEdit document: verified only because the focused field's text is read back
+    (an app in front is not proof). Close the document WITHOUT saving."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    from baymax.tasks.models import TaskStatus
+
+    t = await _run(real_services, ("desktop.new_document", {"app": "TextEdit"}))
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+    text = "Phase 1 ✓ Grüße 👋\nline two"
+    t = await _run(real_services, ("desktop.type_text", {"app": "TextEdit", "text": text}))
+    print(t.result["summary"], "|", t.result.get("verification"))
+    assert t.status is TaskStatus.COMPLETED and t.verified, t.result
+    assert t.result["verification"] == "typed text read back from the focused field"
