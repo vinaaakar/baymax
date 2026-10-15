@@ -158,6 +158,35 @@ def find(AS: Any, app_el: Any, role: str, x: float, y: float, max_nodes: int = M
     return max(hits, key=lambda h: (h[0], h[1]))[2]
 
 
+TEXT_ROLES = ("AXStaticText", "AXTextField", "AXTextArea", "AXHeading")
+
+
+def window_text(AS: Any, app_el: Any, max_chars: int = 20000, max_nodes: int = MAX_NODES,
+                budget_s: float = BUDGET_S) -> str | None:
+    """Visible text of the app's main window, one piece per line (same roles as the AppleScript reader _AS_TEXT).
+    Page content (inside web areas) comes first and the browser/app chrome (tabs, toolbar) after it, so a long tab bar
+    can never push the page out of the result. None when the app has no window Accessibility can see."""
+    win, _, _ = pick_window(AS, app_el)
+    if win is None:
+        return None
+    page: list[str] = []
+    chrome: list[str] = []
+    # Depth-first in document order (a heading's text before the paragraph below it), bounded like the other walks.
+    t0, stack, seen, size = time.monotonic(), [(win, False)], 0, 0
+    while stack and seen < max_nodes and size < max_chars and time.monotonic() - t0 <= budget_s:
+        el, in_web = stack.pop()
+        seen += 1
+        role = attr(AS, el, "AXRole") or ""
+        in_web = in_web or role == "AXWebArea"
+        if role in TEXT_ROLES:
+            v = value_text(AS, el)
+            if v.strip():
+                (page if in_web else chrome).append(v)
+                size += len(v) + 1
+        stack.extend((k, in_web) for k in reversed(attr(AS, el, "AXChildren") or []))
+    return "".join(f"{t}\n" for t in page + chrome)
+
+
 def value_text(AS: Any, el: Any) -> str:
     v = attr(AS, el, "AXValue")
     return v if isinstance(v, str) else ""

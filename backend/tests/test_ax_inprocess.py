@@ -136,3 +136,45 @@ def test_frames_also_parse_from_the_axvalue_description():
     el.a["AXPosition"] = Opaque("<AXValue 0x1 {value = x:12.5 y:30.0 type = kAXValueCGPointType}>")
     el.a["AXSize"] = Opaque("<AXValue 0x2 {value = w:80.0 h:22.0 type = kAXValueCGSizeType}>")
     assert ax.frame(AS(None), el) == (12.5, 30.0, 80.0, 22.0)
+
+
+def test_window_text_puts_the_page_before_the_tab_bar():
+    tabs = [El("AXStaticText", 10 * i, 60, AXValue=f"tab {i} " + "x" * 40) for i in range(30)]  # a long tab bar
+    page = El("AXWebArea", 0, 150, 1000, 700, children=[
+        El("AXHeading", 10, 160, children=[El("AXStaticText", 10, 160, AXValue="BAYMAX reading test 4217")]),
+        El("AXStaticText", 10, 230, AXValue="Neural networks learn from examples.")])
+    win = El("AXWindow", children=[El("AXTabGroup", children=tabs), page], AXTitle="baymax-read-test.html")
+    app = El("AXApplication", AXMainWindow=win, AXWindows=[win])
+    text = ax.window_text(FakeAS(app), app)
+    assert text.startswith("BAYMAX reading test 4217\nNeural networks learn from examples.\n") and "tab 29" in text
+
+
+def test_window_text_without_a_window_is_none():
+    app = El("AXApplication", AXWindows=[])
+    assert ax.window_text(FakeAS(app), app) is None
+
+
+async def test_read_window_text_uses_the_fast_reader_and_reveals_a_hidden_window_once():
+    from baymax.hostos import desktop as dk
+
+    page = El("AXWebArea", children=[El("AXStaticText", AXValue="BAYMAX reading test 4217")])
+    win = El("AXWindow", children=[page], AXTitle="t")
+    app = El("AXApplication", AXWindows=[])  # full screen on another Space: nothing visible yet
+    AS = FakeAS(app)
+    d = dk.MacDesktop.__new__(dk.MacDesktop)
+    d.REVEAL_WAIT_S, ran = 0.0, []
+
+    async def process_name(a):
+        return a
+
+    async def ax_app(a):
+        return AS, app
+
+    async def osa(script, *a, **k):
+        ran.append("activate" if script is dk._AS_ACTIVATE else "applescript-read")
+        app.a.update(AXMainWindow=win, AXWindows=[win])  # activating switched to the window's Space
+        return ""
+
+    d.process_name, d._ax_app, d._osascript = process_name, ax_app, osa
+    assert await d.read_window_text("Safari") == "BAYMAX reading test 4217\n"
+    assert ran == ["activate"]  # no slow AppleScript read

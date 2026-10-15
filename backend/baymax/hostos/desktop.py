@@ -1332,6 +1332,13 @@ class MacDesktop(DesktopBackend):
 
     async def read_window_text(self, app: str, limit: int = 4000) -> str:
         proc = await self.process_name(app)
+        got = await self._ax_app(proc)
+        if got is not None:  # fast path (in-process Accessibility); None text = no visible window or a failed read
+            fast = await self._window_text_inprocess(got, proc)
+            if fast is None and await self._reveal_windows(proc):  # switch to the window's Space, then once more
+                fast = await self._window_text_inprocess(got, proc)
+            if fast is not None:
+                return fast[:limit]
         try:
             return (await self._osascript(_AS_TEXT, proc, "12", timeout=25))[:limit]
         except DesktopUnavailable as exc:
@@ -1600,6 +1607,16 @@ class MacDesktop(DesktopBackend):
         from . import ax_inprocess
 
         return AS, ax_inprocess.app_element(AS, pid)
+
+    async def _window_text_inprocess(self, got: tuple[Any, Any], app: str) -> str | None:
+        """None when the app has no visible window or the read failed (the caller then falls back)."""
+        from . import ax_inprocess
+
+        try:
+            return await asyncio.to_thread(ax_inprocess.window_text, got[0], got[1])
+        except Exception as exc:  # never worse than before: fall back to AppleScript
+            log.info("in-process window text failed for %s: %s", app, exc)
+            return None
 
     async def _ax_dump_inprocess(self, app: str, limit: int) -> str | None:
         got = await self._ax_app(app)
