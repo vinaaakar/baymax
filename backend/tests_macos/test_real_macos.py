@@ -46,14 +46,41 @@ _FULLSCREEN_WINDOWS = """tell application "System Events"
 end tell"""
 
 
+# Leave full screen for the terminal window running the tests (only that app, only that setting): first through its
+# View menu ("Exit Full Screen", the same as choosing it by hand), then through the window's AXFullScreen attribute.
+_EXIT_FULL_SCREEN = """tell application "System Events"
+  set fp to first process whose frontmost is true
+  try
+    click menu item "Exit Full Screen" of menu "View" of menu bar 1 of fp
+    return "menu"
+  end try
+  repeat with w in (windows of fp)
+    try
+      if (value of attribute "AXFullScreen" of w) is true then set value of attribute "AXFullScreen" of w to false
+    end try
+  end repeat
+  return "attribute"
+end tell"""
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _not_in_full_screen():
     full = _osa_sync(_FULLSCREEN_WINDOWS)
-    if full:
-        pytest.exit("The window running these tests is in FULL SCREEN, so macOS hides every other app's windows from "
-                    f"Accessibility and the TextEdit/ChatGPT tests can't work:\n  {full}\nExit full screen (click the "
-                    "window, then press control+command+F, or View > Exit Full Screen) and run the tests again.",
-                    returncode=2)
+    for _ in range(2):
+        if not full:
+            return
+        how = _osa_sync(_EXIT_FULL_SCREEN)
+        print(f"\nThe terminal was in full screen; leaving it ({how or 'failed'}) so other apps' windows are visible.")
+        for _ in range(8):  # the animation takes about a second
+            time.sleep(0.5)
+            full = _osa_sync(_FULLSCREEN_WINDOWS)
+            if not full:
+                time.sleep(1.0)
+                return
+    pytest.exit("The window running these tests is still in FULL SCREEN after trying to leave it, so macOS hides every "
+                f"other app's windows from Accessibility and the TextEdit/ChatGPT tests can't work:\n  {full}\nMove the "
+                "pointer to the top of the screen, click the green dot (or View > Exit Full Screen), and run again.",
+                returncode=2)
 
 
 _TEXTEDIT_DOCS = """tell application "System Events" to set teRunning to exists process "TextEdit"
