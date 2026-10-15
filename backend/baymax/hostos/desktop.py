@@ -1328,7 +1328,12 @@ class MacDesktop(DesktopBackend):
 
     async def read_window_text(self, app: str, limit: int = 4000) -> str:
         proc = await self.process_name(app)
-        return (await self._osascript(_AS_TEXT, proc, "12", timeout=25))[:limit]
+        try:
+            return (await self._osascript(_AS_TEXT, proc, "12", timeout=25))[:limit]
+        except DesktopUnavailable as exc:
+            if "(1406)" not in (exc.detail or "") or not await self._reveal_windows(proc):
+                raise
+        return (await self._osascript(_AS_TEXT, proc, "12", timeout=25))[:limit]  # once more, after switching Space
 
     async def list_apps(self) -> tuple[list[AppInfo], list[AppInfo]]:
         """(running regular apps, installed apps). Running apps come from NSWorkspace (no permission needed)."""
@@ -1539,9 +1544,26 @@ class MacDesktop(DesktopBackend):
     async def accessibility_elements(self, app: str, limit: int = 400, budget_s: int = 12) -> list[ScreenElement]:
         app = validate_app_name(app)
         # The script stops walking after `budget` seconds (and says so in its header) well inside the hard timeout.
-        out = await self._osascript(_AS_LOCATE, app, str(max(1, min(limit, 1500))), str(budget_s), timeout=budget_s + 13)
+        argv = (app, str(max(1, min(limit, 1500))), str(budget_s))
+        out = await self._osascript(_AS_LOCATE, *argv, timeout=budget_s + 13)
         self.last_ax_window = parse_window_header(out)  # which window was read (diagnostics)
+        if (self.last_ax_window or {}).get("windows") == 0 and await self._reveal_windows(app):
+            out = await self._osascript(_AS_LOCATE, *argv, timeout=budget_s + 13)
+            self.last_ax_window = parse_window_header(out)
         return parse_ax_dump(out.replace(",", "."), app)  # some locales print decimal commas
+
+    REVEAL_WAIT_S = 1.5  # Space switch animation (measured on the Mac: windows visible 1.5 s after activating)
+
+    async def _reveal_windows(self, app: str) -> bool:
+        """The app is running but Accessibility sees none of its windows: they are on another desktop Space (e.g. a
+        full-screen window). Activating it the way the Dock does switches to that Space (verified on the Mac for
+        Safari's full-screen window). Changes only which app is in front. True if the activation was sent."""
+        try:
+            await self._osascript(_AS_ACTIVATE, app, timeout=10)
+        except DesktopUnavailable:
+            return False
+        await asyncio.sleep(self.REVEAL_WAIT_S)
+        return True
 
     async def focus_element(self, app: str, role: str, x: float, y: float) -> None:
         app = validate_app_name(app)

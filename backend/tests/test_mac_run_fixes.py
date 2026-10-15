@@ -91,3 +91,76 @@ async def test_unreadable_box_after_send_is_not_reported_as_sent(env):
     desk.press_return, desk.focused_text = press_return, focused_text
     t = await _approve_and_wait(env, await _delegate(env, submit=True))
     assert t.status is TaskStatus.FAILED and t.result["data"]["submitted"] is False  # never "Sent" without proof
+
+
+# ------------------------------------------------------------------ full-screen windows on another Space (Mac, Oct 15)
+def _mac(answers):
+    """MacDesktop whose osascript calls are answered in order; records which scripts ran."""
+    from baymax.hostos import desktop as dk
+
+    d = dk.MacDesktop.__new__(dk.MacDesktop)
+    d._quartz, d.REVEAL_WAIT_S, d.ran = None, 0.0, []
+
+    async def osa(script, *args, **_k):
+        d.ran.append("activate" if script is dk._AS_ACTIVATE else "locate" if script is dk._AS_LOCATE else
+                     "text" if script is dk._AS_TEXT else "other")
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    d._osascript = osa
+    return d
+
+
+NO_WINDOW = "#window\t0\tnone\t\t\t0\n"
+ONE_WINDOW = "#window\t1\tmain\tChatGPT\tAXStandardWindow\t0\nAXTextArea\t\tMessage ChatGPT\t\t300\t700\t600\t40\n"
+
+
+async def test_window_on_another_space_is_revealed_once_and_read():
+    d = _mac([NO_WINDOW, "", ONE_WINDOW])
+    els = await d.accessibility_elements("ChatGPT")
+    assert d.ran == ["locate", "activate", "locate"] and d.last_ax_window["windows"] == 1
+    assert [e.role for e in els] == ["AXTextArea"]
+
+
+async def test_visible_window_is_read_without_switching_apps():
+    d = _mac([ONE_WINDOW])
+    await d.accessibility_elements("ChatGPT")
+    assert d.ran == ["locate"]  # nothing activated when the window is already visible
+
+
+async def test_reveal_happens_at_most_once():
+    d = _mac([NO_WINDOW, "", NO_WINDOW])
+    els = await d.accessibility_elements("ChatGPT")
+    assert d.ran == ["locate", "activate", "locate"] and els == [] and d.last_ax_window["windows"] == 0
+
+
+async def test_read_window_retries_after_switching_to_the_windows_space():
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    no_window = DesktopUnavailable("Safari has no window I can see", detail="execution error: no window (1406)")
+    d = _mac([no_window, "", "BAYMAX reading test 4217"])
+
+    async def process_name(app):
+        return app
+
+    d.process_name = process_name
+    assert await d.read_window_text("Safari") == "BAYMAX reading test 4217"
+    assert d.ran == ["text", "activate", "text"]
+
+
+async def test_read_window_other_errors_are_not_retried():
+    import pytest
+
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    d = _mac([DesktopUnavailable("macOS couldn't complete that step", detail="(-1700)")])
+
+    async def process_name(app):
+        return app
+
+    d.process_name = process_name
+    with pytest.raises(DesktopUnavailable):
+        await d.read_window_text("Safari")
+    assert d.ran == ["text"]
