@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from baymax.assistant import Assistant
+from baymax.hostos import desktop as dk
 from baymax.hostos.desktop import InputCancelled, MacDesktop
 from baymax.protocol import messages as proto
 from baymax.screen.elements import parse_ax_dump
@@ -187,9 +188,10 @@ def _mac_with_fake_quartz():
     d._quartz = _FakeQuartz()
 
     async def osa(*_a, **_k):
-        return "ok"
+        return "TextEdit\n"  # activation; frontmost_app() when Accessibility can't tell
 
-    d._osascript = osa  # activation only
+    d._osascript = osa
+    d._front_pid = lambda: None
     d.accessibility_trusted = lambda: True
     return d
 
@@ -214,25 +216,24 @@ async def test_emergency_stop_interrupts_typing_mid_text_with_no_key_left_down()
     assert 0 < len(ev) < 80 and len(ev) % 2 == 0 and ev[-1][1] is False  # every key down has its key up
 
 
-def _mac_with_front(fronts):
-    """MacDesktop whose frontmost app reads successively from `fronts` (the last value repeats)."""
+def _mac_with_front(fronts, pid="501"):
+    """MacDesktop whose target process id is `pid` and whose frontmost process id (from Accessibility) reads
+    successively from `fronts` (the last value repeats; None = Accessibility can't tell)."""
     d = _mac_with_fake_quartz()
     fronts = list(fronts)
 
-    async def process_name(app):
-        return app
+    async def osa(script, *args, **_k):
+        return pid + "\n" if script is dk._AS_ACTIVATE_PID else "Terminal\n"  # frontmost_app()'s answer
 
-    async def frontmost_app():
-        return fronts.pop(0) if len(fronts) > 1 else fronts[0]
-
-    d.process_name, d.frontmost_app = process_name, frontmost_app
+    d._osascript = osa
+    d._front_pid = lambda: fronts.pop(0) if len(fronts) > 1 else fronts[0]
     return d
 
 
 async def test_typing_never_starts_when_another_app_is_in_front():
     from baymax.hostos.desktop import DesktopUnavailable
 
-    d = _mac_with_front(["Terminal"])
+    d = _mac_with_front([777])
     with pytest.raises(DesktopUnavailable, match="Terminal is in front instead of TextEdit.*nothing was typed"):
         await d.type_text("TextEdit", "stop me " * 10)
     assert d._quartz.events == []
@@ -241,12 +242,36 @@ async def test_typing_never_starts_when_another_app_is_in_front():
 async def test_typing_stops_when_focus_moves_to_another_app():
     from baymax.hostos.desktop import DesktopUnavailable
 
-    d = _mac_with_front(["TextEdit", "Terminal"])
-    d.typing_interval_s, d.FRONT_CHECK_S = 0.0, 0.0  # check before every chunk
+    d = _mac_with_front([501, 777])  # checked before every chunk (in-process, no delay)
+    d.typing_interval_s = 0.0
     with pytest.raises(DesktopUnavailable, match="10 of 80 characters had been typed"):
         await d.type_text("TextEdit", "stop me " * 10)
     ev = d._quartz.events
     assert "".join(t for t, down in ev if down) == "stop me st" and ev[-1][1] is False  # one chunk, no key left down
+
+
+async def test_without_accessibility_the_front_app_is_checked_by_name():
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    d = _mac_with_front([None])  # in-process check unavailable: System Events says Terminal is in front
+    with pytest.raises(DesktopUnavailable, match="Terminal is in front"):
+        await d.type_text("TextEdit", "hello")
+    assert d._quartz.events == []
+
+
+async def test_the_front_check_adds_no_extra_script_before_typing():
+    d = _mac_with_front([501])
+    calls = []
+    orig = d._osascript
+
+    async def counting(script, *a, **k):
+        calls.append(script)
+        return await orig(script, *a, **k)
+
+    d._osascript, d.typing_interval_s = counting, 0.0
+    await d.type_text("TextEdit", "hello world")
+    assert calls == [dk._AS_ACTIVATE_PID]  # one activation script, as before the check existed
+    assert "".join(t for t, down in d._quartz.events if down) == "hello world"
 
 
 def test_scripted_key_presses_refuse_when_the_app_is_not_in_front():

@@ -126,6 +126,16 @@ async def test_frontmost_app_and_window(desk):
     assert w.app and w.width > 0
 
 
+async def test_typing_guard_sees_the_real_frontmost_app(desk):
+    """The in-process check type_text uses before every key must agree with System Events about the frontmost app."""
+    if desk.accessibility_trusted() is not True:
+        pytest.skip("grant Accessibility first")
+    pid = desk._front_pid()
+    se = (await desk._osascript('tell application "System Events" to get unix id of first process whose frontmost is true')).strip()
+    print("front pid (Accessibility):", pid, "| System Events:", se, await desk.frontmost_app())
+    assert pid is not None and str(pid) == se
+
+
 async def test_type_unicode_multiline_into_textedit_and_read_back(desk):
     if desk.accessibility_trusted() is not True:
         pytest.skip("grant Accessibility to the terminal running pytest first")

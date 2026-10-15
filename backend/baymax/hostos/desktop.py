@@ -104,7 +104,7 @@ class DesktopBackend:
     platform = "unknown"
     last_ax_window: dict[str, Any] | None = None  # set by accessibility_elements(): the window that was inspected
     typing_interval_s = 0.012  # pause between typed chunks (≤10 characters each); configurable cadence
-    FRONT_CHECK_S = 0.25  # while typing, re-confirm the target app is frontmost at least this often
+    FRONT_CHECK_S = 1.0  # without in-process Accessibility, re-confirm the frontmost app via System Events this often
     _input_gen = 0  # bumped by cancel_input(); in-flight typing/clicks check it between events
 
     def cancel_input(self) -> None:
@@ -296,6 +296,19 @@ _AS_ACTIVATE = """on run argv
     tell application id bid to activate
   end try
   tell application "System Events" to tell process appName to set frontmost to true
+end run"""
+
+# _AS_ACTIVATE, then print the target's process id (argv: app name, System Events process name).
+_AS_ACTIVATE_PID = """on run argv
+  set appName to item 2 of argv
+  try
+    tell application "System Events" to set bid to bundle identifier of process appName
+    tell application id bid to activate
+  end try
+  tell application "System Events"
+    tell process appName to set frontmost to true
+    return (unix id of process appName) as text
+  end tell
 end run"""
 
 _AS_TYPE = """on run argv
@@ -1006,6 +1019,23 @@ class MacDesktop(DesktopBackend):
             "accessibilityTrusted": self.accessibility_trusted(),
         }
 
+    def _front_pid(self) -> int | None:
+        """Process id of the app macOS sends key events to (Accessibility's focused application), or None if unknown."""
+        try:
+            from ApplicationServices import (  # type: ignore
+                AXUIElementCopyAttributeValue,
+                AXUIElementCreateSystemWide,
+                AXUIElementGetPid,
+            )
+
+            err, app = AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(), "AXFocusedApplication", None)
+            if err != 0 or app is None:
+                return None
+            err, pid = AXUIElementGetPid(app, None)
+            return int(pid) if err == 0 else None
+        except Exception:
+            return None
+
     def accessibility_trusted(self) -> bool | None:
         try:
             from ApplicationServices import AXIsProcessTrusted  # type: ignore
@@ -1137,25 +1167,36 @@ class MacDesktop(DesktopBackend):
             self._check_input(gen)  # (the osascript child itself is killed by Emergency Stop)
             await self._osascript(_AS_TYPE_LINES, app, *text.replace("\r\n", "\n").split("\n"), timeout=60)
             return
-        proc = await self.process_name(app)
-        await self._osascript(_AS_ACTIVATE, app, timeout=10)
+        # One script both activates the app and reports its process id (same cost as activating alone).
+        pid = (await self._osascript(_AS_ACTIVATE_PID, app, PROCESS_ALIASES.get(app, app), timeout=10)).strip()
         await asyncio.sleep(0.2)
         if self.accessibility_trusted() is False:
             raise DesktopPermissionError(ACCESSIBILITY_HELP)
         # Key events go to whichever app is in front, so confirm the target is frontmost before the first key and
-        # again every FRONT_CHECK_S while typing: if focus moves (another app, a notification, the user), stop.
+        # again while typing: if focus moves (another app, a notification, the user), stop. The check asks the
+        # Accessibility API in-process (milliseconds); without it, System Events is asked at most every FRONT_CHECK_S.
         typed, checked = 0, -1e9
         loop = asyncio.get_running_loop()
         for kind, chunk in keystroke_plan(text):
             self._check_input(gen)  # Emergency Stop between chunks: stops mid-text, no key left down
-            if loop.time() - checked >= self.FRONT_CHECK_S:
+            front_pid = self._front_pid()
+            if front_pid is not None:
+                in_front, front = str(front_pid) == pid, None
+            elif loop.time() - checked >= self.FRONT_CHECK_S:
                 front = await self.frontmost_app()
                 self._check_input(gen)
-                if front != proc:
-                    done = f"{typed} of {len(text)} characters had been typed" if typed else "nothing was typed"
-                    raise DesktopUnavailable(f"{front or 'another app'} is in front instead of {app}, so I stopped typing "
-                                             f"({done}; no keys went to {front or 'the other app'})")
-                checked = loop.time()
+                in_front, checked = front == PROCESS_ALIASES.get(app, app) or front == app, loop.time()
+            else:
+                in_front, front = True, None
+            if not in_front:
+                if front is None:
+                    try:
+                        front = await self.frontmost_app()
+                    except DesktopUnavailable:
+                        front = ""
+                done = f"{typed} of {len(text)} characters had been typed" if typed else "nothing was typed"
+                raise DesktopUnavailable(f"{front or 'another app'} is in front instead of {app}, so I stopped typing "
+                                         f"({done}; no keys went to {front or 'the other app'})")
             if kind == "newline":
                 for down in (True, False):
                     ev = Q.CGEventCreateKeyboardEvent(None, KEY_CODES["return"], down)
