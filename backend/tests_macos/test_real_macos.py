@@ -5,7 +5,11 @@
 
 They use the real MacDesktop backend (NSWorkspace, AppleScript/System Events, CGEvent). The TextEdit tests create a
 NEW TextEdit document (the first run asks for Automation permission for TextEdit), type Unicode + multi-line text into
-it, read it back through Accessibility, and leave the document open for you to close without saving. No files are written, nothing is sent or deleted.
+it and read it back through Accessibility. Every TextEdit document a test opens is closed WITHOUT saving when that test
+ends (documents that were already open are left alone). No files are written, nothing is sent or deleted.
+
+The run stops at once if the terminal running it is in full screen: a full-screen window is its own desktop Space, and
+macOS Accessibility then can't see TextEdit's (or any other app's) windows.
 """
 
 from __future__ import annotations
@@ -21,6 +25,65 @@ pytestmark = pytest.mark.skipif(
     sys.platform != "darwin" or os.environ.get("BAYMAX_MACOS_INTEGRATION") != "1",
     reason="real macOS integration tests: run on the Mac with BAYMAX_MACOS_INTEGRATION=1",
 )
+
+
+def _osa_sync(script: str, *args: str) -> str:
+    import subprocess
+
+    r = subprocess.run(["osascript", "-e", script, *args], capture_output=True, text=True, timeout=20, check=False)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+_FULLSCREEN_WINDOWS = """tell application "System Events"
+  set fp to first process whose frontmost is true
+  set out to ""
+  repeat with w in (windows of fp)
+    try
+      if (value of attribute "AXFullScreen" of w) is true then set out to out & (name of fp) & ": " & (name of w as text) & linefeed
+    end try
+  end repeat
+  return out
+end tell"""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _not_in_full_screen():
+    full = _osa_sync(_FULLSCREEN_WINDOWS)
+    if full:
+        pytest.exit("The window running these tests is in FULL SCREEN, so macOS hides every other app's windows from "
+                    f"Accessibility and the TextEdit/ChatGPT tests can't work:\n  {full}\nExit full screen (click the "
+                    "window, then press control+command+F, or View > Exit Full Screen) and run the tests again.",
+                    returncode=2)
+
+
+_TEXTEDIT_DOCS = """tell application "System Events" to set teRunning to exists process "TextEdit"
+if not teRunning then return ""
+tell application "TextEdit"
+  set out to ""
+  repeat with d in documents
+    set out to out & (name of d) & linefeed
+  end repeat
+  return out
+end tell"""
+
+_CLOSE_DOCS = """on run argv
+  tell application "TextEdit"
+    repeat with n in argv
+      try
+        close (every document whose name is (contents of n)) saving no
+      end try
+    end repeat
+  end tell
+end run"""
+
+
+@pytest.fixture(autouse=True)
+def _close_textedit_documents_this_test_opened():
+    before = set(_osa_sync(_TEXTEDIT_DOCS).splitlines())
+    yield
+    new = [n for n in _osa_sync(_TEXTEDIT_DOCS).splitlines() if n and n not in before]
+    if new:
+        _osa_sync(_CLOSE_DOCS, *new)  # by name, without saving; a document still showing a sheet stays open
 
 
 @pytest.fixture

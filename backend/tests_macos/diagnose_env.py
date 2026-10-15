@@ -48,7 +48,8 @@ async def main() -> None:  # noqa: ASYNC221  (a one-off diagnostic; blocking cal
     print(f"System Events answered in {secs:.2f}s ({n} processes){'  <-- slow: macOS is busy' if secs > 1.5 else ''}")
     print("load average:", subprocess.run(["sysctl", "-n", "vm.loadavg"], capture_output=True, text=True, check=False).stdout.strip())
 
-    _, front = osa('tell application "System Events" to get {name, unix id} of first process whose frontmost is true')
+    _, front = osa('tell application "System Events"\nset fp to first process whose frontmost is true\n'
+                   'return (name of fp) & " pid " & (unix id of fp)\nend tell')
     print("frontmost (System Events):", front, "| frontmost pid (Accessibility):", desk._front_pid())
 
     _, fs = osa(_FULLSCREEN)
