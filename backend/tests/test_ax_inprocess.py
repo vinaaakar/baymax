@@ -93,6 +93,26 @@ def test_find_focus_and_read_back_the_same_element():
     assert ax.find(AS, app, "AXTextField", 300, 700) is None  # wrong role
 
 
+def test_role_description_labels_an_unlabelled_document_view():
+    view = El("AXTextArea", 327, 368, 586, 346, AXRoleDescription="text entry area", AXValue="")
+    win = El("AXWindow", children=[El("AXScrollArea", 320, 360, 600, 360, children=[view])], AXTitle="Untitled")
+    app = El("AXApplication", AXMainWindow=win, AXWindows=[win])
+    els = parse_ax_dump(ax.dump(FakeAS(app), app, limit=50), "TextEdit")
+    assert [(e.role, e.label) for e in els if e.role == "AXTextArea"] == [("AXTextArea", "text entry area")]
+
+
+def test_hidden_field_at_the_same_spot_is_never_chosen():
+    hidden = El("AXTextArea", 300, 700, 600, 0, AXValue="")  # ChatGPT's empty fallback textarea
+    small = El("AXTextArea", 300, 700, 600, 10, AXValue="")
+    box = El("AXTextArea", 300, 700, 600, 70, AXDescription="Chat with ChatGPT", AXValue="BAYMAX test prompt")
+    win = El("AXWindow", children=[hidden, small, box], AXTitle="w")
+    app = El("AXApplication", AXMainWindow=win, AXWindows=[win])
+    AS = FakeAS(app)
+    assert ax.find(AS, app, "AXTextArea", 300, 700) is box  # largest visible
+    small.a["AXFocused"] = True
+    assert ax.find(AS, app, "AXTextArea", 300, 700) is small  # keyboard focus wins
+
+
 def test_focus_is_refused_for_non_inputs():
     app, _ = _chatgpt_like()
     AS = FakeAS(app)

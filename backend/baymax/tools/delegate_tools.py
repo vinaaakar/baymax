@@ -251,6 +251,13 @@ class DelegateToAITool(Tool):
                         break
                 except DesktopUnavailable:
                     pass
+                try:  # the field we focused and typed into still has keyboard focus: read that element itself
+                    role, raw = await d.focused_text(target)
+                    if role == field.role and prompt.replace("\r\n", "\n") in raw.replace("\u2028", "\n").replace("\r", "\n"):
+                        entered = True
+                        break
+                except DesktopUnavailable:
+                    pass
                 after = await d.accessibility_elements(target)  # fallback: the (flattened) accessibility dump
                 now = pick_prompt_field(after)
                 if now is not None and _norm(prompt)[:60] in _norm(now.value):

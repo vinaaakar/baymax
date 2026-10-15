@@ -98,11 +98,14 @@ def describe(AS: Any, el: Any, role: str) -> str:
     if not role or f is None:
         return ""
     en = attr(AS, el, "AXEnabled")
-    cells = [role, _one_line(attr(AS, el, "AXTitle"), 200), _one_line(attr(AS, el, "AXDescription"), 200),
+    # Like System Events' `description`: the element's own description, else macOS's role description ("text entry
+    # area" for TextEdit's document view) - field matching relies on it when an app sets no label.
+    desc = _one_line(attr(AS, el, "AXDescription"), 200) or _one_line(attr(AS, el, "AXRoleDescription"), 200)
+    cells = [role, _one_line(attr(AS, el, "AXTitle"), 200), desc,
              _one_line(attr(AS, el, "AXValue"), 2000), *(f"{v:.1f}" for v in f),
              "1" if en is True else "0" if en is False else "", _one_line(attr(AS, el, "AXIdentifier"), 120)]
-    if role in TEXT_INPUTS and not cells[1] and not cells[2]:
-        cells[2] = _one_line(attr(AS, el, "AXPlaceholderValue"), 200)  # e.g. "Message ChatGPT"
+    if role in TEXT_INPUTS and not cells[1] and not _one_line(attr(AS, el, "AXDescription"), 200):
+        cells[2] = _one_line(attr(AS, el, "AXPlaceholderValue"), 200) or desc  # e.g. "Message ChatGPT"
     return "\t".join(cells) + "\n"
 
 
@@ -136,18 +139,23 @@ def dump(AS: Any, app_el: Any, limit: int, max_nodes: int = MAX_NODES, budget_s:
 def find(AS: Any, app_el: Any, role: str, x: float, y: float, max_nodes: int = MAX_NODES,
          budget_s: float = BUDGET_S) -> Any:
     """The element of this role whose top-left is within 6 points of (x, y) in the main window, or None (same rule as
-    the AppleScript focus/read scripts)."""
+    the AppleScript focus/read scripts). Web pages can stack hidden fields at the same spot (ChatGPT keeps empty, zero-
+    height text areas where its message box is): invisible ones never count, and among several the one with keyboard
+    focus wins, then the largest."""
     win, _, _ = pick_window(AS, app_el)
     if win is None:
         return None
+    hits = []
     for el, r in _walk(AS, win, max_nodes, budget_s):
         if r == "#cut":
-            return None
+            break
         if r == role:
             f = frame(AS, el)
-            if f and (f[0] - x) ** 2 + (f[1] - y) ** 2 < 36:
-                return el
-    return None
+            if f and f[2] > 1 and f[3] > 1 and (f[0] - x) ** 2 + (f[1] - y) ** 2 < 36:
+                hits.append((attr(AS, el, "AXFocused") is True, f[2] * f[3], el))
+    if not hits:
+        return None
+    return max(hits, key=lambda h: (h[0], h[1]))[2]
 
 
 def value_text(AS: Any, el: Any) -> str:
