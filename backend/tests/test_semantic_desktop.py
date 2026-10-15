@@ -214,6 +214,58 @@ async def test_emergency_stop_interrupts_typing_mid_text_with_no_key_left_down()
     assert 0 < len(ev) < 80 and len(ev) % 2 == 0 and ev[-1][1] is False  # every key down has its key up
 
 
+def _mac_with_front(fronts):
+    """MacDesktop whose frontmost app reads successively from `fronts` (the last value repeats)."""
+    d = _mac_with_fake_quartz()
+    fronts = list(fronts)
+
+    async def process_name(app):
+        return app
+
+    async def frontmost_app():
+        return fronts.pop(0) if len(fronts) > 1 else fronts[0]
+
+    d.process_name, d.frontmost_app = process_name, frontmost_app
+    return d
+
+
+async def test_typing_never_starts_when_another_app_is_in_front():
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    d = _mac_with_front(["Terminal"])
+    with pytest.raises(DesktopUnavailable, match="Terminal is in front instead of TextEdit.*nothing was typed"):
+        await d.type_text("TextEdit", "stop me " * 10)
+    assert d._quartz.events == []
+
+
+async def test_typing_stops_when_focus_moves_to_another_app():
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    d = _mac_with_front(["TextEdit", "Terminal"])
+    d.typing_interval_s, d.FRONT_CHECK_S = 0.0, 0.0  # check before every chunk
+    with pytest.raises(DesktopUnavailable, match="10 of 80 characters had been typed"):
+        await d.type_text("TextEdit", "stop me " * 10)
+    ev = d._quartz.events
+    assert "".join(t for t, down in ev if down) == "stop me st" and ev[-1][1] is False  # one chunk, no key left down
+
+
+def test_scripted_key_presses_refuse_when_the_app_is_not_in_front():
+    from baymax.hostos import desktop as dk
+
+    for script in (dk._AS_KEYS, dk._AS_RETURN, dk._AS_TYPE_LINES):
+        assert 'if not (frontmost of process appName) then error "not frontmost" number 1407' in script
+
+
+async def test_not_frontmost_error_is_explained():
+    from baymax.hostos import desktop as dk
+    from baymax.hostos.desktop import DesktopUnavailable
+
+    d = MacDesktop.__new__(MacDesktop)
+    d.p = _ErrRunner("execution error: not frontmost (1407)")
+    with pytest.raises(DesktopUnavailable, match="didn't stay in front"):
+        await d._osascript(dk._AS_RETURN, "ChatGPT")
+
+
 async def test_stop_during_activation_types_nothing():
     d = _mac_with_fake_quartz()
     job = asyncio.create_task(d.type_text("TextEdit", "hello"))
@@ -331,7 +383,8 @@ _SE_TERMS = {"pick", "click", "select", "perform", "keystroke", "key", "delay", 
              "contents", "action", "attribute", "menu", "button", "file", "folder", "disk", "application", "id", "class",
              "properties", "visible", "subrole", "help", "entire", "count", "exists", "quit", "open", "close",
              "save", "print", "make", "move", "duplicate", "delete", "increment", "decrement", "confirm", "cancel", "show",
-             "raise", "result", "error", "return", "minimized", "scroll", "list", "record", "reference"}
+             "raise", "result", "error", "return", "minimized", "scroll", "list", "record", "reference",
+             "st", "nd", "rd", "th"}  # ordinal suffixes (1st, 2nd …) are reserved: `set st to …` doesn't compile
 
 
 def _applescripts():

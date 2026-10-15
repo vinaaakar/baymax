@@ -367,7 +367,7 @@ async def test_type_text_tool_is_verified_only_by_reading_the_field_back(desk, r
 
     t = await _run(real_services, ("desktop.new_document", {"app": "TextEdit"}))
     assert t.status is TaskStatus.COMPLETED and t.verified, t.result
-    text = "Phase 1 ✓ Grüße 👋\nline two"
+    text = "Phase 1 ✓ Grüße 👋\n2nd line"  # starts with a digit: macOS auto-capitalizes a first word after a newline
     t = await _run(real_services, ("desktop.type_text", {"app": "TextEdit", "text": text}))
     print(t.result["summary"], "|", t.result.get("verification"))
     assert t.status is TaskStatus.COMPLETED and t.verified, t.result
@@ -391,7 +391,9 @@ async def test_focus_a_textedit_window_by_title(desk, real_services):
     second, _, _ = await _fresh_textedit_document(desk)
     wins = await desk.list_windows("TextEdit")
     print("TextEdit windows:", [w["title"] for w in wins])
-    assert any(w["title"] == first for w in wins) and any(w["title"] == second for w in wins)
+    titles = [w["title"] for w in wins]
+    assert first in titles and second in titles, (f"list_windows saw {titles}, expected {first!r} and {second!r}; front app: "
+                                                  f"{await desk.frontmost_app()}")
     t = await _run(real_services, ("desktop.focus_window", {"app": "TextEdit", "title": first}))
     print(t.result["summary"])
     assert t.status is TaskStatus.COMPLETED and t.verified, t.result

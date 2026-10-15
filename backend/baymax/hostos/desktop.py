@@ -104,6 +104,7 @@ class DesktopBackend:
     platform = "unknown"
     last_ax_window: dict[str, Any] | None = None  # set by accessibility_elements(): the window that was inspected
     typing_interval_s = 0.012  # pause between typed chunks (≤10 characters each); configurable cadence
+    FRONT_CHECK_S = 0.25  # while typing, re-confirm the target app is frontmost at least this often
     _input_gen = 0  # bumped by cancel_input(); in-flight typing/clicks check it between events
 
     def cancel_input(self) -> None:
@@ -251,6 +252,7 @@ _AS_KEYS = """on run argv
   tell application "System Events"
     tell process appName to set frontmost to true
     delay 0.2
+    if not (frontmost of process appName) then error "not frontmost" number 1407
     if (length of k) > 1 then
       key code (k as integer) using mods
     else
@@ -266,6 +268,7 @@ _AS_TYPE_LINES = """on run argv
     tell process appName to set frontmost to true
     delay 0.2
     repeat with i from 2 to count of argv
+      if not (frontmost of process appName) then error "not frontmost" number 1407
       keystroke (item i of argv)
       if i < (count of argv) then keystroke return using shift down
     end repeat
@@ -697,11 +700,11 @@ _AS_MODALS = """on run argv
             set shs to sheets of w
           end try
           repeat with sh in shs
-            set st to ""
+            set sheetTitle to ""
             try
-              set st to my oneLine(description of sh as text)
+              set sheetTitle to my oneLine(description of sh as text)
             end try
-            set out to out & "sheet" & tab & pname & tab & wt & tab & st & tab & my buttonNames(sh) & linefeed
+            set out to out & "sheet" & tab & pname & tab & wt & tab & sheetTitle & tab & my buttonNames(sh) & linefeed
           end repeat
         end repeat
       end if
@@ -809,6 +812,7 @@ _AS_RETURN = """on run argv
   tell application "System Events"
     tell process appName to set frontmost to true
     delay 0.2
+    if not (frontmost of process appName) then error "not frontmost" number 1407
     key code 36
   end tell
 end run"""
@@ -1035,6 +1039,10 @@ class MacDesktop(DesktopBackend):
             if "-1728" in err and "process" in err:
                 m = re.search(r'process "([^"]*)"', err)
                 raise DesktopUnavailable(f"{m.group(1) if m else 'that app'} isn't running (or has no window open)")
+            if re.search(r"\(1407\)", err) or "not frontmost" in err:
+                who = args[0] if args else "that app"
+                raise DesktopUnavailable(f"{who} didn't stay in front, so I didn't press any keys (they would have gone to "
+                                         "another app)")
             if re.search(r"\(1405\)", err) or "window changed" in err:
                 raise DesktopUnavailable("that window changed (its title is now different), so I didn't switch to it")
             if re.search(r"\(1404\)", err) or "element not found" in err:
@@ -1129,12 +1137,25 @@ class MacDesktop(DesktopBackend):
             self._check_input(gen)  # (the osascript child itself is killed by Emergency Stop)
             await self._osascript(_AS_TYPE_LINES, app, *text.replace("\r\n", "\n").split("\n"), timeout=60)
             return
+        proc = await self.process_name(app)
         await self._osascript(_AS_ACTIVATE, app, timeout=10)
         await asyncio.sleep(0.2)
         if self.accessibility_trusted() is False:
             raise DesktopPermissionError(ACCESSIBILITY_HELP)
+        # Key events go to whichever app is in front, so confirm the target is frontmost before the first key and
+        # again every FRONT_CHECK_S while typing: if focus moves (another app, a notification, the user), stop.
+        typed, checked = 0, -1e9
+        loop = asyncio.get_running_loop()
         for kind, chunk in keystroke_plan(text):
             self._check_input(gen)  # Emergency Stop between chunks: stops mid-text, no key left down
+            if loop.time() - checked >= self.FRONT_CHECK_S:
+                front = await self.frontmost_app()
+                self._check_input(gen)
+                if front != proc:
+                    done = f"{typed} of {len(text)} characters had been typed" if typed else "nothing was typed"
+                    raise DesktopUnavailable(f"{front or 'another app'} is in front instead of {app}, so I stopped typing "
+                                             f"({done}; no keys went to {front or 'the other app'})")
+                checked = loop.time()
             if kind == "newline":
                 for down in (True, False):
                     ev = Q.CGEventCreateKeyboardEvent(None, KEY_CODES["return"], down)
@@ -1145,6 +1166,7 @@ class MacDesktop(DesktopBackend):
                     ev = Q.CGEventCreateKeyboardEvent(None, 0, down)
                     Q.CGEventKeyboardSetUnicodeString(ev, len(chunk.encode("utf-16-le")) // 2, chunk)
                     Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            typed += 1 if kind == "newline" else len(chunk)
             await asyncio.sleep(self.typing_interval_s)
 
     async def press_keys(self, app: str, key: str, modifiers: tuple[str, ...] = ()) -> None:
