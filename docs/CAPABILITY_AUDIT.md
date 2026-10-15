@@ -98,3 +98,22 @@ desktop and model, which proves logic, not macOS behaviour.
 1. `BAYMAX_MACOS_INTEGRATION=1 .venv/bin/python -m pytest -v tests_macos` — 15 tests (the ChatGPT one skips if the app isn't installed).
 2. `.venv/bin/python tests_macos/diagnose_ax.py ChatGPT` with a ChatGPT chat window visible — send the output.
 3. From the iPhone: `Move the pointer to the top left corner` (pointer near the corner, no Mission Control), `Move the pointer to the center of the screen`, `Read the current window` with Safari on a web page, `Open ChatGPT`, `Open ChatGPT in Safari`, `Create a new chat and research how AI works` (sources listed), `Open ChatGPT in Safari and research how AI works` (approval with the exact prompt).
+
+## Real-Mac run, Oct 15 (130203f): `tests_macos` 21/21 passed
+
+Fixed on the way (each confirmed by this run on the MacBook, not only by simulated tests):
+
+| Problem seen on the Mac | Cause | Fix |
+|---|---|---|
+| Dialog checks never ran ("failed to compile") | `st` is reserved in AppleScript (ordinal suffix) | renamed; variable-name guard test covers st/nd/rd/th |
+| Typed text landed in Terminal ("me stop me stop…") | key events go to whatever app is in front | `type_text` checks the target process is frontmost before every chunk (in-process Accessibility), scripted key presses refuse (1407) |
+| TextEdit / Safari / ChatGPT "no window visible" | a full-screen terminal or app window lives on its own Space | tests leave a full-screen terminal themselves; BAYMAX activates the app once and re-reads when no window is visible |
+| Window by title not found | documents opened as tabs; Accessibility lists only the visible tab | Window-menu fallback (entries must be real windows in the window server), exact titles first |
+| ChatGPT message box not found in 30 s | AppleScript walk: 64 elements in 30 s | in-process Accessibility walk (`hostos/ax_inprocess.py`): whole window, ~2000 elements, in ~0.2 s |
+| ChatGPT read-back failed | empty zero-height text areas at the same spot | invisible matches ignored; focused, then largest, wins; read back the focused field |
+| Safari page not read | text walk spent its budget on the tab bar | in-process text in document order, page before browser chrome |
+
+Note: the "ChatGPT" app on this Mac is the website added to the Dock from Safari (process shown as "Web App"), not
+OpenAI's native app. Typing is verified by read-back; sending still requires approval on the Mac.
+
+Still unverified on hardware: the iPhone checklist in `docs/MANUAL_CHECKLIST.md` (Phase 2 section).
